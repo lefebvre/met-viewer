@@ -10,6 +10,8 @@
 
 #include <netcdf.h>
 
+#include "viewer/core/timeaxis.h"
+
 namespace met::readers::netcdf {
 namespace {
 
@@ -50,6 +52,61 @@ bool isLonUnits(const std::string& u) {
     return l == "degrees_east" || l == "degree_east" || l == "degrees_e" || l == "degreese";
 }
 
+// Classify a vertical coordinate from its metadata. Returns false if the
+// coordinate does not look vertical. On success `type` is the level type and
+// `scale` converts the stored value into that type's unit (hPa for pressure,
+// metres for height; 1.0 otherwise). Recognizing height/sigma/hybrid/model/
+// isentropic axes — not just pressure — is what keeps a multi-level variable
+// from collapsing to a single slice.
+bool classifyVertical(const std::string& units, const std::string& standardName,
+                      const std::string& name, bool hasPositive, VerticalLevel::Type& type,
+                      double& scale) {
+    const std::string u = lower(units);
+    const std::string s = lower(standardName);
+    const std::string n = lower(name);
+    scale = 1.0;
+
+    const bool pressureUnit =
+        u == "hpa" || u == "pa" || u == "millibar" || u == "mb" || u == "mbar";
+    if (pressureUnit || s.find("air_pressure") != std::string::npos || n == "pressure_level" ||
+        n == "plev" || n == "level" || n == "lev" || n == "isobaricinhpa" || n == "isobaric") {
+        type = VerticalLevel::Type::PressureHPa;
+        scale = (u == "pa") ? 0.01 : 1.0;
+        return true;
+    }
+    if (s == "atmosphere_hybrid_sigma_pressure_coordinate" || n == "hybrid" || n == "hyblevel") {
+        type = VerticalLevel::Type::Hybrid;
+        return true;
+    }
+    if (s == "atmosphere_sigma_coordinate" || n == "sigma") {
+        type = VerticalLevel::Type::Sigma;
+        return true;
+    }
+    if (s == "atmosphere_hybrid_height_coordinate" || s == "height" || s == "altitude" ||
+        s == "geopotential_height" || u == "m" || u == "metre" || u == "metres" || u == "meter" ||
+        u == "meters" || u == "km" || n == "height" || n == "altitude") {
+        type = VerticalLevel::Type::HeightM;
+        scale = (u == "km") ? 1000.0 : 1.0;
+        return true;
+    }
+    if (s == "air_potential_temperature" || n == "theta" || n == "isentropic" || n == "pt") {
+        type = VerticalLevel::Type::Isentropic;
+        return true;
+    }
+    if (s == "model_level_number" || n == "model_level" || n == "model_level_number" ||
+        n == "nlev") {
+        type = VerticalLevel::Type::ModelLevel;
+        return true;
+    }
+    // A CF `positive: up|down` attribute marks a generic vertical axis; accept it
+    // as an unknown-typed level rather than silently dropping the dimension.
+    if (hasPositive) {
+        type = VerticalLevel::Type::Unknown;
+        return true;
+    }
+    return false;
+}
+
 // Parse a CF time-unit string "<unit> since <YYYY-MM-DD[ hh:mm:ss]>". Returns
 // (secondsPerUnit, baseEpochSeconds). Falls back to (1, 0) if unparseable.
 std::pair<double, std::int64_t> parseTimeUnits(const std::string& units) {
@@ -65,17 +122,19 @@ std::pair<double, std::int64_t> parseTimeUnits(const std::string& units) {
     else if (unitWord.rfind("hour", 0) == 0 || unitWord.rfind("hr", 0) == 0) perUnit = 3600.0;
     else if (unitWord.rfind("day", 0) == 0) perUnit = 86400.0;
 
-    const std::string ref = units.substr(pos + 7);
+    std::string ref = units.substr(pos + 7);
+    // Accept both "YYYY-MM-DD HH:MM:SS" and ISO-8601 "YYYY-MM-DDThh:mm:ss":
+    // normalize the date/time separator to a space so one scan handles both.
+    // (A trailing "Z", "+00:00", or fractional seconds is simply ignored — CF
+    // reference times are UTC.)
+    for (char& ch : ref) {
+        if (ch == 'T' || ch == 't') ch = ' ';
+    }
     int y = 1970, mo = 1, d = 1, hh = 0, mm = 0, ss = 0;
-    std::sscanf(ref.c_str(), "%d-%d-%d %d:%d:%d", &y, &mo, &d, &hh, &mm, &ss);
-    std::tm tm{};
-    tm.tm_year = y - 1900;
-    tm.tm_mon = mo - 1;
-    tm.tm_mday = d;
-    tm.tm_hour = hh;
-    tm.tm_min = mm;
-    tm.tm_sec = ss;
-    base = static_cast<std::int64_t>(timegm(&tm));
+    // A bare date (no time-of-day) is valid; require at least Y-M-D to trust it.
+    if (std::sscanf(ref.c_str(), "%d-%d-%d %d:%d:%d", &y, &mo, &d, &hh, &mm, &ss) < 3)
+        return {perUnit, base};
+    base = core::timegmUtc(y, mo, d, hh, mm, ss);
     return {perUnit, base};
 }
 
@@ -130,13 +189,10 @@ void CfDataset::scan() {
             timeDim = dimid; timeVar = varid; return;
         }
         if (levelDim < 0) {
-            const std::string lu = lower(units);
-            const bool pressureUnit = lu == "hpa" || lu == "pa" || lu == "millibar" || lu == "mb" ||
-                                      lu == "mbar";
-            const bool pressureName = ln == "pressure_level" || ln == "plev" || ln == "level" ||
-                                      ln == "lev" || ln == "isobaricinhpa" || ln == "isobaric";
-            const bool pressureStd = std.find("air_pressure") != std::string::npos;
-            if (pressureUnit || pressureName || pressureStd) {
+            const bool hasPositive = attText(ncid_, varid, "positive").has_value();
+            VerticalLevel::Type t = VerticalLevel::Type::Unknown;
+            double sc = 1.0;
+            if (classifyVertical(units, std, name, hasPositive, t, sc)) {
                 levelDim = dimid; levelVar = varid;
             }
         }
@@ -163,13 +219,20 @@ void CfDataset::scan() {
 
     std::vector<double> levels;
     VerticalLevel::Type levelType = VerticalLevel::Type::Surface;
-    double levelScaleToHpa = 1.0;
+    double levelScale = 1.0;
     if (levelDim >= 0) {
         levels.resize(dimLen[static_cast<std::size_t>(levelDim)]);
         nc_get_var_double(ncid_, levelVar, levels.data());
-        const std::string lu = lower(attText(ncid_, levelVar, "units").value_or("hpa"));
-        levelType = VerticalLevel::Type::PressureHPa;
-        levelScaleToHpa = (lu == "pa") ? 0.01 : 1.0;
+        char lvName[NC_MAX_NAME + 1] = {0};
+        nc_inq_varname(ncid_, levelVar, lvName);
+        const std::string lu = attText(ncid_, levelVar, "units").value_or("");
+        const std::string lstd = attText(ncid_, levelVar, "standard_name").value_or("");
+        const bool hasPositive = attText(ncid_, levelVar, "positive").has_value();
+        if (!classifyVertical(lu, lstd, lvName, hasPositive, levelType, levelScale)) {
+            // Detected as the level axis but unclassified — assume pressure.
+            levelType = VerticalLevel::Type::PressureHPa;
+            levelScale = (lower(lu) == "pa") ? 0.01 : 1.0;
+        }
     }
 
     std::vector<double> times;
@@ -195,7 +258,7 @@ void CfDataset::scan() {
 
     auto levelAt = [&](std::size_t i) -> VerticalLevel {
         if (levels.empty()) return VerticalLevel{VerticalLevel::Type::Surface, 0.0};
-        return VerticalLevel{levelType, levels[i] * levelScaleToHpa};
+        return VerticalLevel{levelType, levels[i] * levelScale};
     };
     auto timeAt = [&](std::size_t i) -> TimePoint {
         if (times.empty()) return TimePoint{0};

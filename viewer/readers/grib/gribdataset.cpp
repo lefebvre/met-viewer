@@ -8,10 +8,13 @@
 #include <string>
 #include <vector>
 
+#include <sys/types.h>
+
 #include <eccodes.h>
 #include <fmt/format.h>
 
 #include "viewer/core/crs.h"
+#include "viewer/core/timeaxis.h"
 
 namespace met::readers::grib {
 namespace {
@@ -90,16 +93,12 @@ VerticalLevel mapLevel(codes_handle* h) {
 
 TimePoint mapTime(codes_handle* h) {
     // validityDate = YYYYMMDD, validityTime = HHMM (may be < 100 for HH only).
-    const long date = getLong(h, "validityDate");
-    const long time = getLong(h, "validityTime");
-    std::tm tm{};
-    tm.tm_year = static_cast<int>(date / 10000) - 1900;
-    tm.tm_mon = static_cast<int>((date / 100) % 100) - 1;
-    tm.tm_mday = static_cast<int>(date % 100);
-    tm.tm_hour = static_cast<int>(time / 100);
-    tm.tm_min = static_cast<int>(time % 100);
-    const std::time_t secs = timegm(&tm);
-    return TimePoint{static_cast<std::int64_t>(secs)};
+    const long date = getLong(h, "validityDate");  // YYYYMMDD
+    const long time = getLong(h, "validityTime");  // HHMM
+    const std::int64_t secs = core::timegmUtc(
+        static_cast<int>(date / 10000), static_cast<int>((date / 100) % 100),
+        static_cast<int>(date % 100), static_cast<int>(time / 100), static_cast<int>(time % 100), 0);
+    return TimePoint{secs};
 }
 
 int memberOf(codes_handle* h) {
@@ -212,12 +211,21 @@ std::vector<float> readValues(codes_handle* h, std::size_t expected) {
 
     const double missing = hasKey(h, "missingValue") ? getDouble(h, "missingValue") : 9999.0;
     const bool bitmap = hasKey(h, "bitmapPresent") && getLong(h, "bitmapPresent") != 0;
+    // GRIB2 complex packing can encode missing points via the missingValue
+    // sentinel with no bitmap (missing-value management). Honor a declared
+    // missing count/flag so those sentinels become NaN instead of leaking as
+    // real data — but only when the message actually declares missing values,
+    // so a legitimate reading that happens to equal 9999 is never clobbered.
+    const bool missingMgmt =
+        (hasKey(h, "numberOfMissing") && getLong(h, "numberOfMissing") > 0) ||
+        (hasKey(h, "missingValueManagementUsed") && getLong(h, "missingValueManagementUsed") != 0);
+    const bool honorMissing = bitmap || missingMgmt;
     const float nan = std::numeric_limits<float>::quiet_NaN();
 
     std::vector<float> out(len);
     for (std::size_t i = 0; i < len; ++i) {
         const double v = raw[i];
-        out[i] = (bitmap && v == missing) ? nan : static_cast<float>(v);
+        out[i] = (honorMissing && v == missing) ? nan : static_cast<float>(v);
     }
     return out;
 }
@@ -259,7 +267,9 @@ Field2D GribDataset::readField(const FieldKey& key) {
     FileGuard fg;
     fg.f = std::fopen(path_.string().c_str(), "rb");
     if (!fg.f) throw ReadError("GRIB: cannot reopen " + path_.string());
-    if (std::fseek(fg.f, static_cast<long>(*handle), SEEK_SET) != 0)
+    // fseeko + 64-bit off_t so GRIB messages past 2 GB in a large file are
+    // reachable (plain fseek is limited to `long` offsets on some platforms).
+    if (::fseeko(fg.f, static_cast<off_t>(*handle), SEEK_SET) != 0)
         throw ReadError("GRIB: seek failed");
 
     int err = 0;

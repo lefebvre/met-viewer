@@ -1,5 +1,6 @@
 #include "viewer/readers/arl/arldataset.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -13,6 +14,7 @@
 #include <fmt/format.h>
 
 #include "viewer/core/crs.h"
+#include "viewer/core/timeaxis.h"
 
 namespace met::readers::arl {
 namespace {
@@ -69,12 +71,7 @@ Label parseLabel(const char* p) {
 
 TimePoint labelTime(const Label& l) {
     const int year = l.iy >= 48 ? 1900 + l.iy : 2000 + l.iy;
-    std::tm tm{};
-    tm.tm_year = year - 1900;
-    tm.tm_mon = l.im - 1;
-    tm.tm_mday = l.id;
-    tm.tm_hour = l.ih;
-    return TimePoint{static_cast<std::int64_t>(timegm(&tm))};
+    return TimePoint{core::timegmUtc(year, l.im, l.id, l.ih, 0, 0)};
 }
 
 // Map an ARL 4-char variable name to (canonical name, units, long name).
@@ -161,7 +158,8 @@ GridDef buildGrid(const std::array<double, 12>& g, int nx, int ny) {
 // NOAA data (see arl-format-decoded memory): running row differences with a
 // row-start re-anchor, first point = var1.
 std::vector<float> unpack(const unsigned char* cpack, int nx, int ny, int nexp, double var1) {
-    const double scale = std::pow(2.0, 7 - nexp);
+    double scale = std::pow(2.0, 7 - nexp);
+    if (!(scale > 0.0) || !std::isfinite(scale)) scale = 1.0;  // guard a garbage exponent
     std::vector<float> out(static_cast<std::size_t>(nx) * static_cast<std::size_t>(ny));
     double rold = var1;
     std::size_t k = 0;
@@ -193,9 +191,13 @@ void ArlDataset::scan() {
     Label first = parseLabel(label);
     if (first.kvar != "INDX") throw ReadError("ARL: first record is not INDX");
 
-    // Read enough of the INDX data section for the fixed header + level table.
-    std::string hdr(1500, '\0');
+    // Read a generous prefix of the INDX data section: enough for the fixed
+    // header plus the variable-length level table. (A fixed 1500-byte buffer
+    // truncated realistic multi-level files, leaving later level pressures zero.)
+    std::string hdr(65536, '\0');
     in.read(hdr.data(), static_cast<std::streamsize>(hdr.size()));
+    hdr.resize(static_cast<std::size_t>(in.gcount()));
+    if (hdr.size() < 102) throw ReadError("ARL: INDX header too short");
     const char* p = hdr.data();
 
     std::array<double, 12> gf{};
@@ -203,17 +205,38 @@ void ArlDataset::scan() {
     nx_ = static_cast<int>(fInt(p, 93, 3));
     ny_ = static_cast<int>(fInt(p, 96, 3));
     const int nz = static_cast<int>(fInt(p, 99, 3));
+    // Validate the critical dimensions rather than trusting silently-zeroed
+    // parses: a bad header would otherwise yield a degenerate grid / record size.
+    if (nx_ <= 0 || ny_ <= 0 || nz <= 0) throw ReadError("ARL: invalid INDX grid dimensions");
     grid_ = buildGrid(gf, nx_, ny_);
     recLen_ = static_cast<long>(nx_) * static_cast<long>(ny_) + 50;
 
-    // Per-level heights (index 0 = surface). Used to assign pressure levels.
+    // Per-level heights (index 0 = surface). Used to assign level values.
     std::vector<double> levelHeight(static_cast<std::size_t>(nz), 0.0);
     int off = 108;
     for (int l = 0; l < nz; ++l) {
+        if (off + 8 > static_cast<int>(hdr.size())) break;
         levelHeight[static_cast<std::size_t>(l)] = fDbl(p, off, 6);
         const int nvar = static_cast<int>(fInt(p, off + 6, 2));
         off += 8 + nvar * 8;
-        if (off > static_cast<int>(hdr.size()) - 8) break;
+    }
+
+    // Infer the vertical coordinate type from the level values. ARL stores
+    // pressure (hPa), sigma (0..1), or height (m) depending on the source model;
+    // choose by magnitude instead of assuming pressure everywhere.
+    VerticalLevel::Type levelType = VerticalLevel::Type::PressureHPa;
+    {
+        double maxAbs = 0.0;
+        bool anyUpper = false;
+        for (int l = 1; l < nz; ++l) {
+            maxAbs = std::max(maxAbs, std::abs(levelHeight[static_cast<std::size_t>(l)]));
+            anyUpper = true;
+        }
+        if (anyUpper) {
+            if (maxAbs <= 1.05) levelType = VerticalLevel::Type::Sigma;
+            else if (maxAbs <= 1100.0) levelType = VerticalLevel::Type::PressureHPa;
+            else levelType = VerticalLevel::Type::HeightM;
+        }
     }
 
     // Scan every record's 50-byte label to build the catalog.
@@ -233,7 +256,7 @@ void ArlDataset::scan() {
             level.type = VerticalLevel::Type::Surface;
         } else {
             const double h = lab.ll < nz ? levelHeight[static_cast<std::size_t>(lab.ll)] : lab.ll;
-            level.type = VerticalLevel::Type::PressureHPa;
+            level.type = levelType;
             level.value = h;
         }
         const VarMeta vm = mapVar(lab.kvar);
