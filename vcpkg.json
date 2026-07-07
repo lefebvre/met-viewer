@@ -6,14 +6,13 @@
     {
       "name": "qtbase",
       "default-features": false,
-      "features": ["widgets", "gui", "network", "opengl", "png", "jpeg", "concurrent", "openssl", "xcb"]
+      "features": ["widgets", "gui", "network", "opengl", "egl", "png", "jpeg", "concurrent", "openssl", "xcb", "freetype", "fontconfig", "harfbuzz"]
     },
     "eccodes",
     "netcdf-c",
     "hdf5",
     "proj",
     "fmt",
-    "spdlog",
     {
       "name": "gtest",
       "host": false

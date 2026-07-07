@@ -1,5 +1,10 @@
 add_library(met_analysis STATIC
-    analysis.cpp
+    sample.cpp
+    wind.cpp
+    derived.cpp
+    crosssection.cpp
+    sounding.cpp
+    timeseries.cpp
 )
 
 target_include_directories(met_analysis PUBLIC ${CMAKE_SOURCE_DIR})

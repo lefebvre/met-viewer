@@ -1,0 +1,6 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+  <qresource prefix="/">
+    <file alias="coastlines/ne_coastline_110m.bin">ne_coastline_110m.bin</file>
+  </qresource>
+</RCC>

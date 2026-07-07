@@ -8,3 +8,6 @@
 *.obj
 compile_commands.json
 .cache/
+
+# Claude Code runtime
+/.claude/
