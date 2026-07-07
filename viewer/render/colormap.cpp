@@ -37,6 +37,17 @@ Rgba Colormap::mapNormalized(double t) const {
     return Rgba{lut_[idx][0], lut_[idx][1], lut_[idx][2], 255};
 }
 
+void Colormap::fillLutRgba(std::vector<std::uint8_t>& out) const {
+    out.resize(static_cast<std::size_t>(size_) * 4);
+    for (int i = 0; i < size_; ++i) {
+        const std::size_t o = static_cast<std::size_t>(i) * 4;
+        out[o + 0] = lut_[i][0];
+        out[o + 1] = lut_[i][1];
+        out[o + 2] = lut_[i][2];
+        out[o + 3] = 255;
+    }
+}
+
 Rgba Colormap::map(double value) const {
     if (std::isnan(value)) return nan_;
 

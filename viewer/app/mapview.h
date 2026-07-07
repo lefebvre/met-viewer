@@ -4,11 +4,13 @@
 #include <vector>
 
 #include <QImage>
+#include <QOpenGLFunctions>
+#include <QOpenGLWidget>
 #include <QPointF>
-#include <QWidget>
 
 #include "viewer/analysis/wind.h"
 #include "viewer/app/coastlines.h"
+#include "viewer/app/glfieldrenderer.h"
 #include "viewer/core/field.h"
 #include "viewer/render/colormap.h"
 
@@ -19,10 +21,16 @@ class TileLayer;
 // A GIS map view: XYZ basemap tiles with the field warped into Web Mercator and
 // composited on top at an adjustable opacity, plus a graticule and optional
 // coastline overlay. Supports drag-pan and cursor-anchored wheel zoom.
-class MapView : public QWidget {
+//
+// A regular lat/lon field is warped on the GPU (a fragment shader inverts the
+// projection and colormaps in one pass); projected grids and GL-init failures
+// fall back to the CPU warp.
+class MapView : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 public:
     explicit MapView(TileLayer* tiles, QWidget* parent = nullptr);
+
+    void setGpuEnabled(bool on);
 
     void setField(std::shared_ptr<core::Field2D> field);
     void setColormapByName(const QString& name);
@@ -57,7 +65,8 @@ public slots:
     void onTileReady(int z, int x, int y);
 
 protected:
-    void paintEvent(QPaintEvent* event) override;
+    void initializeGL() override;
+    void paintGL() override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
@@ -77,12 +86,19 @@ private:
     void autorange();
     void drawBarbs(QPainter& p);
     void drawStreamlines(QPainter& p);
+    bool drawFieldGpu();  // returns true if the GPU path rendered the field
 
     TileLayer* tiles_ = nullptr;
     std::shared_ptr<core::Field2D> field_;
     render::Colormap cmap_ = render::Colormap::builtin("viridis");
     double opacity_ = 0.75;
     bool autoRange_ = true;
+    bool gpuEnabled_ = false;  // opt-in; CPU warp is the robust default
+    GlFieldRenderer glField_;
+    bool glReady_ = false;
+    const void* uploadedField_ = nullptr;  // field last pushed to the GPU
+    QString uploadedCmap_;
+    double uploadedMin_ = 0, uploadedMax_ = 0;
     bool graticule_ = true;
     bool coastlinesVisible_ = true;
     std::shared_ptr<std::vector<GeoPolyline>> coastlines_;

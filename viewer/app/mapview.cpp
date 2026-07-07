@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <thread>
+#include <variant>
+#include <vector>
 
 #include <QFontMetrics>
 #include <QMouseEvent>
@@ -27,10 +30,20 @@ using render::tile::worldYToLat;
 constexpr int kTile = render::tile::kTileSize;
 }  // namespace
 
-MapView::MapView(TileLayer* tiles, QWidget* parent) : QWidget(parent), tiles_(tiles) {
+MapView::MapView(TileLayer* tiles, QWidget* parent) : QOpenGLWidget(parent), tiles_(tiles) {
     setMouseTracking(true);
     setMinimumSize(320, 240);
     if (tiles_) connect(tiles_, &TileLayer::tileReady, this, &MapView::onTileReady);
+}
+
+void MapView::setGpuEnabled(bool on) {
+    gpuEnabled_ = on;
+    update();
+}
+
+void MapView::initializeGL() {
+    initializeOpenGLFunctions();
+    glReady_ = glField_.init();
 }
 
 double MapView::worldCenterX() const { return lonToWorldX(centerLon_, zoom_); }
@@ -142,9 +155,45 @@ void MapView::ensureWarp() {
     warpMin_ = cmap_.min(); warpMax_ = cmap_.max();
 }
 
+bool MapView::drawFieldGpu() {
+    if (!field_ || !glReady_) return false;
+    const auto& g = std::get<core::RegularLatLonGrid>(field_->grid);
+
+    // Re-upload the colormapped RGBA8 texture (grid order) when the field, the
+    // colormap, or the range changes. The colormap is applied on the CPU over
+    // the small grid; the GPU does the per-pixel warp.
+    const QString cname = QString::fromStdString(cmap_.name());
+    const bool dirty = uploadedField_ != field_.get() || uploadedCmap_ != cname ||
+                       uploadedMin_ != cmap_.min() || uploadedMax_ != cmap_.max();
+    if (dirty) {
+        const std::size_t n = static_cast<std::size_t>(g.nlon) * static_cast<std::size_t>(g.nlat);
+        std::vector<unsigned char> rgba(n * 4);
+        for (std::size_t k = 0; k < n; ++k) {
+            const render::Rgba c = cmap_.map(field_->values[k]);
+            rgba[k * 4 + 0] = c.r;
+            rgba[k * 4 + 1] = c.g;
+            rgba[k * 4 + 2] = c.b;
+            rgba[k * 4 + 3] = c.a;
+        }
+        glField_.uploadField(g.nlon, g.nlat, rgba.data());
+        uploadedField_ = field_.get();
+        uploadedCmap_ = cname;
+        uploadedMin_ = cmap_.min();
+        uploadedMax_ = cmap_.max();
+    }
+
+    const GlFieldRenderer::Grid grid{static_cast<float>(g.lon0), static_cast<float>(g.lat0),
+                                     static_cast<float>(g.dlon), static_cast<float>(g.dlat),
+                                     g.nlon, g.nlat, g.globalWrapLon};
+    const GlFieldRenderer::View view{topLeftWorldX(), topLeftWorldY(),
+                                     render::tile::worldSize(zoom_), width(), height()};
+    glField_.render(grid, view, static_cast<float>(opacity_));
+    return true;
+}
+
 void MapView::onTileReady(int, int, int) { update(); }
 
-void MapView::paintEvent(QPaintEvent*) {
+void MapView::paintGL() {
     QPainter p(this);
     p.fillRect(rect(), QColor(210, 220, 230));  // neutral ocean while tiles load
 
@@ -174,10 +223,19 @@ void MapView::paintEvent(QPaintEvent*) {
         }
     }
 
-    // Warped field.
+    // Warped field: GPU shader for regular lat/lon grids, else CPU warp.
     if (field_) {
-        ensureWarp();
-        if (!warp_.isNull()) p.drawImage(0, 0, warp_);
+        bool drewGpu = false;
+        if (gpuEnabled_ && glReady_ &&
+            std::holds_alternative<core::RegularLatLonGrid>(field_->grid)) {
+            p.beginNativePainting();
+            drewGpu = drawFieldGpu();
+            p.endNativePainting();
+        }
+        if (!drewGpu) {
+            ensureWarp();
+            if (!warp_.isNull()) p.drawImage(0, 0, warp_);
+        }
     }
 
     // Graticule.

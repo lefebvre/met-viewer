@@ -1,4 +1,4 @@
-find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets Network OpenGLWidgets)
+find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets Network OpenGL OpenGLWidgets)
 
 qt_standard_project_setup()
 
@@ -10,6 +10,8 @@ add_executable(met_viewer
     plotview2d.h
     mapview.cpp
     mapview.h
+    glfieldrenderer.cpp
+    glfieldrenderer.h
     tilelayer.cpp
     tilelayer.h
     coastlines.cpp
@@ -42,5 +44,6 @@ target_link_libraries(met_viewer PRIVATE
     met_render
     Qt6::Widgets
     Qt6::Network
+    Qt6::OpenGL
     Qt6::OpenGLWidgets
 )

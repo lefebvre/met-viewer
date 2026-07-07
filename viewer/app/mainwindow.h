@@ -49,6 +49,9 @@ public:
     // Start time-animation playback (used by --play).
     void startPlayback();
 
+    // Force the CPU warp path (used by --cpu for comparison).
+    void setGpuChecked(bool on);
+
     // Set the wind overlay mode (0 off, 1 barbs, 2 streamlines); used by --wind.
     void setWindComboIndex(int index);
 
@@ -78,6 +81,7 @@ private slots:
     void onOpacityChanged(int percent);
     void onGraticuleToggled(bool on);
     void onCoastlinesToggled(bool on);
+    void onGpuToggled(bool on);
     void onWindModeChanged(int index);
     void onDerivedChanged(int index);
     void onCrossSectionRequested(const std::vector<core::LatLon>& path);
@@ -143,6 +147,7 @@ private:
     QSlider* opacitySlider_ = nullptr;
     QCheckBox* graticuleCheck_ = nullptr;
     QCheckBox* coastlineCheck_ = nullptr;
+    QCheckBox* gpuCheck_ = nullptr;
     QComboBox* windCombo_ = nullptr;
     TimeController* timeController_ = nullptr;
     QLabel* probeLabel_ = nullptr;

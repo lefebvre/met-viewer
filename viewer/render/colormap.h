@@ -47,6 +47,12 @@ public:
 
     [[nodiscard]] Rgba nanColor() const { return nan_; }
 
+    // Number of LUT entries (256).
+    [[nodiscard]] int lutSize() const { return size_; }
+    // Fill `out` with the LUT as tightly-packed RGBA8 (size_*4 bytes), for GPU
+    // upload as a 1-row texture.
+    void fillLutRgba(std::vector<std::uint8_t>& out) const;
+
 private:
     Colormap(std::string name, const std::uint8_t (*lut)[3], int size);
 

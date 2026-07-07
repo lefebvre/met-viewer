@@ -172,6 +172,11 @@ void MainWindow::buildUi() {
     connect(coastlineCheck_, &QCheckBox::toggled, this, &MainWindow::onCoastlinesToggled);
     grid->addRow(QString(), coastlineCheck_);
 
+    gpuCheck_ = new QCheckBox(tr("GPU render (experimental)"), controls);
+    gpuCheck_->setChecked(false);
+    connect(gpuCheck_, &QCheckBox::toggled, this, &MainWindow::onGpuToggled);
+    grid->addRow(QString(), gpuCheck_);
+
     windCombo_ = new QComboBox(controls);
     windCombo_->addItems({tr("Off"), tr("Barbs"), tr("Streamlines")});
     connect(windCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -592,6 +597,10 @@ void MainWindow::setWindComboIndex(int index) {
 
 void MainWindow::startPlayback() { timeController_->play(); }
 
+void MainWindow::setGpuChecked(bool on) {
+    if (gpuCheck_) gpuCheck_->setChecked(on);
+}
+
 void MainWindow::setDerivedComboIndex(int index) {
     if (derivedCombo_) derivedCombo_->setCurrentIndex(index);
 }
@@ -612,6 +621,8 @@ void MainWindow::onOpacityChanged(int percent) { mapView_->setOpacity(percent / 
 void MainWindow::onGraticuleToggled(bool on) { mapView_->setGraticuleVisible(on); }
 
 void MainWindow::onCoastlinesToggled(bool on) { mapView_->setCoastlinesVisible(on); }
+
+void MainWindow::onGpuToggled(bool on) { mapView_->setGpuEnabled(on); }
 
 void MainWindow::onWindModeChanged(int index) {
     mapView_->setWindMode(index);
