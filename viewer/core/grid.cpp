@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <vector>
 
 namespace met::core {
 namespace {
@@ -93,7 +95,10 @@ LatLon indexToLatLon(const GridDef& g, double x, double y) {
                 const double px = grid.x0 + x * grid.dx;
                 const double py = grid.y0 + y * grid.dy;
                 LatLon ll;
-                (void)grid.crs.inverse(px, py, ll.lon, ll.lat);
+                if (!grid.crs.inverse(px, py, ll.lon, ll.lat)) {
+                    const double nan = std::numeric_limits<double>::quiet_NaN();
+                    return LatLon{nan, nan};  // let callers detect an invalid inverse
+                }
                 return ll;
             }
         },
@@ -115,22 +120,23 @@ BBox gridBBox(const GridDef& g) {
                 b.minLon = std::min(lonA, lonB);
                 b.maxLon = std::max(lonA, lonB);
             } else {
-                // Sample the border of the projected grid and take the geographic
-                // extent (a projected rectangle is not a lat/lon rectangle).
-                b.minLat = 90;
-                b.maxLat = -90;
-                b.minLon = 180;
-                b.maxLon = -180;
+                // A projected rectangle is not a lat/lon rectangle: sample the
+                // border and take the geographic extent. Longitude uses a minimal
+                // covering arc so a grid straddling the ±180° antimeridian gets a
+                // correct (possibly >180°) span rather than a spurious near-global
+                // one; an enclosed pole is detected explicitly since the border
+                // never reaches an interior pole.
+                std::vector<double> lons;
+                double minLat = 90.0, maxLat = -90.0;
                 const int steps = 32;
                 auto acc = [&](double ix, double iy) {
                     const double px = grid.x0 + ix * grid.dx;
                     const double py = grid.y0 + iy * grid.dy;
                     double lon = 0, lat = 0;
                     if (!grid.crs.inverse(px, py, lon, lat)) return;
-                    b.minLat = std::min(b.minLat, lat);
-                    b.maxLat = std::max(b.maxLat, lat);
-                    b.minLon = std::min(b.minLon, lon);
-                    b.maxLon = std::max(b.maxLon, lon);
+                    lons.push_back(lon);
+                    minLat = std::min(minLat, lat);
+                    maxLat = std::max(maxLat, lat);
                 };
                 for (int k = 0; k <= steps; ++k) {
                     const double f = static_cast<double>(k) / steps;
@@ -140,6 +146,45 @@ BBox gridBBox(const GridDef& g) {
                     acc(ex, grid.ny - 1);
                     acc(0, ey);
                     acc(grid.nx - 1, ey);
+                }
+
+                // Extend the latitude range to a pole that projects to an interior
+                // grid point (a polar-stereographic grid centered on the pole).
+                auto poleInside = [&](double poleLat) {
+                    if (grid.dx == 0.0 || grid.dy == 0.0) return false;
+                    double px = 0, py = 0;
+                    if (!grid.crs.forward(0.0, poleLat, px, py)) return false;
+                    const double gx = (px - grid.x0) / grid.dx;
+                    const double gy = (py - grid.y0) / grid.dy;
+                    return gx >= 0.0 && gx <= grid.nx - 1.0 && gy >= 0.0 && gy <= grid.ny - 1.0;
+                };
+                const bool northPole = poleInside(90.0);
+                const bool southPole = poleInside(-90.0);
+                if (northPole) maxLat = 90.0;
+                if (southPole) minLat = -90.0;
+
+                b.minLat = minLat;
+                b.maxLat = maxLat;
+                if (northPole || southPole || lons.empty()) {
+                    b.minLon = -180.0;  // longitude is unconstrained around a pole
+                    b.maxLon = 180.0;
+                } else {
+                    std::sort(lons.begin(), lons.end());
+                    double gap = 0.0, gapStart = lons.front();
+                    for (std::size_t i = 1; i < lons.size(); ++i) {
+                        const double d = lons[i] - lons[i - 1];
+                        if (d > gap) { gap = d; gapStart = lons[i - 1]; }
+                    }
+                    const double wrapGap = (lons.front() + 360.0) - lons.back();
+                    if (wrapGap >= gap) {
+                        b.minLon = lons.front();  // data contiguous within [-180,180]
+                        b.maxLon = lons.back();
+                    } else {
+                        // The empty span is interior, so the covering arc crosses
+                        // the seam: start just after the gap, wrap the earlier side.
+                        b.minLon = gapStart + gap;
+                        b.maxLon = gapStart + 360.0;
+                    }
                 }
             }
             return b;

@@ -5,12 +5,20 @@
 namespace met::core {
 
 std::uint64_t makeCellKey(int levelIdx, int timeIdx, int member) {
+    // Pack three small sorted-axis indices into one 64-bit key. 20 bits each
+    // allows ~1M levels/times/members — far beyond any real dataset. Values are
+    // masked, so a pathological count would alias to a wrong (existing) record
+    // rather than corrupt memory; not guarded because it cannot occur in practice.
     const std::uint64_t l = static_cast<std::uint64_t>(levelIdx) & 0xFFFFF;         // 20 bits
     const std::uint64_t t = static_cast<std::uint64_t>(timeIdx) & 0xFFFFF;          // 20 bits
     const std::uint64_t m = static_cast<std::uint64_t>(member + 1) & 0xFFFFF;       // 20 bits
     return (l << 40) | (t << 20) | m;
 }
 
+// Exact-match lookup. `VerticalLevel::operator==` compares the double `value`
+// bit-for-bit, so callers must resolve() with a level taken from this catalog's
+// own axis (the UI does); a value reconstructed from a rounded display string may
+// not match. Same contract applies to timeIndex().
 std::optional<int> VariableEntry::levelIndex(const VerticalLevel& lvl) const {
     for (std::size_t i = 0; i < levels.size(); ++i) {
         if (levels[i] == lvl) return static_cast<int>(i);
@@ -95,6 +103,7 @@ void DatasetCatalog::finalize() {
                 std::find(entry.levels.begin(), entry.levels.end(), r.level) - entry.levels.begin());
             const int ti = static_cast<int>(
                 std::find(entry.times.begin(), entry.times.end(), r.time) - entry.times.begin());
+            // Last writer wins for a duplicate (var, level, time, member) cell.
             entry.records[makeCellKey(li, ti, r.member)] = r.handle;
         }
     }

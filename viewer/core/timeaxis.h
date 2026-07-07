@@ -18,6 +18,10 @@ struct TimePoint {
 // ISO-8601 UTC string, e.g. "2024-05-01T12:00Z". For display only.
 [[nodiscard]] std::string formatTime(TimePoint t);
 
+// Portable UTC calendar -> Unix epoch seconds (proleptic Gregorian, no timezone
+// or DST). A dependency-free replacement for the non-standard timegm().
+[[nodiscard]] std::int64_t timegmUtc(int year, int mon, int day, int hour, int min, int sec);
+
 // A vertical level. `value` is interpreted per `type` (hPa for pressure, metres
 // for height, dimensionless index for model levels, etc.).
 struct VerticalLevel {
