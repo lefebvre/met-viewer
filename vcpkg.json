@@ -1,0 +1,22 @@
+{
+  "name": "met-viewer",
+  "version": "0.1.0",
+  "builtin-baseline": "42e4e33e1505c9f47b58c21e0f557c1571b751ee",
+  "dependencies": [
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "features": ["widgets", "gui", "network", "opengl", "png", "jpeg", "concurrent", "openssl", "xcb"]
+    },
+    "eccodes",
+    "netcdf-c",
+    "hdf5",
+    "proj",
+    "fmt",
+    "spdlog",
+    {
+      "name": "gtest",
+      "host": false
+    }
+  ]
+}

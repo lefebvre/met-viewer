@@ -1,0 +1,10 @@
+/build/
+/vcpkg_installed/
+/vcpkg/buildtrees/
+/vcpkg/downloads/
+/vcpkg/packages/
+/vcpkg/installed/
+*.o
+*.obj
+compile_commands.json
+.cache/
