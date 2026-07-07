@@ -8,6 +8,7 @@
 #include <QPainter>
 
 #include "viewer/analysis/sample.h"
+#include "viewer/render/contour.h"
 #include "viewer/render/fieldimage.h"
 
 namespace met::app {
@@ -64,6 +65,25 @@ void PlotView2D::clearField() {
     update();
 }
 
+void PlotView2D::setContoursEnabled(bool enabled) {
+    contoursEnabled_ = enabled;
+    update();
+}
+
+void PlotView2D::setContourInterval(double interval) {
+    contourInterval_ = interval;
+    update();
+}
+
+QPointF PlotView2D::indexToScreen(double col, double row, const QRectF& r) const {
+    const core::LatLon ll = core::indexToLatLon(field_->grid, col, row);
+    const double lonSpan = bbox_.maxLon - bbox_.minLon;
+    const double latSpan = bbox_.maxLat - bbox_.minLat;
+    const double fx = lonSpan != 0.0 ? (ll.lon - bbox_.minLon) / lonSpan : 0.0;
+    const double fy = latSpan != 0.0 ? (bbox_.maxLat - ll.lat) / latSpan : 0.0;
+    return {r.left() + fx * r.width(), r.top() + fy * r.height()};
+}
+
 void PlotView2D::autorange() {
     double lo = std::numeric_limits<double>::infinity();
     double hi = -std::numeric_limits<double>::infinity();
@@ -112,7 +132,7 @@ void PlotView2D::paintEvent(QPaintEvent* /*event*/) {
 
     if (!field_ || image_.isNull()) {
         p.setPen(palette().color(QPalette::PlaceholderText));
-        p.drawText(rect(), Qt::AlignCenter, tr("Open a GRIB file to view a field"));
+        p.drawText(rect(), Qt::AlignCenter, tr("Open a GRIB or NetCDF file to view a field"));
         return;
     }
 
@@ -121,6 +141,25 @@ void PlotView2D::paintEvent(QPaintEvent* /*event*/) {
     p.drawImage(r, image_);
     p.setPen(palette().color(QPalette::Text));
     p.drawRect(r);
+
+    // Contour overlay.
+    if (contoursEnabled_) {
+        double interval = contourInterval_;
+        if (!(interval > 0.0))
+            interval = render::niceContourInterval(cmap_.min(), cmap_.max(), 10);
+        if (interval > 0.0) {
+            p.setRenderHint(QPainter::Antialiasing, true);
+            QPen pen(QColor(20, 20, 20, 180));
+            pen.setWidthF(0.8);
+            p.setPen(pen);
+            for (const auto& lvl : render::contourLevels(*field_, interval)) {
+                for (const auto& s : lvl.segments) {
+                    p.drawLine(indexToScreen(s.x0, s.y0, r), indexToScreen(s.x1, s.y1, r));
+                }
+            }
+            p.setRenderHint(QPainter::Antialiasing, false);
+        }
+    }
 
     // Axis ticks (slightly smaller font; guard against pixel-sized fonts whose
     // pointSizeF() is -1).

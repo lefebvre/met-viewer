@@ -7,8 +7,11 @@ add_executable(met_tests
     core/units_test.cpp
     core/catalog_test.cpp
     render/colormap_test.cpp
+    render/contour_test.cpp
     analysis/sample_test.cpp
     readers/grib_reader_test.cpp
+    readers/grib1_test.cpp
+    readers/netcdf_reader_test.cpp
 )
 
 target_include_directories(met_tests PRIVATE ${CMAKE_SOURCE_DIR})

@@ -23,6 +23,11 @@ public:
     void setColormapByName(const QString& name);
     void clearField();
 
+    // Contour overlay: when enabled, isolines are drawn at the given interval
+    // (0 => auto). Passing enabled=false hides them.
+    void setContoursEnabled(bool enabled);
+    void setContourInterval(double interval);  // 0 = auto
+
     [[nodiscard]] const render::Colormap& colormap() const { return cmap_; }
     [[nodiscard]] bool hasField() const { return field_ != nullptr; }
 
@@ -41,10 +46,15 @@ private:
     void rebuildImage();             // regenerate cached raster from field+cmap
     void autorange();                // fit cmap range to field
 
+    // Map a fractional grid index (col, row) to a screen point in the plot rect.
+    QPointF indexToScreen(double col, double row, const QRectF& r) const;
+
     std::shared_ptr<core::Field2D> field_;
     render::Colormap cmap_ = render::Colormap::builtin("viridis");
     QImage image_;                   // cached north-up raster
     core::BBox bbox_{};              // geographic extent of field_
+    bool contoursEnabled_ = false;
+    double contourInterval_ = 0.0;   // 0 = auto
 };
 
 }  // namespace met::app

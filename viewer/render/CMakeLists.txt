@@ -3,6 +3,7 @@ find_package(Qt6 CONFIG REQUIRED COMPONENTS Gui)
 add_library(met_render STATIC
     colormap.cpp
     fieldimage.cpp
+    contour.cpp
 )
 
 target_include_directories(met_render PUBLIC ${CMAKE_SOURCE_DIR})

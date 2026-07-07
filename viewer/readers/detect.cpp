@@ -6,16 +6,18 @@
 #include <vector>
 
 #include "viewer/readers/grib/gribreader.h"
+#include "viewer/readers/netcdf/cfreader.h"
 
 namespace met::readers {
 namespace {
 
-// Compile-time registry of format readers. New formats (NetCDF, ARL) register
-// here in later milestones.
+// Compile-time registry of format readers. New formats (ARL) register here in
+// later milestones.
 const std::vector<std::unique_ptr<IFormatReader>>& registry() {
     static const std::vector<std::unique_ptr<IFormatReader>>* readers = [] {
         auto* v = new std::vector<std::unique_ptr<IFormatReader>>();
         v->push_back(std::make_unique<grib::GribReader>());
+        v->push_back(std::make_unique<netcdf::CfReader>());
         return v;
     }();
     return *readers;

@@ -12,6 +12,8 @@ add_executable(met_viewer
     colorbarwidget.h
     datasetdock.cpp
     datasetdock.h
+    timecontroller.cpp
+    timecontroller.h
     jobs.cpp
     jobs.h
 )

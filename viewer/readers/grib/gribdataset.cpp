@@ -99,7 +99,12 @@ TimePoint mapTime(codes_handle* h) {
 }
 
 int memberOf(codes_handle* h) {
-    if (hasKey(h, "perturbationNumber")) return static_cast<int>(getLong(h, "perturbationNumber"));
+    // Only treat as an ensemble member for genuine ensemble products. A
+    // deterministic GRIB1 analysis defines numberOfForecastsInEnsemble=0 and
+    // perturbationNumber=0, which must map to the deterministic sentinel -1.
+    if (hasKey(h, "numberOfForecastsInEnsemble") && getLong(h, "numberOfForecastsInEnsemble") > 0 &&
+        hasKey(h, "perturbationNumber"))
+        return static_cast<int>(getLong(h, "perturbationNumber"));
     return -1;
 }
 

@@ -27,14 +27,15 @@
 #define DLAT 2.0
 
 int main(int argc, char** argv) {
-    if (argc != 2) {
-        fprintf(stderr, "usage: %s <out.grib2>\n", argv[0]);
+    if (argc < 2 || argc > 3) {
+        fprintf(stderr, "usage: %s <out.grib> [sample=GRIB2]\n", argv[0]);
         return 2;
     }
+    const char* sample = (argc == 3) ? argv[2] : "GRIB2";
 
-    codes_handle* h = codes_grib_handle_new_from_samples(NULL, "GRIB2");
+    codes_handle* h = codes_grib_handle_new_from_samples(NULL, sample);
     if (!h) {
-        fprintf(stderr, "failed to load GRIB2 sample\n");
+        fprintf(stderr, "failed to load %s sample\n", sample);
         return 1;
     }
 
@@ -52,13 +53,15 @@ int main(int argc, char** argv) {
     SET_D("jDirectionIncrementInDegrees", DLAT);
     /* scanning mode: -i +... default is +i, -j (north to south). Keep default. */
 
-    /* Temperature at 500 hPa isobaric surface. */
-    SET_L("discipline", 0);
-    SET_L("parameterCategory", 0);
-    SET_L("parameterNumber", 0);
-    SET_L("typeOfFirstFixedSurface", 100);         /* isobaric surface */
-    SET_L("scaleFactorOfFirstFixedSurface", 0);
-    SET_L("scaledValueOfFirstFixedSurface", 50000); /* 50000 Pa = 500 hPa */
+    /* Temperature at 500 hPa. Use edition-agnostic keys so the same generator
+     * works for GRIB1 and GRIB2 samples. */
+    {
+        size_t slen = 13;
+        if ((err = codes_set_string(h, "typeOfLevel", "isobaricInhPa", &slen))) goto fail;
+        slen = 1;
+        codes_set_string(h, "shortName", "t", &slen);  /* best-effort */
+    }
+    SET_L("level", 500);
 
     /* Fill values in GRIB scan order: j outer (north->south), i inner (west->east). */
     double values[NI * NJ];
