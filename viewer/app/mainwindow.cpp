@@ -13,16 +13,21 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSignalBlocker>
+#include <QSlider>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QThreadPool>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "viewer/app/coastlines.h"
 #include "viewer/app/colorbarwidget.h"
 #include "viewer/app/datasetdock.h"
 #include "viewer/app/jobs.h"
+#include "viewer/app/mapview.h"
 #include "viewer/app/plotview2d.h"
+#include "viewer/app/tilelayer.h"
 #include "viewer/app/timecontroller.h"
 #include "viewer/core/timeaxis.h"
 #include "viewer/core/units.h"
@@ -38,10 +43,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 void MainWindow::buildUi() {
+    // Central: tabbed 2D plot + GIS map, both fed by the current field.
     plot_ = new PlotView2D(this);
-    setCentralWidget(plot_);
+    tileLayer_ = new TileLayer(this);
+    mapView_ = new MapView(tileLayer_, this);
+    mapView_->setCoastlines(loadCoastlines(":/coastlines/ne_coastline_110m.bin"));
+
+    tabs_ = new QTabWidget(this);
+    tabs_->addTab(plot_, tr("2D Plot"));
+    tabs_->addTab(mapView_, tr("Map"));
+    setCentralWidget(tabs_);
+
     connect(plot_, &PlotView2D::probeMoved, this, &MainWindow::onProbeMoved);
     connect(plot_, &PlotView2D::probeLeft, this, &MainWindow::onProbeLeft);
+    connect(mapView_, &MapView::probeMoved, this, &MainWindow::onProbeMoved);
+    connect(mapView_, &MapView::probeLeft, this, &MainWindow::onProbeLeft);
 
     // Left: dataset browser.
     datasetDock_ = new DatasetDock(this);
@@ -81,6 +97,29 @@ void MainWindow::buildUi() {
     connect(contourSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
             &MainWindow::onContourIntervalChanged);
     grid->addRow(tr("Interval"), contourSpin_);
+
+    // Map-specific controls.
+    basemapCombo_ = new QComboBox(controls);
+    for (const auto& src : TileLayer::builtinSources()) basemapCombo_->addItem(src.name);
+    connect(basemapCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            &MainWindow::onBasemapChanged);
+    grid->addRow(tr("Basemap"), basemapCombo_);
+
+    opacitySlider_ = new QSlider(Qt::Horizontal, controls);
+    opacitySlider_->setRange(0, 100);
+    opacitySlider_->setValue(75);
+    connect(opacitySlider_, &QSlider::valueChanged, this, &MainWindow::onOpacityChanged);
+    grid->addRow(tr("Field opacity"), opacitySlider_);
+
+    graticuleCheck_ = new QCheckBox(tr("Graticule"), controls);
+    graticuleCheck_->setChecked(true);
+    connect(graticuleCheck_, &QCheckBox::toggled, this, &MainWindow::onGraticuleToggled);
+    grid->addRow(QString(), graticuleCheck_);
+
+    coastlineCheck_ = new QCheckBox(tr("Coastlines"), controls);
+    coastlineCheck_->setChecked(true);
+    connect(coastlineCheck_, &QCheckBox::toggled, this, &MainWindow::onCoastlinesToggled);
+    grid->addRow(QString(), coastlineCheck_);
 
     colorbar_ = new ColorbarWidget(inspector);
     form->addWidget(controls);
@@ -224,6 +263,7 @@ void MainWindow::decodeCurrent() {
         }
         currentUnits_ = QString::fromStdString(outcome.field->meta.units);
         plot_->setField(outcome.field);
+        mapView_->setField(outcome.field);
         colorbar_->setColormap(plot_->colormap());
         colorbar_->setUnits(currentUnits_);
         probeLabel_->setText(tr("%1 @ %2 — %3×%4")
@@ -237,6 +277,7 @@ void MainWindow::decodeCurrent() {
 
 void MainWindow::onColormapChanged(const QString& name) {
     plot_->setColormapByName(name);
+    mapView_->setColormapByName(name);
     if (plot_->hasField()) {
         colorbar_->setColormap(plot_->colormap());
         colorbar_->setUnits(currentUnits_);
@@ -245,9 +286,26 @@ void MainWindow::onColormapChanged(const QString& name) {
 
 void MainWindow::setContoursChecked(bool on) { contourCheck_->setChecked(on); }
 
+void MainWindow::showMapTab() {
+    if (tabs_) tabs_->setCurrentWidget(mapView_);
+}
+
 void MainWindow::onContoursToggled(bool on) { plot_->setContoursEnabled(on); }
 
 void MainWindow::onContourIntervalChanged(double value) { plot_->setContourInterval(value); }
+
+void MainWindow::onBasemapChanged(int index) {
+    const auto sources = TileLayer::builtinSources();
+    if (index < 0 || index >= sources.size()) return;
+    tileLayer_->setSource(sources.at(index));
+    mapView_->refreshSource();
+}
+
+void MainWindow::onOpacityChanged(int percent) { mapView_->setOpacity(percent / 100.0); }
+
+void MainWindow::onGraticuleToggled(bool on) { mapView_->setGraticuleVisible(on); }
+
+void MainWindow::onCoastlinesToggled(bool on) { mapView_->setCoastlinesVisible(on); }
 
 void MainWindow::onProbeMoved(double lat, double lon, double value, bool hasValue) {
     QString s = QStringLiteral("lat %1°  lon %2°").arg(lat, 0, 'f', 2).arg(lon, 0, 'f', 2);

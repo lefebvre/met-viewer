@@ -8,6 +8,12 @@ add_executable(met_viewer
     mainwindow.h
     plotview2d.cpp
     plotview2d.h
+    mapview.cpp
+    mapview.h
+    tilelayer.cpp
+    tilelayer.h
+    coastlines.cpp
+    coastlines.h
     colorbarwidget.cpp
     colorbarwidget.h
     datasetdock.cpp
@@ -16,6 +22,7 @@ add_executable(met_viewer
     timecontroller.h
     jobs.cpp
     jobs.h
+    ${CMAKE_SOURCE_DIR}/resources/met-viewer.qrc
 )
 
 target_include_directories(met_viewer PRIVATE ${CMAKE_SOURCE_DIR})

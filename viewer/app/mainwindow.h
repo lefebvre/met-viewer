@@ -12,12 +12,16 @@ class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
+class QSlider;
+class QTabWidget;
 class QThreadPool;
 
 namespace met::app {
 
 class DatasetDock;
 class PlotView2D;
+class MapView;
+class TileLayer;
 class ColorbarWidget;
 class TimeController;
 
@@ -36,6 +40,9 @@ public:
     // Programmatically toggle the contour overlay (used by tests / --contours).
     void setContoursChecked(bool on);
 
+    // Switch the central view to the GIS map tab (used by --map).
+    void showMapTab();
+
 private slots:
     void onOpenTriggered();
     void onFieldChosen(const core::FieldKey& key);
@@ -44,6 +51,10 @@ private slots:
     void onColormapChanged(const QString& name);
     void onContoursToggled(bool on);
     void onContourIntervalChanged(double value);
+    void onBasemapChanged(int index);
+    void onOpacityChanged(int percent);
+    void onGraticuleToggled(bool on);
+    void onCoastlinesToggled(bool on);
     void onProbeMoved(double lat, double lon, double value, bool hasValue);
     void onProbeLeft();
 
@@ -63,13 +74,20 @@ private:
     int levelIdx_ = 0;
     int timeIdx_ = 0;
 
+    QTabWidget* tabs_ = nullptr;
     DatasetDock* datasetDock_ = nullptr;
     PlotView2D* plot_ = nullptr;
+    MapView* mapView_ = nullptr;
+    TileLayer* tileLayer_ = nullptr;
     ColorbarWidget* colorbar_ = nullptr;
     QComboBox* colormapCombo_ = nullptr;
     QComboBox* levelCombo_ = nullptr;
+    QComboBox* basemapCombo_ = nullptr;
     QCheckBox* contourCheck_ = nullptr;
     QDoubleSpinBox* contourSpin_ = nullptr;
+    QSlider* opacitySlider_ = nullptr;
+    QCheckBox* graticuleCheck_ = nullptr;
+    QCheckBox* coastlineCheck_ = nullptr;
     TimeController* timeController_ = nullptr;
     QLabel* probeLabel_ = nullptr;
     QThreadPool* pool_ = nullptr;

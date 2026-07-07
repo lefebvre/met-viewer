@@ -8,6 +8,8 @@ add_executable(met_tests
     core/catalog_test.cpp
     render/colormap_test.cpp
     render/contour_test.cpp
+    render/tilemath_test.cpp
+    render/warp_test.cpp
     analysis/sample_test.cpp
     readers/grib_reader_test.cpp
     readers/grib1_test.cpp
