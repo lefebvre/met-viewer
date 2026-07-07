@@ -5,6 +5,7 @@
 
 #include <QMainWindow>
 
+#include "viewer/analysis/wind.h"
 #include "viewer/app/fieldcache.h"
 #include "viewer/core/field.h"
 #include "viewer/core/geo.h"
@@ -51,6 +52,9 @@ public:
     // Set the wind overlay mode (0 off, 1 barbs, 2 streamlines); used by --wind.
     void setWindComboIndex(int index);
 
+    // Set the derived-quantity combo index; used by --derived.
+    void setDerivedComboIndex(int index);
+
     // Headless demo triggers (used by --section / --sounding / --series).
     void demoCrossSection();
     void demoSounding();
@@ -72,6 +76,7 @@ private slots:
     void onGraticuleToggled(bool on);
     void onCoastlinesToggled(bool on);
     void onWindModeChanged(int index);
+    void onDerivedChanged(int index);
     void onCrossSectionRequested(const std::vector<core::LatLon>& path);
     void onSoundingRequested(core::LatLon point);
     void onTimeSeriesRequested(core::LatLon point);
@@ -82,8 +87,11 @@ private:
     void buildUi();
     void decodeCurrent();  // decode the field for the current var/level/time
     void displayField(std::shared_ptr<core::Field2D> field);  // show a decoded field
+    void presentField();   // show the current raw field or a derived quantity
     void prefetchAhead();  // decode upcoming time steps into the cache
     void updateWind();     // (re)build the wind overlay for the current level/time
+    // Build the earth-relative wind field for the current level/time, or null.
+    std::shared_ptr<analysis::WindField> buildWindField();
     void loadSettings();
     void saveSettings();
     void openPreferences();
@@ -108,6 +116,8 @@ private:
     int currentMember_ = -1;
     int levelIdx_ = 0;
     int timeIdx_ = 0;
+    std::shared_ptr<core::Field2D> currentRaw_;  // last decoded raw field
+    int derivedMode_ = 0;                        // 0 = none; see the Derived combo
 
     QTabWidget* tabs_ = nullptr;
     DatasetDock* datasetDock_ = nullptr;
@@ -117,6 +127,7 @@ private:
     ColorbarWidget* colorbar_ = nullptr;
     QComboBox* colormapCombo_ = nullptr;
     QComboBox* levelCombo_ = nullptr;
+    QComboBox* derivedCombo_ = nullptr;
     QComboBox* basemapCombo_ = nullptr;
     QCheckBox* contourCheck_ = nullptr;
     QDoubleSpinBox* contourSpin_ = nullptr;

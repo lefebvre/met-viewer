@@ -14,6 +14,7 @@ add_executable(met_tests
     analysis/sample_test.cpp
     analysis/wind_test.cpp
     analysis/analysis_tools_test.cpp
+    analysis/derived_test.cpp
     readers/grib_reader_test.cpp
     readers/grib1_test.cpp
     readers/netcdf_reader_test.cpp

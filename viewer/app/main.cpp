@@ -17,6 +17,7 @@ int main(int argc, char** argv) {
     bool contours = false;
     bool map = false;
     int windMode = 0;
+    int derivedMode = 0;
     QString demo;
     for (int i = 1; i < args.size(); ++i) {
         if (args.at(i) == "--grab" && i + 1 < args.size()) {
@@ -27,6 +28,8 @@ int main(int argc, char** argv) {
             map = true;
         } else if (args.at(i) == "--wind" && i + 1 < args.size()) {
             windMode = args.at(++i).toInt();
+        } else if (args.at(i) == "--derived" && i + 1 < args.size()) {
+            derivedMode = args.at(++i).toInt();
         } else if (args.at(i) == "--demo" && i + 1 < args.size()) {
             demo = args.at(++i);
         } else if (args.at(i) == "--play") {
@@ -38,6 +41,7 @@ int main(int argc, char** argv) {
     if (contours) window.setContoursChecked(true);
     if (map) window.showMapTab();
     if (windMode > 0) window.setWindComboIndex(windMode);
+    if (derivedMode > 0) window.setDerivedComboIndex(derivedMode);
     if (demo == "section") window.demoCrossSection();
     else if (demo == "sounding") window.demoSounding();
     else if (demo == "series") window.demoTimeSeries();

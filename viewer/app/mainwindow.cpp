@@ -30,6 +30,7 @@
 #include <QToolBar>
 
 #include "viewer/analysis/crosssection.h"
+#include "viewer/analysis/derived.h"
 #include "viewer/analysis/sounding.h"
 #include "viewer/analysis/timeseries.h"
 #include "viewer/app/coastlines.h"
@@ -96,6 +97,13 @@ void MainWindow::buildUi() {
     connect(levelCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &MainWindow::onLevelChanged);
     grid->addRow(tr("Level"), levelCombo_);
+
+    derivedCombo_ = new QComboBox(controls);
+    derivedCombo_->addItems({tr("(raw field)"), tr("Wind speed"), tr("Wind direction"),
+                             tr("Rel. vorticity"), tr("Divergence"), tr("Potential temp θ")});
+    connect(derivedCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            &MainWindow::onDerivedChanged);
+    grid->addRow(tr("Derived"), derivedCombo_);
 
     colormapCombo_ = new QComboBox(controls);
     for (const auto& name : render::Colormap::builtinNames())
@@ -307,7 +315,8 @@ void MainWindow::decodeCurrent() {
     // Cache hit: display immediately (no decode) — this is what makes scrubbing
     // and animation smooth.
     if (auto cached = fieldCache_.get(key)) {
-        displayField(cached);
+        currentRaw_ = cached;
+        presentField();
         prefetchAhead();
         return;
     }
@@ -321,9 +330,51 @@ void MainWindow::decodeCurrent() {
         }
         fieldCache_.put(key, outcome.field);
         if (outcome.generation != generation_) return;  // superseded; kept in cache
-        displayField(outcome.field);
+        currentRaw_ = outcome.field;
+        presentField();
         prefetchAhead();
     });
+}
+
+void MainWindow::presentField() {
+    if (!currentRaw_) return;
+    if (derivedMode_ == 0) {
+        displayField(currentRaw_);
+        return;
+    }
+
+    // Derived quantities.
+    std::shared_ptr<core::Field2D> derived;
+    if (derivedMode_ == 5) {
+        // Potential temperature from the current field (assumed temperature).
+        const auto& lvl = currentRaw_->meta.level;
+        if (lvl.type == core::VerticalLevel::Type::PressureHPa)
+            derived = std::make_shared<core::Field2D>(
+                analysis::potentialTemperatureField(*currentRaw_, lvl.value));
+    } else {
+        auto wind = buildWindField();
+        if (wind) {
+            switch (derivedMode_) {
+                case 1: derived = std::make_shared<core::Field2D>(analysis::windSpeedField(*wind)); break;
+                case 2: derived = std::make_shared<core::Field2D>(analysis::windDirectionField(*wind)); break;
+                case 3: derived = std::make_shared<core::Field2D>(analysis::relativeVorticityField(*wind)); break;
+                case 4: derived = std::make_shared<core::Field2D>(analysis::divergenceField(*wind)); break;
+                default: break;
+            }
+        }
+    }
+
+    if (derived) {
+        displayField(derived);
+    } else {
+        statusBar()->showMessage(tr("Derived quantity unavailable here — showing raw field"), 3000);
+        displayField(currentRaw_);
+    }
+}
+
+void MainWindow::onDerivedChanged(int index) {
+    derivedMode_ = index;
+    presentField();
 }
 
 void MainWindow::displayField(std::shared_ptr<core::Field2D> field) {
@@ -460,6 +511,10 @@ void MainWindow::setWindComboIndex(int index) {
 
 void MainWindow::startPlayback() { timeController_->play(); }
 
+void MainWindow::setDerivedComboIndex(int index) {
+    if (derivedCombo_) derivedCombo_->setCurrentIndex(index);
+}
+
 void MainWindow::onContoursToggled(bool on) { plot_->setContoursEnabled(on); }
 
 void MainWindow::onContourIntervalChanged(double value) { plot_->setContourInterval(value); }
@@ -483,23 +538,12 @@ void MainWindow::onWindModeChanged(int index) {
     updateWind();
 }
 
-void MainWindow::updateWind() {
-    if (!dataset_ || !windCombo_ || windCombo_->currentIndex() == 0 || currentLevels_.empty() ||
-        currentTimes_.empty()) {
-        mapView_->setWind(nullptr);
-        plot_->setWind(nullptr);
-        return;
-    }
-
-    // Find a U/V pair among the catalog's variables.
+std::shared_ptr<analysis::WindField> MainWindow::buildWindField() {
+    if (!dataset_ || currentLevels_.empty() || currentTimes_.empty()) return nullptr;
     std::vector<std::string> names;
     for (const auto& v : dataset_->catalog().variables()) names.push_back(v.varName);
     const auto pair = analysis::findWindPair(names);
-    if (!pair) {
-        mapView_->setWind(nullptr);
-        statusBar()->showMessage(tr("No U/V wind pair in this dataset"), 3000);
-        return;
-    }
+    if (!pair) return nullptr;
 
     const core::VerticalLevel level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
     const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
@@ -508,13 +552,22 @@ void MainWindow::updateWind() {
         wind->u = dataset_->readField(core::FieldKey{pair->uName, level, time, currentMember_});
         wind->v = dataset_->readField(core::FieldKey{pair->vName, level, time, currentMember_});
         analysis::rotateToEarthRelative(*wind);
-        mapView_->setWind(wind);
-        plot_->setWind(wind);
+        return wind;
     } catch (const std::exception&) {
-        // U/V may not exist at this level/time (e.g. surface-only pair).
+        return nullptr;  // U/V may not exist at this level/time
+    }
+}
+
+void MainWindow::updateWind() {
+    if (!windCombo_ || windCombo_->currentIndex() == 0) {
         mapView_->setWind(nullptr);
         plot_->setWind(nullptr);
+        return;
     }
+    auto wind = buildWindField();
+    if (!wind) statusBar()->showMessage(tr("No U/V wind pair at this level/time"), 3000);
+    mapView_->setWind(wind);
+    plot_->setWind(wind);
 }
 
 void MainWindow::onProbeMoved(double lat, double lon, double value, bool hasValue) {

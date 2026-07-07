@@ -1,6 +1,7 @@
 add_library(met_analysis STATIC
     sample.cpp
     wind.cpp
+    derived.cpp
     crosssection.cpp
     sounding.cpp
     timeseries.cpp
