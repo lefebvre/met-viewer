@@ -102,6 +102,39 @@ TEST(Warp, SingleAndMultiThreadedAgree) {
     EXPECT_EQ(a, b2);  // identical pixels regardless of thread count
 }
 
+TEST(Warp, ProjectedGridProducesField) {
+    // A small Lambert grid with a linear field; warping to Mercator must produce
+    // a non-empty region whose sampled colors match the field.
+    core::ProjectedGrid pg;
+    pg.crs = core::Crs("+proj=lcc +lat_1=40 +lat_2=40 +lat_0=40 +lon_0=260 +R=6371229 +units=m +no_defs");
+    pg.nx = 16; pg.ny = 12; pg.dx = 50000; pg.dy = 50000;
+    (void)pg.crs.forward(250.0, 30.0, pg.x0, pg.y0);
+
+    core::Field2D f;
+    f.grid = pg;
+    f.values.resize(16u * 12u);
+    for (int j = 0; j < 12; ++j)
+        for (int i = 0; i < 16; ++i)
+            f.values[static_cast<std::size_t>(j) * 16u + static_cast<std::size_t>(i)] =
+                static_cast<float>(250 + 0.5 * i + 0.3 * j);
+
+    auto cmap = Colormap::builtin("viridis");
+    cmap.setRange(250, 262);
+    const core::BBox b = core::gridBBox(f.grid);
+    const int z = tile::zoomForLonSpan(b.maxLon - b.minLon, 500);
+    const double cx = tile::lonToWorldX(0.5 * (b.minLon + b.maxLon), z);
+    const double cy = tile::latToWorldY(0.5 * (b.minLat + b.maxLat), z);
+    MercatorViewport view{cx - 250, cy - 250, z, 500, 500};
+
+    QImage img = warpToMercator(f, cmap, view, 1.0, 2);
+    // Count opaque pixels: the projected patch should cover a meaningful area.
+    int opaque = 0;
+    for (int y = 0; y < img.height(); ++y)
+        for (int x = 0; x < img.width(); ++x)
+            if (qAlpha(img.pixel(x, y)) > 0) ++opaque;
+    EXPECT_GT(opaque, 1000);
+}
+
 // Performance tripwire: a 1080p warp of an ERA5-sized regular grid must stay
 // well under budget. Generous threshold to avoid flakiness while still catching
 // gross regressions (e.g. accidentally dropping the per-row mapping cache).

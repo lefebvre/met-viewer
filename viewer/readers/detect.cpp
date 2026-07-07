@@ -5,6 +5,7 @@
 #include <fstream>
 #include <vector>
 
+#include "viewer/readers/arl/arlreader.h"
 #include "viewer/readers/grib/gribreader.h"
 #include "viewer/readers/netcdf/cfreader.h"
 
@@ -18,6 +19,7 @@ const std::vector<std::unique_ptr<IFormatReader>>& registry() {
         auto* v = new std::vector<std::unique_ptr<IFormatReader>>();
         v->push_back(std::make_unique<grib::GribReader>());
         v->push_back(std::make_unique<netcdf::CfReader>());
+        v->push_back(std::make_unique<arl::ArlReader>());
         return v;
     }();
     return *readers;

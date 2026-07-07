@@ -12,6 +12,7 @@
 namespace met::render {
 namespace {
 
+using core::ProjectedGrid;
 using core::RegularLatLonGrid;
 
 // NaN-aware bilinear sample at fractional (x, y). Inlined here to keep met_render
@@ -48,18 +49,40 @@ float sampleBilinear(const core::Field2D& f, double x, double y) {
     return wsum > 0.999 ? static_cast<float>(acc / wsum) : best;
 }
 
-}  // namespace
+// Write one colormapped, opacity-scaled, premultiplied pixel.
+inline void writePixel(QRgb* scan, int px, float v, const Colormap& cmap, double alphaScale) {
+    if (std::isnan(v)) return;
+    const Rgba c = cmap.map(v);
+    if (c.a == 0) return;
+    const double a = (c.a / 255.0) * alphaScale;
+    scan[px] = qRgba(static_cast<int>(std::lround(c.r * a)), static_cast<int>(std::lround(c.g * a)),
+                     static_cast<int>(std::lround(c.b * a)), static_cast<int>(std::lround(a * 255.0)));
+}
 
-QImage warpToMercator(const core::Field2D& field, const Colormap& cmap,
-                      const MercatorViewport& view, double opacity, int threads) {
-    QImage img(view.width, view.height, QImage::Format_ARGB32_Premultiplied);
-    img.fill(Qt::transparent);
-    if (view.width <= 0 || view.height <= 0) return img;
+// Run `body(y0, y1)` over the row range, single- or multi-threaded.
+template <typename F>
+void runRows(int height, int threads, F&& body) {
+    if (threads <= 1) {
+        body(0, height);
+        return;
+    }
+    const int n = std::min(threads, height);
+    std::vector<std::thread> pool;
+    pool.reserve(static_cast<std::size_t>(n));
+    const int chunk = (height + n - 1) / n;
+    for (int t = 0; t < n; ++t) {
+        const int y0 = t * chunk;
+        const int y1 = std::min(y0 + chunk, height);
+        if (y0 >= y1) break;
+        pool.emplace_back([&body, y0, y1] { body(y0, y1); });
+    }
+    for (auto& th : pool) th.join();
+}
 
-    const auto& g = std::get<RegularLatLonGrid>(field.grid);
-    const double alphaScale = std::clamp(opacity, 0.0, 1.0);
-
-    // Column mapping cache: fractional grid column per output x (longitude only).
+// Regular lat/lon path: fractional column depends only on x, row only on y, so
+// both are precomputed once and the inner loop is a bilinear gather + LUT.
+void warpRegular(const core::Field2D& field, const RegularLatLonGrid& g, const Colormap& cmap,
+                 const MercatorViewport& view, double alphaScale, int threads, QImage& img) {
     std::vector<double> fxCol(static_cast<std::size_t>(view.width));
     std::vector<unsigned char> okCol(static_cast<std::size_t>(view.width), 0);
     for (int px = 0; px < view.width; ++px) {
@@ -76,8 +99,6 @@ QImage warpToMercator(const core::Field2D& field, const Colormap& cmap,
         fxCol[static_cast<std::size_t>(px)] = fx;
         okCol[static_cast<std::size_t>(px)] = ok ? 1 : 0;
     }
-
-    // Row mapping cache: fractional grid row per output y (latitude only).
     std::vector<double> fyRow(static_cast<std::size_t>(view.height));
     std::vector<unsigned char> okRow(static_cast<std::size_t>(view.height), 0);
     for (int py = 0; py < view.height; ++py) {
@@ -87,43 +108,80 @@ QImage warpToMercator(const core::Field2D& field, const Colormap& cmap,
         okRow[static_cast<std::size_t>(py)] = (fy >= 0.0 && fy <= g.nlat - 1.0) ? 1 : 0;
     }
 
-    auto fillRows = [&](int y0, int y1) {
+    runRows(view.height, threads, [&](int y0, int y1) {
         for (int py = y0; py < y1; ++py) {
             if (!okRow[static_cast<std::size_t>(py)]) continue;
             const double fy = fyRow[static_cast<std::size_t>(py)];
             auto* scan = reinterpret_cast<QRgb*>(img.scanLine(py));
             for (int px = 0; px < view.width; ++px) {
                 if (!okCol[static_cast<std::size_t>(px)]) continue;
-                const float v = sampleBilinear(field, fxCol[static_cast<std::size_t>(px)], fy);
-                if (std::isnan(v)) continue;
-                const Rgba c = cmap.map(v);
-                if (c.a == 0) continue;
-                const double a = (c.a / 255.0) * alphaScale;
-                const auto A = static_cast<int>(std::lround(a * 255.0));
-                // Premultiplied.
-                const int R = static_cast<int>(std::lround(c.r * a));
-                const int G = static_cast<int>(std::lround(c.g * a));
-                const int B = static_cast<int>(std::lround(c.b * a));
-                scan[px] = qRgba(R, G, B, A);
+                writePixel(scan, px, sampleBilinear(field, fxCol[static_cast<std::size_t>(px)], fy),
+                           cmap, alphaScale);
             }
         }
-    };
+    });
+}
 
-    if (threads <= 1) {
-        fillRows(0, view.height);
-    } else {
-        const int n = std::min(threads, view.height);
-        std::vector<std::thread> pool;
-        pool.reserve(static_cast<std::size_t>(n));
-        const int chunk = (view.height + n - 1) / n;
-        for (int t = 0; t < n; ++t) {
-            const int y0 = t * chunk;
-            const int y1 = std::min(y0 + chunk, view.height);
-            if (y0 >= y1) break;
-            pool.emplace_back(fillRows, y0, y1);
+// Projected path: invert each output pixel's Mercator position to lon/lat (cheap
+// closed form), batch-project lon/lat to grid coordinates through PROJ once, then
+// gather. This is the per-viewport mapping cache for arbitrary projections.
+void warpProjected(const core::Field2D& field, const ProjectedGrid& g, const Colormap& cmap,
+                   const MercatorViewport& view, double alphaScale, int threads, QImage& img) {
+    const std::size_t n = static_cast<std::size_t>(view.width) * static_cast<std::size_t>(view.height);
+    std::vector<double> a(n), b(n);  // lon/lat -> x/y in place
+
+    // Longitude depends only on column, latitude only on row: precompute both.
+    std::vector<double> lonCol(static_cast<std::size_t>(view.width));
+    for (int px = 0; px < view.width; ++px)
+        lonCol[static_cast<std::size_t>(px)] = tile::worldXToLon(view.topLeftWorldX + px + 0.5, view.zoom);
+    std::vector<double> latRow(static_cast<std::size_t>(view.height));
+    for (int py = 0; py < view.height; ++py)
+        latRow[static_cast<std::size_t>(py)] = tile::worldYToLat(view.topLeftWorldY + py + 0.5, view.zoom);
+
+    for (int py = 0; py < view.height; ++py) {
+        const std::size_t row = static_cast<std::size_t>(py) * static_cast<std::size_t>(view.width);
+        for (int px = 0; px < view.width; ++px) {
+            a[row + static_cast<std::size_t>(px)] = lonCol[static_cast<std::size_t>(px)];
+            b[row + static_cast<std::size_t>(px)] = latRow[static_cast<std::size_t>(py)];
         }
-        for (auto& th : pool) th.join();
     }
+    g.crs.forwardBatch(a.data(), b.data(), n);  // now a=x, b=y (projected metres)
+
+    runRows(view.height, threads, [&](int y0, int y1) {
+        for (int py = y0; py < y1; ++py) {
+            const std::size_t row = static_cast<std::size_t>(py) * static_cast<std::size_t>(view.width);
+            auto* scan = reinterpret_cast<QRgb*>(img.scanLine(py));
+            for (int px = 0; px < view.width; ++px) {
+                const double x = a[row + static_cast<std::size_t>(px)];
+                const double y = b[row + static_cast<std::size_t>(px)];
+                if (!std::isfinite(x) || !std::isfinite(y)) continue;
+                const double fx = g.dx != 0.0 ? (x - g.x0) / g.dx : 0.0;
+                const double fy = g.dy != 0.0 ? (y - g.y0) / g.dy : 0.0;
+                if (fx < 0.0 || fx > g.nx - 1.0 || fy < 0.0 || fy > g.ny - 1.0) continue;
+                writePixel(scan, px, sampleBilinear(field, fx, fy), cmap, alphaScale);
+            }
+        }
+    });
+}
+
+}  // namespace
+
+QImage warpToMercator(const core::Field2D& field, const Colormap& cmap,
+                      const MercatorViewport& view, double opacity, int threads) {
+    QImage img(view.width, view.height, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    if (view.width <= 0 || view.height <= 0) return img;
+
+    const double alphaScale = std::clamp(opacity, 0.0, 1.0);
+    std::visit(
+        [&](const auto& grid) {
+            using T = std::decay_t<decltype(grid)>;
+            if constexpr (std::is_same_v<T, RegularLatLonGrid>)
+                warpRegular(field, grid, cmap, view, alphaScale, threads, img);
+            else
+                warpProjected(field, grid, cmap, view, alphaScale, threads, img);
+        },
+        field.grid);
     return img;
 }
 

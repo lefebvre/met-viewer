@@ -39,6 +39,12 @@ echo "generating GRIB2 regular_ll fixture..."
 echo "generating GRIB1 regular_ll fixture..."
 "$TMP/make_grib_fixture" "$FIXDIR/regular_ll_t500.grib1" GRIB1
 
+echo "compiling + generating Lambert GRIB2 fixture..."
+g++ "$ROOT/tools/make_lambert_fixture.c" -I"$VI/include" -L"$VI/lib" \
+    -leccodes -leccodes_memfs -lopenjp2 -laec -lpng16 -lz -lm \
+    -Wl,-rpath,"$VI/lib" -o "$TMP/make_lambert_fixture"
+"$TMP/make_lambert_fixture" "$FIXDIR/lambert_sfc.grib2"
+
 echo "compiling make_netcdf_fixture..."
 # Static libnetcdf drags in HDF5, szip/aec, and curl (DAP) with its own chain.
 g++ "$ROOT/tools/make_netcdf_fixture.c" -I"$VI/include" -L"$VI/lib" \
@@ -49,6 +55,9 @@ g++ "$ROOT/tools/make_netcdf_fixture.c" -I"$VI/include" -L"$VI/lib" \
 
 echo "generating ERA5-shaped NetCDF fixture..."
 "$TMP/make_netcdf_fixture" "$FIXDIR/era5_t_pl.nc"
+
+echo "generating synthetic ARL fixture..."
+python3 "$ROOT/tools/make_arl_fixture.py" "$FIXDIR/small_latlon.arl"
 
 echo "done. fixtures in $FIXDIR:"
 ls -l "$FIXDIR"

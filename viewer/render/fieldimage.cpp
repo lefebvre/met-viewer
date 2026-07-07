@@ -9,12 +9,14 @@ QImage fieldToImage(const core::Field2D& field, const Colormap& cmap) {
     const int h = field.height();
     if (w <= 0 || h <= 0) return {};
 
-    // Determine orientation from the grid's signed spacing so the output is
+    // Determine orientation from the grid's signed spacing so a lat/lon grid is
     // always north-up (top row = highest latitude) and west-east (left = lowest
-    // longitude).
-    const auto& grid = std::get<core::RegularLatLonGrid>(field.grid);
-    const bool flipRows = grid.dlat > 0.0;  // grid runs south->north; put north on top
-    const bool flipCols = grid.dlon < 0.0;  // grid runs east->west; put west on left
+    // longitude). Projected grids are drawn in native index order (row 0 top).
+    bool flipRows = false, flipCols = false;
+    if (const auto* grid = std::get_if<core::RegularLatLonGrid>(&field.grid)) {
+        flipRows = grid->dlat > 0.0;  // grid runs south->north; put north on top
+        flipCols = grid->dlon < 0.0;  // grid runs east->west; put west on left
+    }
 
     QImage img(w, h, QImage::Format_ARGB32);
     for (int r = 0; r < h; ++r) {

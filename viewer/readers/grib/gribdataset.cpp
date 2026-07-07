@@ -9,6 +9,9 @@
 #include <vector>
 
 #include <eccodes.h>
+#include <fmt/format.h>
+
+#include "viewer/core/crs.h"
 
 namespace met::readers::grib {
 namespace {
@@ -16,6 +19,7 @@ namespace {
 using core::Field2D;
 using core::FieldKey;
 using core::GridDef;
+using core::ProjectedGrid;
 using core::RegularLatLonGrid;
 using core::TimePoint;
 using core::VerticalLevel;
@@ -132,6 +136,61 @@ GridDef buildRegularLatLon(codes_handle* h) {
     return g;
 }
 
+// Earth radius (metres) from shapeOfTheEarth, defaulting to the WMO sphere.
+double earthRadius(codes_handle* h) {
+    if (hasKey(h, "radius") && codes_is_defined(h, "radius")) {
+        const double r = getDouble(h, "radius");
+        if (r > 1e6) return r;
+    }
+    const long shape = hasKey(h, "shapeOfTheEarth") ? getLong(h, "shapeOfTheEarth") : 6;
+    switch (shape) {
+        case 0: return 6367470.0;
+        case 6: return 6371229.0;
+        case 8: return 6371200.0;
+        default: return 6371229.0;
+    }
+}
+
+// Build a ProjectedGrid, anchoring x0/y0 by projecting the first grid point.
+GridDef buildProjected(codes_handle* h, const std::string& gridType) {
+    const double R = earthRadius(h);
+    const int nx = static_cast<int>(getLong(h, "Nx"));
+    const int ny = static_cast<int>(getLong(h, "Ny"));
+    const double lat1 = getDouble(h, "latitudeOfFirstGridPointInDegrees");
+    const double lon1 = getDouble(h, "longitudeOfFirstGridPointInDegrees");
+    const double dxm = getDouble(h, "DxInMetres");
+    const double dym = getDouble(h, "DyInMetres");
+    const bool iNeg = getLong(h, "iScansNegatively") != 0;
+    const bool jPos = getLong(h, "jScansPositively") != 0;
+
+    std::string proj;
+    if (gridType == "lambert") {
+        const double latin1 = getDouble(h, "Latin1InDegrees");
+        const double latin2 = getDouble(h, "Latin2InDegrees");
+        const double lad = getDouble(h, "LaDInDegrees");
+        const double lov = getDouble(h, "LoVInDegrees");
+        proj = fmt::format("+proj=lcc +lat_1={} +lat_2={} +lat_0={} +lon_0={} +R={} +units=m +no_defs",
+                           latin1, latin2, lad, lov, R);
+    } else {  // polar_stereographic
+        const double lad = hasKey(h, "LaDInDegrees") ? getDouble(h, "LaDInDegrees") : 60.0;
+        const double lov = getDouble(h, "orientationOfTheGridInDegrees");
+        const bool south = hasKey(h, "projectionCentreFlag") &&
+                           (getLong(h, "projectionCentreFlag") & 0x80) != 0;
+        proj = fmt::format("+proj=stere +lat_0={} +lat_ts={} +lon_0={} +R={} +units=m +no_defs",
+                           south ? -90.0 : 90.0, lad, lov, R);
+    }
+
+    ProjectedGrid g;
+    g.crs = core::Crs(proj);
+    g.nx = nx;
+    g.ny = ny;
+    g.dx = iNeg ? -dxm : dxm;
+    g.dy = jPos ? dym : -dym;
+    if (!g.crs.forward(lon1, lat1, g.x0, g.y0))
+        throw ReadError("GRIB: cannot project first grid point");
+    return g;
+}
+
 // Reject scan modes we do not normalize in M1.
 void checkSupportedScan(codes_handle* h) {
     if (hasKey(h, "alternativeRowScanning") && getLong(h, "alternativeRowScanning") != 0)
@@ -180,7 +239,8 @@ void GribDataset::scan() {
         if (err != CODES_SUCCESS) throw ReadError("GRIB: scan error");
 
         const std::string grid = getString(raw, "gridType");
-        if (grid != "regular_ll") continue;  // M1: regular lat/lon only
+        if (grid != "regular_ll" && grid != "lambert" && grid != "polar_stereographic")
+            continue;  // supported grids: regular lat/lon + Lambert + polar-stereographic
 
         const auto offset = static_cast<core::RecordHandle>(getLong(raw, "offset"));
         catalog_.addRecord(getString(raw, "shortName"), getString(raw, "name"),
@@ -210,7 +270,11 @@ Field2D GribDataset::readField(const FieldKey& key) {
     checkSupportedScan(raw);
 
     Field2D field;
-    field.grid = buildRegularLatLon(raw);
+    const std::string gridType = getString(raw, "gridType");
+    if (gridType == "regular_ll")
+        field.grid = buildRegularLatLon(raw);
+    else
+        field.grid = buildProjected(raw, gridType);
     field.values = readValues(raw, core::gridCount(field.grid));
 
     field.meta.varName = key.varName;

@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 #include <variant>
 
+#include "viewer/core/crs.h"
 #include "viewer/core/geo.h"
 
 namespace met::core {
@@ -21,10 +23,23 @@ struct RegularLatLonGrid {
     bool globalWrapLon = false;
 };
 
+// A grid defined in a projected coordinate system (GRIB Lambert / polar-
+// stereographic, conformal ARL). Grid point (0, 0) is at projected coordinate
+// (x0, y0) in metres; dx/dy are signed spacings; the projection is given by a
+// proj4 string. Geographic <-> index mapping goes through PROJ.
+struct ProjectedGrid {
+    Crs crs;
+    double x0 = 0.0;
+    double y0 = 0.0;
+    double dx = 0.0;
+    double dy = 0.0;
+    int nx = 0;
+    int ny = 0;
+};
+
 // The internal grid abstraction. Every reader normalizes into one of these
 // alternatives; everything above (warp, sampling, contours) only speaks GridDef.
-// M1 ships RegularLatLonGrid; GaussianGrid and ProjectedGrid are added later.
-using GridDef = std::variant<RegularLatLonGrid>;
+using GridDef = std::variant<RegularLatLonGrid, ProjectedGrid>;
 
 // Number of columns / rows, and total cells.
 [[nodiscard]] int gridWidth(const GridDef& g);
