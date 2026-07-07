@@ -28,6 +28,8 @@ add_executable(met_viewer
     timecontroller.h
     jobs.cpp
     jobs.h
+    fieldcache.cpp
+    fieldcache.h
     ${CMAKE_SOURCE_DIR}/resources/met-viewer.qrc
 )
 

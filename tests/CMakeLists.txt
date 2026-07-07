@@ -19,6 +19,8 @@ add_executable(met_tests
     readers/netcdf_reader_test.cpp
     readers/lambert_test.cpp
     readers/arl_test.cpp
+    app/fieldcache_test.cpp
+    ${CMAKE_SOURCE_DIR}/viewer/app/fieldcache.cpp
 )
 
 target_include_directories(met_tests PRIVATE ${CMAKE_SOURCE_DIR})

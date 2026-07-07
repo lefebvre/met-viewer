@@ -22,6 +22,11 @@
 #include <QWidget>
 
 #include <QActionGroup>
+#include <QCloseEvent>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QSettings>
+#include <QSpinBox>
 #include <QToolBar>
 
 #include "viewer/analysis/crosssection.h"
@@ -49,6 +54,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     resize(1280, 800);
     pool_ = new QThreadPool(this);
     buildUi();
+    loadSettings();
 }
 
 void MainWindow::buildUi() {
@@ -161,6 +167,9 @@ void MainWindow::buildUi() {
     QAction* openAct = fileMenu->addAction(tr("&Open…"));
     openAct->setShortcut(QKeySequence::Open);
     connect(openAct, &QAction::triggered, this, &MainWindow::onOpenTriggered);
+    QAction* prefAct = fileMenu->addAction(tr("&Preferences…"));
+    connect(prefAct, &QAction::triggered, this, &MainWindow::openPreferences);
+    fileMenu->addSeparator();
     QAction* quitAct = fileMenu->addAction(tr("&Quit"));
     quitAct->setShortcut(QKeySequence::Quit);
     connect(quitAct, &QAction::triggered, this, &QWidget::close);
@@ -214,6 +223,7 @@ void MainWindow::openFile(const QString& path) {
         QMessageBox::warning(this, tr("Open failed"), QString::fromUtf8(e.what()));
         return;
     }
+    fieldCache_.clear();  // a new file invalidates cached fields
     datasetDock_->setCatalog(dataset_->catalog());
     plot_->clearField();
     colorbar_->clear();
@@ -293,27 +303,58 @@ void MainWindow::decodeCurrent() {
     key.member = currentMember_;
 
     const quint64 gen = ++generation_;
-    probeLabel_->setText(tr("Decoding…"));
 
-    submitDecode(*pool_, dataset_, key, gen, this, [this, gen](DecodeOutcome outcome) {
-        if (outcome.generation != generation_) return;  // stale
+    // Cache hit: display immediately (no decode) — this is what makes scrubbing
+    // and animation smooth.
+    if (auto cached = fieldCache_.get(key)) {
+        displayField(cached);
+        prefetchAhead();
+        return;
+    }
+
+    probeLabel_->setText(tr("Decoding…"));
+    submitDecode(*pool_, dataset_, key, gen, this, [this, gen, key](DecodeOutcome outcome) {
         if (!outcome.field) {
-            probeLabel_->setText(tr("Decode error: %1").arg(outcome.error));
+            if (outcome.generation == generation_)
+                probeLabel_->setText(tr("Decode error: %1").arg(outcome.error));
             return;
         }
-        currentUnits_ = QString::fromStdString(outcome.field->meta.units);
-        plot_->setField(outcome.field);
-        mapView_->setField(outcome.field);
-        colorbar_->setColormap(plot_->colormap());
-        colorbar_->setUnits(currentUnits_);
-        probeLabel_->setText(tr("%1 @ %2 — %3×%4")
-                                 .arg(QString::fromStdString(outcome.field->meta.varName))
-                                 .arg(QString::fromStdString(
-                                     met::core::formatLevel(outcome.field->meta.level)))
-                                 .arg(outcome.field->width())
-                                 .arg(outcome.field->height()));
-        updateWind();  // keep the wind overlay in sync with the current level/time
+        fieldCache_.put(key, outcome.field);
+        if (outcome.generation != generation_) return;  // superseded; kept in cache
+        displayField(outcome.field);
+        prefetchAhead();
     });
+}
+
+void MainWindow::displayField(std::shared_ptr<core::Field2D> field) {
+    currentUnits_ = QString::fromStdString(field->meta.units);
+    plot_->setField(field);
+    mapView_->setField(field);
+    colorbar_->setColormap(plot_->colormap());
+    colorbar_->setUnits(currentUnits_);
+    probeLabel_->setText(tr("%1 @ %2 — %3×%4")
+                             .arg(QString::fromStdString(field->meta.varName))
+                             .arg(QString::fromStdString(met::core::formatLevel(field->meta.level)))
+                             .arg(field->width())
+                             .arg(field->height()));
+    updateWind();
+}
+
+void MainWindow::prefetchAhead() {
+    if (!dataset_ || currentTimes_.size() < 2) return;
+    const int n = static_cast<int>(currentTimes_.size());
+    for (int step = 1; step <= prefetchAhead_ && step < n; ++step) {
+        core::FieldKey key;
+        key.varName = currentVar_;
+        key.level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
+        key.validTime = currentTimes_[static_cast<std::size_t>((timeIdx_ + step) % n)];
+        key.member = currentMember_;
+        if (fieldCache_.contains(key)) continue;
+        // Prefetch jobs never display (generation 0); they only warm the cache.
+        submitDecode(*pool_, dataset_, key, 0, this, [this, key](DecodeOutcome outcome) {
+            if (outcome.field) fieldCache_.put(key, outcome.field);
+        });
+    }
 }
 
 std::vector<std::pair<double, core::Field2D>> MainWindow::readLevelStack(
@@ -417,6 +458,8 @@ void MainWindow::setWindComboIndex(int index) {
     if (windCombo_) windCombo_->setCurrentIndex(index);
 }
 
+void MainWindow::startPlayback() { timeController_->play(); }
+
 void MainWindow::onContoursToggled(bool on) { plot_->setContoursEnabled(on); }
 
 void MainWindow::onContourIntervalChanged(double value) { plot_->setContourInterval(value); }
@@ -494,6 +537,74 @@ void MainWindow::onProbeMoved(double lat, double lon, double value, bool hasValu
 
 void MainWindow::onProbeLeft() {
     if (plot_->hasField()) probeLabel_->setText(tr("—"));
+}
+
+void MainWindow::loadSettings() {
+    QSettings s;
+    if (s.contains("geometry")) restoreGeometry(s.value("geometry").toByteArray());
+    if (s.contains("windowState")) restoreState(s.value("windowState").toByteArray());
+
+    const QString cmap = s.value("colormap", "viridis").toString();
+    const int ci = colormapCombo_->findText(cmap);
+    if (ci >= 0) colormapCombo_->setCurrentIndex(ci);
+    const int bi = s.value("basemap", 0).toInt();
+    if (bi >= 0 && bi < basemapCombo_->count()) basemapCombo_->setCurrentIndex(bi);
+    opacitySlider_->setValue(s.value("opacity", 75).toInt());
+    graticuleCheck_->setChecked(s.value("graticule", true).toBool());
+    coastlineCheck_->setChecked(s.value("coastlines", true).toBool());
+
+    cacheBudgetMB_ = s.value("cacheBudgetMB", 1024).toInt();
+    fieldCache_.setBudgetBytes(static_cast<std::size_t>(cacheBudgetMB_) * 1024 * 1024);
+    animationFps_ = s.value("animationFps", 6).toInt();
+    timeController_->setFps(animationFps_);
+}
+
+void MainWindow::saveSettings() {
+    QSettings s;
+    s.setValue("geometry", saveGeometry());
+    s.setValue("windowState", saveState());
+    s.setValue("colormap", colormapCombo_->currentText());
+    s.setValue("basemap", basemapCombo_->currentIndex());
+    s.setValue("opacity", opacitySlider_->value());
+    s.setValue("graticule", graticuleCheck_->isChecked());
+    s.setValue("coastlines", coastlineCheck_->isChecked());
+    s.setValue("cacheBudgetMB", cacheBudgetMB_);
+    s.setValue("animationFps", animationFps_);
+}
+
+void MainWindow::openPreferences() {
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("Preferences"));
+    auto* form = new QFormLayout(&dlg);
+
+    auto* cacheSpin = new QSpinBox(&dlg);
+    cacheSpin->setRange(16, 16384);
+    cacheSpin->setSuffix(tr(" MB"));
+    cacheSpin->setValue(cacheBudgetMB_);
+    form->addRow(tr("Field cache budget"), cacheSpin);
+
+    auto* fpsSpin = new QSpinBox(&dlg);
+    fpsSpin->setRange(1, 30);
+    fpsSpin->setSuffix(tr(" fps"));
+    fpsSpin->setValue(animationFps_);
+    form->addRow(tr("Animation speed"), fpsSpin);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+    if (dlg.exec() == QDialog::Accepted) {
+        cacheBudgetMB_ = cacheSpin->value();
+        fieldCache_.setBudgetBytes(static_cast<std::size_t>(cacheBudgetMB_) * 1024 * 1024);
+        animationFps_ = fpsSpin->value();
+        timeController_->setFps(animationFps_);
+    }
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    saveSettings();
+    QMainWindow::closeEvent(event);
 }
 
 }  // namespace met::app

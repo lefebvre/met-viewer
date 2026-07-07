@@ -5,6 +5,7 @@
 
 class QLabel;
 class QSlider;
+class QTimer;
 class QToolButton;
 
 namespace met::app {
@@ -22,6 +23,10 @@ public:
     void setSteps(const QStringList& labels, int current = 0);
     [[nodiscard]] int currentIndex() const;
 
+    void setFps(int fps);
+    [[nodiscard]] bool isPlaying() const;
+    void play();  // start playback programmatically
+
 signals:
     void indexChanged(int index);
 
@@ -29,14 +34,20 @@ private slots:
     void onSliderMoved(int value);
     void stepPrev();
     void stepNext();
+    void togglePlay();
+    void advanceFrame();
 
 private:
     void updateLabel();
+    void setPlaying(bool playing);
 
     QSlider* slider_ = nullptr;
     QLabel* label_ = nullptr;
     QToolButton* prev_ = nullptr;
     QToolButton* next_ = nullptr;
+    QToolButton* play_ = nullptr;
+    QTimer* timer_ = nullptr;
+    int fps_ = 6;
     QStringList labels_;
 };
 

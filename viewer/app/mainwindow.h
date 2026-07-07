@@ -5,6 +5,7 @@
 
 #include <QMainWindow>
 
+#include "viewer/app/fieldcache.h"
 #include "viewer/core/field.h"
 #include "viewer/core/geo.h"
 #include "viewer/readers/ireader.h"
@@ -44,6 +45,9 @@ public:
     // Switch the central view to the GIS map tab (used by --map).
     void showMapTab();
 
+    // Start time-animation playback (used by --play).
+    void startPlayback();
+
     // Set the wind overlay mode (0 off, 1 barbs, 2 streamlines); used by --wind.
     void setWindComboIndex(int index);
 
@@ -51,6 +55,9 @@ public:
     void demoCrossSection();
     void demoSounding();
     void demoTimeSeries();
+
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     void onOpenTriggered();
@@ -74,7 +81,12 @@ private slots:
 private:
     void buildUi();
     void decodeCurrent();  // decode the field for the current var/level/time
+    void displayField(std::shared_ptr<core::Field2D> field);  // show a decoded field
+    void prefetchAhead();  // decode upcoming time steps into the cache
     void updateWind();     // (re)build the wind overlay for the current level/time
+    void loadSettings();
+    void saveSettings();
+    void openPreferences();
 
     // Read all pressure levels of `varName` at the current time (pressure, field).
     std::vector<std::pair<double, core::Field2D>> readLevelStack(const std::string& varName);
@@ -84,6 +96,10 @@ private:
     std::shared_ptr<readers::IDataset> dataset_;
     QString currentUnits_;
     quint64 generation_ = 0;
+    FieldCache fieldCache_{1024ull * 1024 * 1024};  // 1 GB default
+    int cacheBudgetMB_ = 1024;
+    int animationFps_ = 6;
+    int prefetchAhead_ = 4;
 
     // Current selection state.
     std::string currentVar_;

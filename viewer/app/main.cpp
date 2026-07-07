@@ -5,6 +5,8 @@
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("met-viewer");
+    QApplication::setOrganizationName("met-viewer");
+    QApplication::setOrganizationDomain("met-viewer.local");
 
     met::app::MainWindow window;
     window.show();
@@ -27,6 +29,8 @@ int main(int argc, char** argv) {
             windMode = args.at(++i).toInt();
         } else if (args.at(i) == "--demo" && i + 1 < args.size()) {
             demo = args.at(++i);
+        } else if (args.at(i) == "--play") {
+            demo = "play";
         } else if (!args.at(i).startsWith("--")) {
             window.openFile(args.at(i));
         }
@@ -37,6 +41,7 @@ int main(int argc, char** argv) {
     if (demo == "section") window.demoCrossSection();
     else if (demo == "sounding") window.demoSounding();
     else if (demo == "series") window.demoTimeSeries();
+    else if (demo == "play") window.startPlayback();
     // Give the map extra time to fetch tiles before a headless grab.
     if (!grabPath.isEmpty()) window.scheduleGrabAndQuit(grabPath, map ? 3500 : 1200);
 
