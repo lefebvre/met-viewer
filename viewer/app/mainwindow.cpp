@@ -15,6 +15,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStatusBar>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QThreadPool>
 #include <QTimer>
@@ -69,6 +70,17 @@ void MainWindow::buildUi() {
     tabs_->addTab(plot_, tr("2D Plot"));
     tabs_->addTab(mapView_, tr("Map"));
     setCentralWidget(tabs_);
+
+    // Analysis views (section/sounding/series) are added as closable tabs; the
+    // two base tabs stay permanent (strip their close buttons on both sides so
+    // it works regardless of the style's close-button position).
+    tabs_->setTabsClosable(true);
+    for (int side = 0; side <= 1; ++side) {
+        const auto pos = static_cast<QTabBar::ButtonPosition>(side);
+        tabs_->tabBar()->setTabButton(0, pos, nullptr);
+        tabs_->tabBar()->setTabButton(1, pos, nullptr);
+    }
+    connect(tabs_, &QTabWidget::tabCloseRequested, this, &MainWindow::onTabCloseRequested);
 
     connect(plot_, &PlotView2D::probeMoved, this, &MainWindow::onProbeMoved);
     connect(plot_, &PlotView2D::probeLeft, this, &MainWindow::onProbeLeft);
@@ -137,6 +149,7 @@ void MainWindow::buildUi() {
     grid->addRow(tr("Max"), maxSpin_);
 
     contourCheck_ = new QCheckBox(tr("Contours"), controls);
+    contourCheck_->setToolTip(tr("Overlay contour lines on the 2D plot."));
     connect(contourCheck_, &QCheckBox::toggled, this, &MainWindow::onContoursToggled);
     grid->addRow(QString(), contourCheck_);
 
@@ -145,9 +158,12 @@ void MainWindow::buildUi() {
     contourSpin_->setDecimals(3);
     contourSpin_->setValue(0.0);
     contourSpin_->setSpecialValueText(tr("auto"));
+    contourSpin_->setToolTip(
+        tr("Spacing between contour lines, in the field's units. \"auto\" picks a\n"
+           "round interval from the data range. Applies to the 2D plot."));
     connect(contourSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
             &MainWindow::onContourIntervalChanged);
-    grid->addRow(tr("Interval"), contourSpin_);
+    grid->addRow(tr("Contour interval"), contourSpin_);
 
     // Map-specific controls.
     basemapCombo_ = new QComboBox(controls);
@@ -230,9 +246,37 @@ void MainWindow::buildUi() {
         connect(act, &QAction::triggered, this, [this, mode]() {
             mapView_->setInteractionMode(mode);
             if (mode != MapView::Mode::Pan) tabs_->setCurrentWidget(mapView_);
+            // Tell the user what this picking mode expects (the actions aren't
+            // otherwise discoverable, e.g. double-click to finish a section).
+            QString hint;
+            switch (mode) {
+                case MapView::Mode::CrossSection:
+                    hint = tr("Cross-section: click points along the path, then double-click to draw it.");
+                    break;
+                case MapView::Mode::Sounding:
+                    hint = tr("Sounding: click a point on the map to plot its skew-T.");
+                    break;
+                case MapView::Mode::TimeSeries:
+                    hint = tr("Time series: click a point on the map to plot its values over time.");
+                    break;
+                case MapView::Mode::Pan:
+                    break;  // default mode: keep the status bar clear for the probe readout
+            }
+            if (hint.isEmpty()) statusBar()->clearMessage();
+            else statusBar()->showMessage(hint);
         });
         if (m.mode == MapView::Mode::Pan) act->setChecked(true);
     }
+
+    // View menu: the dock panels and the toolbar can be hidden via their close
+    // button, so offer a way to bring them back. toggleViewAction() is a checkable
+    // action auto-labeled with the panel's title.
+    auto* viewMenu = menuBar()->addMenu(tr("&View"));
+    viewMenu->addAction(leftDock->toggleViewAction());
+    viewMenu->addAction(rightDock->toggleViewAction());
+    viewMenu->addAction(bottomDock->toggleViewAction());
+    viewMenu->addSeparator();
+    viewMenu->addAction(toolbar->toggleViewAction());
 
     probeLabel_ = new QLabel(tr("Ready"), this);
     statusBar()->addWidget(probeLabel_);
@@ -564,6 +608,13 @@ void MainWindow::demoCrossSection() {
 }
 void MainWindow::demoSounding() { onSoundingRequested({64.0, 12.0}); }
 void MainWindow::demoTimeSeries() { onTimeSeriesRequested({64.0, 12.0}); }
+
+void MainWindow::onTabCloseRequested(int index) {
+    QWidget* w = tabs_->widget(index);
+    if (!w || w == plot_ || w == mapView_) return;  // the base tabs are permanent
+    tabs_->removeTab(index);
+    w->deleteLater();
+}
 
 void MainWindow::onColormapChanged(const QString& name) {
     plot_->setColormapByName(name);

@@ -87,6 +87,7 @@ private slots:
     void onCrossSectionRequested(const std::vector<core::LatLon>& path);
     void onSoundingRequested(core::LatLon point);
     void onTimeSeriesRequested(core::LatLon point);
+    void onTabCloseRequested(int index);  // close an analysis tab (not the base tabs)
     void onProbeMoved(double lat, double lon, double value, bool hasValue);
     void onProbeLeft();
 
