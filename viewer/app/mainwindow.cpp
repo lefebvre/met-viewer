@@ -111,6 +111,31 @@ void MainWindow::buildUi() {
     connect(colormapCombo_, &QComboBox::currentTextChanged, this, &MainWindow::onColormapChanged);
     grid->addRow(tr("Colormap"), colormapCombo_);
 
+    autoRangeCheck_ = new QCheckBox(tr("Auto range"), controls);
+    autoRangeCheck_->setChecked(true);
+    connect(autoRangeCheck_, &QCheckBox::toggled, this, &MainWindow::onAutoRangeToggled);
+    grid->addRow(QString(), autoRangeCheck_);
+
+    symmetricCheck_ = new QCheckBox(tr("Symmetric (0-centered)"), controls);
+    connect(symmetricCheck_, &QCheckBox::toggled, this, &MainWindow::onSymmetricToggled);
+    grid->addRow(QString(), symmetricCheck_);
+
+    minSpin_ = new QDoubleSpinBox(controls);
+    minSpin_->setRange(-1e12, 1e12);
+    minSpin_->setDecimals(4);
+    minSpin_->setEnabled(false);
+    connect(minSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+            &MainWindow::onRangeSpinChanged);
+    grid->addRow(tr("Min"), minSpin_);
+
+    maxSpin_ = new QDoubleSpinBox(controls);
+    maxSpin_->setRange(-1e12, 1e12);
+    maxSpin_->setDecimals(4);
+    maxSpin_->setEnabled(false);
+    connect(maxSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+            &MainWindow::onRangeSpinChanged);
+    grid->addRow(tr("Max"), maxSpin_);
+
     contourCheck_ = new QCheckBox(tr("Contours"), controls);
     connect(contourCheck_, &QCheckBox::toggled, this, &MainWindow::onContoursToggled);
     grid->addRow(QString(), contourCheck_);
@@ -374,6 +399,13 @@ void MainWindow::presentField() {
 
 void MainWindow::onDerivedChanged(int index) {
     derivedMode_ = index;
+    // Signed fields (vorticity/divergence) read best on a diverging map centered
+    // at zero — switch to it automatically unless the user already chose one.
+    const bool signedField = (index == 3 || index == 4);
+    if (signedField && !render::Colormap::isDiverging(colormapCombo_->currentText().toStdString())) {
+        colormapCombo_->setCurrentText("RdBu (diverging)");  // triggers onColormapChanged
+        symmetricCheck_->setChecked(true);                   // triggers applyRange
+    }
     presentField();
 }
 
@@ -381,8 +413,8 @@ void MainWindow::displayField(std::shared_ptr<core::Field2D> field) {
     currentUnits_ = QString::fromStdString(field->meta.units);
     plot_->setField(field);
     mapView_->setField(field);
-    colorbar_->setColormap(plot_->colormap());
     colorbar_->setUnits(currentUnits_);
+    applyRange();  // apply auto/manual/symmetric range and sync the colorbar
     probeLabel_->setText(tr("%1 @ %2 — %3×%4")
                              .arg(QString::fromStdString(field->meta.varName))
                              .arg(QString::fromStdString(met::core::formatLevel(field->meta.level)))
@@ -493,10 +525,59 @@ void MainWindow::demoTimeSeries() { onTimeSeriesRequested({64.0, 12.0}); }
 void MainWindow::onColormapChanged(const QString& name) {
     plot_->setColormapByName(name);
     mapView_->setColormapByName(name);
+    applyRange();  // re-apply the current range through the new colormap
     if (plot_->hasField()) {
         colorbar_->setColormap(plot_->colormap());
         colorbar_->setUnits(currentUnits_);
     }
+}
+
+void MainWindow::applyRange() {
+    const bool autoOn = autoRangeCheck_ && autoRangeCheck_->isChecked();
+    minSpin_->setEnabled(!autoOn);
+    maxSpin_->setEnabled(!autoOn);
+
+    if (autoOn) {
+        plot_->setAutoRange(true);
+        mapView_->setAutoRange(true);
+        // A symmetric auto-range centers the field's extent on zero (for signed
+        // fields with a diverging map).
+        if (symmetricCheck_ && symmetricCheck_->isChecked() && plot_->hasField()) {
+            const double a = std::max(std::abs(plot_->colormap().min()),
+                                      std::abs(plot_->colormap().max()));
+            plot_->setAutoRange(false);
+            mapView_->setAutoRange(false);
+            plot_->setRange(-a, a);
+            mapView_->setRange(-a, a);
+        }
+        syncRangeSpins();
+    } else {
+        double lo = minSpin_->value();
+        double hi = maxSpin_->value();
+        if (symmetricCheck_ && symmetricCheck_->isChecked()) {
+            const double a = std::max(std::abs(lo), std::abs(hi));
+            lo = -a;
+            hi = a;
+        }
+        if (hi <= lo) hi = lo + 1.0;
+        plot_->setAutoRange(false);
+        mapView_->setAutoRange(false);
+        plot_->setRange(lo, hi);
+        mapView_->setRange(lo, hi);
+    }
+    if (plot_->hasField()) colorbar_->setColormap(plot_->colormap());
+}
+
+void MainWindow::syncRangeSpins() {
+    QSignalBlocker b1(minSpin_), b2(maxSpin_);
+    minSpin_->setValue(plot_->colormap().min());
+    maxSpin_->setValue(plot_->colormap().max());
+}
+
+void MainWindow::onAutoRangeToggled(bool /*on*/) { applyRange(); }
+void MainWindow::onSymmetricToggled(bool /*on*/) { applyRange(); }
+void MainWindow::onRangeSpinChanged() {
+    if (autoRangeCheck_ && !autoRangeCheck_->isChecked()) applyRange();
 }
 
 void MainWindow::setContoursChecked(bool on) { contourCheck_->setChecked(on); }

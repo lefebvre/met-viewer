@@ -26,6 +26,8 @@ public:
 
     void setField(std::shared_ptr<core::Field2D> field);
     void setColormapByName(const QString& name);
+    void setAutoRange(bool on);
+    void setRange(double lo, double hi);
     void setOpacity(double opacity);          // 0..1
     void setGraticuleVisible(bool on);
     void setCoastlinesVisible(bool on);
@@ -80,6 +82,7 @@ private:
     std::shared_ptr<core::Field2D> field_;
     render::Colormap cmap_ = render::Colormap::builtin("viridis");
     double opacity_ = 0.75;
+    bool autoRange_ = true;
     bool graticule_ = true;
     bool coastlinesVisible_ = true;
     std::shared_ptr<std::vector<GeoPolyline>> coastlines_;

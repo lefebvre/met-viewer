@@ -53,11 +53,26 @@ void PlotView2D::setField(std::shared_ptr<core::Field2D> field) {
     field_ = std::move(field);
     if (field_) {
         bbox_ = core::gridBBox(field_->grid);
-        autorange();
+        if (autoRange_) autorange();
         rebuildImage();
     } else {
         image_ = {};
     }
+    update();
+}
+
+void PlotView2D::setAutoRange(bool on) {
+    autoRange_ = on;
+    if (on && field_) {
+        autorange();
+        rebuildImage();
+        update();
+    }
+}
+
+void PlotView2D::setRange(double lo, double hi) {
+    cmap_.setRange(lo, hi);
+    rebuildImage();
     update();
 }
 

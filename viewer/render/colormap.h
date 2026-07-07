@@ -26,6 +26,9 @@ public:
     // Names of the available built-in maps.
     static std::vector<std::string> builtinNames();
 
+    // True for diverging maps (suited to signed fields, centered at zero).
+    static bool isDiverging(const std::string& name);
+
     void setRange(double lo, double hi) {
         min_ = lo;
         max_ = hi;

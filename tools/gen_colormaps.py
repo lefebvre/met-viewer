@@ -13,7 +13,9 @@ import sys
 import matplotlib
 import numpy as np
 
-MAPS = ["viridis", "turbo"]
+# Perceptually-uniform sequential maps plus diverging maps (for signed fields
+# such as vorticity/divergence, centered at zero).
+MAPS = ["viridis", "turbo", "magma", "cividis", "RdBu_r", "coolwarm"]
 N = 256
 
 

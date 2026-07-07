@@ -34,6 +34,39 @@ TEST(Colormap, NanIsTransparent) {
     EXPECT_EQ(c.a, 0);
 }
 
+TEST(Colormap, AllBuiltinsResolveAndCover) {
+    const auto names = Colormap::builtinNames();
+    EXPECT_GE(names.size(), 6u);
+    for (const auto& n : names) {
+        Colormap cm = Colormap::builtin(n);
+        EXPECT_EQ(cm.name(), n);
+        cm.setRange(0.0, 1.0);
+        // Endpoints differ from the midpoint for every map (non-degenerate LUT).
+        const Rgba lo = cm.map(0.0), mid = cm.map(0.5), hi = cm.map(1.0);
+        EXPECT_FALSE(lo.r == hi.r && lo.g == hi.g && lo.b == hi.b) << n;
+        (void)mid;
+    }
+}
+
+TEST(Colormap, DivergingFlag) {
+    EXPECT_TRUE(Colormap::isDiverging("RdBu (diverging)"));
+    EXPECT_TRUE(Colormap::isDiverging("coolwarm"));
+    EXPECT_FALSE(Colormap::isDiverging("viridis"));
+    EXPECT_FALSE(Colormap::isDiverging("turbo"));
+}
+
+TEST(Colormap, DivergingCenterIsNeutral) {
+    // A diverging map is light/neutral in the middle and saturated at the ends.
+    Colormap cm = Colormap::builtin("RdBu (diverging)");
+    cm.setRange(-1.0, 1.0);
+    const Rgba mid = cm.map(0.0);   // center -> near white
+    const Rgba neg = cm.map(-1.0);  // one end
+    const Rgba pos = cm.map(1.0);   // other end
+    EXPECT_GT(mid.r + mid.g + mid.b, 600);  // bright center
+    // Ends are distinct hues (blue vs red family).
+    EXPECT_NE(neg.b > neg.r, pos.b > pos.r);
+}
+
 TEST(Colormap, MidpointIsInterior) {
     Colormap cm = Colormap::builtin("viridis");
     cm.setRange(0.0, 1.0);

@@ -12,10 +12,22 @@ Colormap::Colormap(std::string name, const std::uint8_t (*lut)[3], int size)
 
 Colormap Colormap::builtin(const std::string& name) {
     if (name == "turbo") return Colormap("turbo", detail::k_turbo, detail::kColormapSize);
+    if (name == "magma") return Colormap("magma", detail::k_magma, detail::kColormapSize);
+    if (name == "cividis") return Colormap("cividis", detail::k_cividis, detail::kColormapSize);
+    if (name == "RdBu (diverging)")
+        return Colormap("RdBu (diverging)", detail::k_RdBu_r, detail::kColormapSize);
+    if (name == "coolwarm")
+        return Colormap("coolwarm", detail::k_coolwarm, detail::kColormapSize);
     return Colormap("viridis", detail::k_viridis, detail::kColormapSize);
 }
 
-std::vector<std::string> Colormap::builtinNames() { return {"viridis", "turbo"}; }
+std::vector<std::string> Colormap::builtinNames() {
+    return {"viridis", "turbo", "magma", "cividis", "RdBu (diverging)", "coolwarm"};
+}
+
+bool Colormap::isDiverging(const std::string& name) {
+    return name == "RdBu (diverging)" || name == "coolwarm";
+}
 
 Rgba Colormap::mapNormalized(double t) const {
     if (!lut_ || size_ <= 0) return nan_;

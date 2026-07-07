@@ -29,6 +29,9 @@ public:
     void setContoursEnabled(bool enabled);
     void setContourInterval(double interval);  // 0 = auto
 
+    void setAutoRange(bool on);         // re-fit the colormap to the field
+    void setRange(double lo, double hi);  // manual colormap range
+
     // Wind barbs overlay (mode 1 = barbs; 0/2 hide barbs in this view).
     void setWind(std::shared_ptr<analysis::WindField> wind);
     void setWindMode(int mode);
@@ -60,6 +63,7 @@ private:
     core::BBox bbox_{};              // geographic extent of field_
     bool contoursEnabled_ = false;
     double contourInterval_ = 0.0;   // 0 = auto
+    bool autoRange_ = true;
     std::shared_ptr<analysis::WindField> wind_;
     int windMode_ = 0;
 };

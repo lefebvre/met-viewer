@@ -69,6 +69,9 @@ private slots:
     void onLevelChanged(int index);
     void onTimeChanged(int index);
     void onColormapChanged(const QString& name);
+    void onAutoRangeToggled(bool on);
+    void onRangeSpinChanged();
+    void onSymmetricToggled(bool on);
     void onContoursToggled(bool on);
     void onContourIntervalChanged(double value);
     void onBasemapChanged(int index);
@@ -90,6 +93,8 @@ private:
     void presentField();   // show the current raw field or a derived quantity
     void prefetchAhead();  // decode upcoming time steps into the cache
     void updateWind();     // (re)build the wind overlay for the current level/time
+    void applyRange();     // push the current auto/manual range to the views
+    void syncRangeSpins(); // populate the min/max spins from the active colormap
     // Build the earth-relative wind field for the current level/time, or null.
     std::shared_ptr<analysis::WindField> buildWindField();
     void loadSettings();
@@ -126,6 +131,10 @@ private:
     TileLayer* tileLayer_ = nullptr;
     ColorbarWidget* colorbar_ = nullptr;
     QComboBox* colormapCombo_ = nullptr;
+    QCheckBox* autoRangeCheck_ = nullptr;
+    QCheckBox* symmetricCheck_ = nullptr;
+    QDoubleSpinBox* minSpin_ = nullptr;
+    QDoubleSpinBox* maxSpin_ = nullptr;
     QComboBox* levelCombo_ = nullptr;
     QComboBox* derivedCombo_ = nullptr;
     QComboBox* basemapCombo_ = nullptr;

@@ -51,9 +51,22 @@ void MapView::setField(std::shared_ptr<core::Field2D> field) {
     const bool firstField = (field_ == nullptr);
     field_ = std::move(field);
     if (field_) {
-        autorange();
+        if (autoRange_) autorange();
         if (firstField) fitToField();
     }
+    update();
+}
+
+void MapView::setAutoRange(bool on) {
+    autoRange_ = on;
+    if (on && field_) {
+        autorange();
+        update();
+    }
+}
+
+void MapView::setRange(double lo, double hi) {
+    cmap_.setRange(lo, hi);
     update();
 }
 
