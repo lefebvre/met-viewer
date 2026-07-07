@@ -6,6 +6,7 @@
 #include <QMainWindow>
 
 #include "viewer/core/field.h"
+#include "viewer/core/geo.h"
 #include "viewer/readers/ireader.h"
 
 class QCheckBox;
@@ -46,6 +47,11 @@ public:
     // Set the wind overlay mode (0 off, 1 barbs, 2 streamlines); used by --wind.
     void setWindComboIndex(int index);
 
+    // Headless demo triggers (used by --section / --sounding / --series).
+    void demoCrossSection();
+    void demoSounding();
+    void demoTimeSeries();
+
 private slots:
     void onOpenTriggered();
     void onFieldChosen(const core::FieldKey& key);
@@ -59,6 +65,9 @@ private slots:
     void onGraticuleToggled(bool on);
     void onCoastlinesToggled(bool on);
     void onWindModeChanged(int index);
+    void onCrossSectionRequested(const std::vector<core::LatLon>& path);
+    void onSoundingRequested(core::LatLon point);
+    void onTimeSeriesRequested(core::LatLon point);
     void onProbeMoved(double lat, double lon, double value, bool hasValue);
     void onProbeLeft();
 
@@ -66,6 +75,11 @@ private:
     void buildUi();
     void decodeCurrent();  // decode the field for the current var/level/time
     void updateWind();     // (re)build the wind overlay for the current level/time
+
+    // Read all pressure levels of `varName` at the current time (pressure, field).
+    std::vector<std::pair<double, core::Field2D>> readLevelStack(const std::string& varName);
+    // Read all times of `varName` at the current level (time, field).
+    std::vector<std::pair<core::TimePoint, core::Field2D>> readTimeStack(const std::string& varName);
 
     std::shared_ptr<readers::IDataset> dataset_;
     QString currentUnits_;

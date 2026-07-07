@@ -21,12 +21,13 @@ TEST(CfReader, OpensAndCatalogs) {
     const auto* v = ds->catalog().find("t");
     ASSERT_NE(v, nullptr);
     EXPECT_EQ(v->units, "K");
-    ASSERT_EQ(v->levels.size(), 3u);
-    // Sorted high altitude first: 250, 500, 850.
-    EXPECT_DOUBLE_EQ(v->levels[0].value, 250.0);
-    EXPECT_DOUBLE_EQ(v->levels[1].value, 500.0);
-    EXPECT_DOUBLE_EQ(v->levels[2].value, 850.0);
+    ASSERT_EQ(v->levels.size(), 9u);
+    // Sorted high altitude (low pressure) first.
+    EXPECT_DOUBLE_EQ(v->levels.front().value, 100.0);
+    EXPECT_DOUBLE_EQ(v->levels.back().value, 1000.0);
     EXPECT_EQ(v->times.size(), 2u);
+    // Relative humidity is a second griddable variable.
+    EXPECT_NE(ds->catalog().find("r"), nullptr);
 }
 
 TEST(CfReader, DecodesPackedShortsWithScaleOffset) {
@@ -44,9 +45,9 @@ TEST(CfReader, DecodesPackedShortsWithScaleOffset) {
 TEST(CfReader, LevelTermAndFillValue) {
     auto ds = readers::openDataset(fixture("era5_t_pl.nc"));
     const auto* v = ds->catalog().find("t");
-    // 850 hPa, first time: base + (850-500)*0.001 -> +0.35 at every cell.
+    // 850 hPa, first time: base + 0.06*(850-500) = base + 21 at every cell.
     auto f0 = ds->readField(core::FieldKey{"t", hPa(850), v->times.front(), -1});
-    EXPECT_NEAR(f0.at(0, 0), 259.50f, 1e-2);
+    EXPECT_NEAR(f0.at(0, 0), 280.15f, 1e-2);  // base(70,0)=259.15 + 21
     // 850 hPa, second time: the (0,0) cell was written as _FillValue -> NaN.
     auto f1 = ds->readField(core::FieldKey{"t", hPa(850), v->times.back(), -1});
     EXPECT_TRUE(std::isnan(f1.at(0, 0)));

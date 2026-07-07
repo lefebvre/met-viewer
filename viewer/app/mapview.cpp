@@ -216,6 +216,18 @@ void MapView::paintEvent(QPaintEvent*) {
     if (wind_ && windMode_ == 1) drawBarbs(p);
     else if (wind_ && windMode_ == 2) drawStreamlines(p);
 
+    // In-progress cross-section path.
+    if (mode_ == Mode::CrossSection && !pathVertices_.empty()) {
+        p.setRenderHint(QPainter::Antialiasing, true);
+        QPolygonF poly;
+        for (const core::LatLon& v : pathVertices_) poly << lonLatToScreen(v);
+        p.setPen(QPen(QColor(220, 40, 40), 2.0));
+        p.drawPolyline(poly);
+        p.setBrush(QColor(220, 40, 40));
+        for (const QPointF& pt : poly) p.drawEllipse(pt, 3.0, 3.0);
+        p.setBrush(Qt::NoBrush);
+    }
+
     // Attribution.
     if (tiles_ && !tiles_->source().attribution.isEmpty()) {
         p.setRenderHint(QPainter::Antialiasing, true);
@@ -339,10 +351,37 @@ void MapView::drawStreamlines(QPainter& p) {
     }
 }
 
+void MapView::setInteractionMode(Mode mode) {
+    mode_ = mode;
+    if (mode_ != Mode::CrossSection) pathVertices_.clear();
+    setCursor(mode_ == Mode::Pan ? Qt::ArrowCursor : Qt::CrossCursor);
+    update();
+}
+
 void MapView::mousePressEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) {
+    if (event->button() != Qt::LeftButton) return;
+
+    if (mode_ == Mode::Pan) {
         dragging_ = true;
         lastPos_ = event->position();
+        return;
+    }
+    const core::LatLon ll = screenToLonLat(event->position());
+    if (mode_ == Mode::Sounding) {
+        emit soundingRequested(ll);
+    } else if (mode_ == Mode::TimeSeries) {
+        emit timeSeriesRequested(ll);
+    } else if (mode_ == Mode::CrossSection) {
+        pathVertices_.push_back(ll);
+        update();
+    }
+}
+
+void MapView::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (mode_ == Mode::CrossSection && event->button() == Qt::LeftButton) {
+        if (pathVertices_.size() >= 2) emit crossSectionRequested(pathVertices_);
+        pathVertices_.clear();
+        update();
     }
 }
 

@@ -36,12 +36,20 @@ public:
     void setWind(std::shared_ptr<analysis::WindField> wind);
     void setWindMode(int mode);
 
+    // Interaction mode: 0 = pan, 1 = cross-section path, 2 = sounding pick,
+    // 3 = time-series pick.
+    enum class Mode { Pan, CrossSection, Sounding, TimeSeries };
+    void setInteractionMode(Mode mode);
+
     [[nodiscard]] const render::Colormap& colormap() const { return cmap_; }
     [[nodiscard]] bool hasField() const { return field_ != nullptr; }
 
 signals:
     void probeMoved(double lat, double lon, double value, bool hasValue);
     void probeLeft();
+    void crossSectionRequested(const std::vector<core::LatLon>& path);
+    void soundingRequested(core::LatLon point);
+    void timeSeriesRequested(core::LatLon point);
 
 public slots:
     void onTileReady(int z, int x, int y);
@@ -49,6 +57,7 @@ public slots:
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
@@ -92,6 +101,9 @@ private:
 
     bool dragging_ = false;
     QPointF lastPos_;
+
+    Mode mode_ = Mode::Pan;
+    std::vector<core::LatLon> pathVertices_;  // in-progress cross-section path
 };
 
 }  // namespace met::app

@@ -16,6 +16,12 @@ add_executable(met_viewer
     coastlines.h
     colorbarwidget.cpp
     colorbarwidget.h
+    crosssectionview.cpp
+    crosssectionview.h
+    skewtview.cpp
+    skewtview.h
+    timeseriesview.cpp
+    timeseriesview.h
     datasetdock.cpp
     datasetdock.h
     timecontroller.cpp

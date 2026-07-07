@@ -21,14 +21,23 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <QActionGroup>
+#include <QToolBar>
+
+#include "viewer/analysis/crosssection.h"
+#include "viewer/analysis/sounding.h"
+#include "viewer/analysis/timeseries.h"
 #include "viewer/app/coastlines.h"
 #include "viewer/app/colorbarwidget.h"
+#include "viewer/app/crosssectionview.h"
 #include "viewer/app/datasetdock.h"
 #include "viewer/app/jobs.h"
 #include "viewer/app/mapview.h"
 #include "viewer/app/plotview2d.h"
+#include "viewer/app/skewtview.h"
 #include "viewer/app/tilelayer.h"
 #include "viewer/app/timecontroller.h"
+#include "viewer/app/timeseriesview.h"
 #include "viewer/core/timeaxis.h"
 #include "viewer/core/units.h"
 #include "viewer/readers/detect.h"
@@ -58,6 +67,9 @@ void MainWindow::buildUi() {
     connect(plot_, &PlotView2D::probeLeft, this, &MainWindow::onProbeLeft);
     connect(mapView_, &MapView::probeMoved, this, &MainWindow::onProbeMoved);
     connect(mapView_, &MapView::probeLeft, this, &MainWindow::onProbeLeft);
+    connect(mapView_, &MapView::crossSectionRequested, this, &MainWindow::onCrossSectionRequested);
+    connect(mapView_, &MapView::soundingRequested, this, &MainWindow::onSoundingRequested);
+    connect(mapView_, &MapView::timeSeriesRequested, this, &MainWindow::onTimeSeriesRequested);
 
     // Left: dataset browser.
     datasetDock_ = new DatasetDock(this);
@@ -152,6 +164,28 @@ void MainWindow::buildUi() {
     QAction* quitAct = fileMenu->addAction(tr("&Quit"));
     quitAct->setShortcut(QKeySequence::Quit);
     connect(quitAct, &QAction::triggered, this, &QWidget::close);
+
+    // Interaction-mode toolbar (map picking).
+    auto* toolbar = addToolBar(tr("Tools"));
+    toolbar->setObjectName("toolsToolbar");
+    auto* modeGroup = new QActionGroup(this);
+    modeGroup->setExclusive(true);
+    struct ModeDef { const char* label; MapView::Mode mode; };
+    const ModeDef modes[] = {{"Pan", MapView::Mode::Pan},
+                             {"Cross-section", MapView::Mode::CrossSection},
+                             {"Sounding", MapView::Mode::Sounding},
+                             {"Time series", MapView::Mode::TimeSeries}};
+    for (const auto& m : modes) {
+        QAction* act = toolbar->addAction(tr(m.label));
+        act->setCheckable(true);
+        modeGroup->addAction(act);
+        const MapView::Mode mode = m.mode;
+        connect(act, &QAction::triggered, this, [this, mode]() {
+            mapView_->setInteractionMode(mode);
+            if (mode != MapView::Mode::Pan) tabs_->setCurrentWidget(mapView_);
+        });
+        if (m.mode == MapView::Mode::Pan) act->setChecked(true);
+    }
 
     probeLabel_ = new QLabel(tr("Ready"), this);
     statusBar()->addWidget(probeLabel_);
@@ -281,6 +315,88 @@ void MainWindow::decodeCurrent() {
         updateWind();  // keep the wind overlay in sync with the current level/time
     });
 }
+
+std::vector<std::pair<double, core::Field2D>> MainWindow::readLevelStack(
+    const std::string& varName) {
+    std::vector<std::pair<double, core::Field2D>> stack;
+    const auto* entry = dataset_ ? dataset_->catalog().find(varName) : nullptr;
+    if (!entry || currentTimes_.empty()) return stack;
+    const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    for (const auto& lvl : entry->levels) {
+        if (lvl.type != core::VerticalLevel::Type::PressureHPa) continue;
+        try {
+            stack.emplace_back(lvl.value,
+                               dataset_->readField(core::FieldKey{varName, lvl, time, currentMember_}));
+        } catch (const std::exception&) {
+        }
+    }
+    return stack;
+}
+
+std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack(
+    const std::string& varName) {
+    std::vector<std::pair<core::TimePoint, core::Field2D>> stack;
+    const auto* entry = dataset_ ? dataset_->catalog().find(varName) : nullptr;
+    if (!entry || currentLevels_.empty()) return stack;
+    const core::VerticalLevel level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
+    for (const auto& t : entry->times) {
+        try {
+            stack.emplace_back(t,
+                               dataset_->readField(core::FieldKey{varName, level, t, currentMember_}));
+        } catch (const std::exception&) {
+        }
+    }
+    return stack;
+}
+
+void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) {
+    if (currentVar_.empty()) return;
+    const auto stack = readLevelStack(currentVar_);
+    if (stack.size() < 2) {
+        statusBar()->showMessage(tr("Cross-section needs a multi-level variable"), 4000);
+        return;
+    }
+    const analysis::CrossSection cs = analysis::extractCrossSection(stack, path, 200);
+    auto* view = new CrossSectionView;
+    view->setSection(cs);
+    const int idx = tabs_->addTab(view, tr("Section: %1").arg(QString::fromStdString(currentVar_)));
+    tabs_->setCurrentIndex(idx);
+}
+
+void MainWindow::onSoundingRequested(core::LatLon point) {
+    // Temperature is required; relative humidity is optional (for dewpoint).
+    const auto tStack = readLevelStack("t");
+    if (tStack.size() < 2) {
+        statusBar()->showMessage(tr("Sounding needs multi-level temperature (t)"), 4000);
+        return;
+    }
+    const auto rhStack = readLevelStack("r");
+    const analysis::Sounding s = analysis::extractSounding(tStack, rhStack, point);
+    auto* view = new SkewTView;
+    view->setSounding(s);
+    const int idx = tabs_->addTab(view, tr("Skew-T"));
+    tabs_->setCurrentIndex(idx);
+}
+
+void MainWindow::onTimeSeriesRequested(core::LatLon point) {
+    if (currentVar_.empty()) return;
+    const auto stack = readTimeStack(currentVar_);
+    if (stack.size() < 2) {
+        statusBar()->showMessage(tr("Time series needs multiple time steps"), 4000);
+        return;
+    }
+    const analysis::TimeSeries ts = analysis::extractTimeSeries(stack, point);
+    auto* view = new TimeSeriesView;
+    view->setSeries(ts, QString::fromStdString(currentVar_));
+    const int idx = tabs_->addTab(view, tr("Series: %1").arg(QString::fromStdString(currentVar_)));
+    tabs_->setCurrentIndex(idx);
+}
+
+void MainWindow::demoCrossSection() {
+    onCrossSectionRequested({{68.0, 4.0}, {58.0, 26.0}});
+}
+void MainWindow::demoSounding() { onSoundingRequested({64.0, 12.0}); }
+void MainWindow::demoTimeSeries() { onTimeSeriesRequested({64.0, 12.0}); }
 
 void MainWindow::onColormapChanged(const QString& name) {
     plot_->setColormapByName(name);

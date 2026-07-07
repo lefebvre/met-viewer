@@ -15,6 +15,7 @@ int main(int argc, char** argv) {
     bool contours = false;
     bool map = false;
     int windMode = 0;
+    QString demo;
     for (int i = 1; i < args.size(); ++i) {
         if (args.at(i) == "--grab" && i + 1 < args.size()) {
             grabPath = args.at(++i);
@@ -24,6 +25,8 @@ int main(int argc, char** argv) {
             map = true;
         } else if (args.at(i) == "--wind" && i + 1 < args.size()) {
             windMode = args.at(++i).toInt();
+        } else if (args.at(i) == "--demo" && i + 1 < args.size()) {
+            demo = args.at(++i);
         } else if (!args.at(i).startsWith("--")) {
             window.openFile(args.at(i));
         }
@@ -31,6 +34,9 @@ int main(int argc, char** argv) {
     if (contours) window.setContoursChecked(true);
     if (map) window.showMapTab();
     if (windMode > 0) window.setWindComboIndex(windMode);
+    if (demo == "section") window.demoCrossSection();
+    else if (demo == "sounding") window.demoSounding();
+    else if (demo == "series") window.demoTimeSeries();
     // Give the map extra time to fetch tiles before a headless grab.
     if (!grabPath.isEmpty()) window.scheduleGrabAndQuit(grabPath, map ? 3500 : 1200);
 
