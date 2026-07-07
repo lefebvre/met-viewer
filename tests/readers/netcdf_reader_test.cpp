@@ -13,6 +13,7 @@ std::filesystem::path fixture(const char* name) {
     return std::filesystem::path(MET_FIXTURE_DIR) / name;
 }
 core::VerticalLevel hPa(double v) { return {core::VerticalLevel::Type::PressureHPa, v}; }
+core::VerticalLevel heightM(double v) { return {core::VerticalLevel::Type::HeightM, v}; }
 }  // namespace
 
 TEST(CfReader, OpensAndCatalogs) {
@@ -62,6 +63,43 @@ TEST(CfReader, GridIsNorthToSouth) {
     const core::LatLon nw = core::indexToLatLon(f.grid, 0, 0);
     EXPECT_DOUBLE_EQ(nw.lat, 70.0);   // row 0 is the northernmost latitude
     EXPECT_DOUBLE_EQ(nw.lon, 0.0);
+}
+
+TEST(CfReader, NonPressureVerticalAxisIsNotCollapsed) {
+    // A height vertical axis must be recognized as the level dimension so a
+    // multi-level variable exposes all its levels. Regression: only pressure
+    // axes were detected, collapsing every other vertical type to slice 0 and
+    // mislabeling it "Surface".
+    auto ds = readers::openDataset(fixture("height_levels.nc"));
+    const auto* v = ds->catalog().find("t");
+    ASSERT_NE(v, nullptr);
+    ASSERT_EQ(v->levels.size(), 4u);
+    for (const auto& lvl : v->levels)
+        EXPECT_EQ(lvl.type, core::VerticalLevel::Type::HeightM);
+    // Height sorts high-altitude first.
+    EXPECT_DOUBLE_EQ(v->levels.front().value, 500.0);
+    EXPECT_DOUBLE_EQ(v->levels.back().value, 10.0);
+
+    // The requested slab is read, not slice 0: t = 300 - 5*heightIndex + time,
+    // and 100 m is height index 2 -> 290 at the first time.
+    auto f = ds->readField(core::FieldKey{"t", heightM(100), v->times.front(), -1});
+    ASSERT_EQ(f.width(), 4);
+    ASSERT_EQ(f.height(), 4);
+    EXPECT_NEAR(f.at(0, 0), 290.0f, 1e-3);
+    EXPECT_NEAR(f.at(3, 3), 290.0f, 1e-3);
+}
+
+TEST(CfReader, IsoTimeSeparatorKeepsTimeOfDay) {
+    // "hours since 2020-06-01T06:00:00" must keep the 06:00. Regression: the
+    // scanf format only accepted a space separator, silently dropping the
+    // time-of-day and shifting the base by up to 24 h.
+    auto ds = readers::openDataset(fixture("height_levels.nc"));
+    const auto* v = ds->catalog().find("t");
+    ASSERT_NE(v, nullptr);
+    ASSERT_EQ(v->times.size(), 2u);
+    // 2020-06-01T06:00:00Z == 1590991200; the +6 h step == 1591012800.
+    EXPECT_EQ(v->times.front().epochSeconds, 1590991200);
+    EXPECT_EQ(v->times.back().epochSeconds, 1591012800);
 }
 
 // The whole point of M2: the same field read from GRIB and from NetCDF is

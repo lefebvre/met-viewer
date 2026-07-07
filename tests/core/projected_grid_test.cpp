@@ -23,6 +23,33 @@ GridDef lambertGrid() {
     g.y0 = y0;
     return g;
 }
+
+// A polar-stereographic grid centered on the north pole (the pole projects to
+// the grid center), so gridBBox must detect the enclosed pole.
+GridDef polarGrid() {
+    ProjectedGrid g;
+    g.crs = Crs("+proj=stere +lat_0=90 +lat_ts=60 +lon_0=0 +R=6371229 +units=m +no_defs");
+    g.nx = 11;
+    g.ny = 11;
+    g.dx = 200000.0;
+    g.dy = 200000.0;
+    g.x0 = -g.dx * (g.nx - 1) / 2.0;  // center index (5,5) at projected (0,0) = pole
+    g.y0 = -g.dy * (g.ny - 1) / 2.0;
+    return g;
+}
+
+// A Mercator grid centered on lon 180, straddling the ±180° antimeridian.
+GridDef datelineGrid() {
+    ProjectedGrid g;
+    g.crs = Crs("+proj=merc +lon_0=180 +R=6371229 +units=m +no_defs");
+    g.nx = 11;
+    g.ny = 5;
+    g.dx = 111195.0 * 2.0;  // ~2 deg of longitude per cell at the equator
+    g.dy = 111195.0 * 2.0;
+    g.x0 = -5.0 * g.dx;  // center column at x=0 (lon 180)
+    g.y0 = -2.0 * g.dy;  // center row at the equator
+    return g;
+}
 }  // namespace
 
 TEST(Crs, LambertRoundTrip) {
@@ -76,4 +103,25 @@ TEST(ProjectedGrid, BBoxCoversGrid) {
     EXPECT_LT(b.maxLat, 45.0);
     EXPECT_GT(b.minLon, -120.0);
     EXPECT_LT(b.maxLon, -95.0);
+}
+
+TEST(ProjectedGrid, BBoxDetectsEnclosedPole) {
+    const BBox b = gridBBox(polarGrid());
+    // The north pole is inside the grid, so latitude must reach 90 even though
+    // the sampled border never touches it, and longitude is unconstrained.
+    EXPECT_DOUBLE_EQ(b.maxLat, 90.0);
+    EXPECT_DOUBLE_EQ(b.minLon, -180.0);
+    EXPECT_DOUBLE_EQ(b.maxLon, 180.0);
+    EXPECT_LT(b.minLat, 90.0);  // the grid still extends away from the pole
+}
+
+TEST(ProjectedGrid, BBoxSpansAntimeridian) {
+    const BBox b = gridBBox(datelineGrid());
+    // A grid straddling ±180° must get a narrow covering arc (~20°) centered on
+    // 180, expressed with maxLon > 180 — not a spurious near-global span.
+    const double span = b.maxLon - b.minLon;
+    EXPECT_GT(span, 15.0);
+    EXPECT_LT(span, 40.0);
+    EXPECT_GT(b.maxLon, 180.0);
+    EXPECT_NEAR(0.5 * (b.minLon + b.maxLon), 180.0, 1.0);
 }

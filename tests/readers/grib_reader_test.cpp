@@ -49,6 +49,27 @@ TEST(GribReader, DecodesKnownAnalyticField) {
     EXPECT_NEAR(f.at(15, 7), 264.95f, 1e-3);
 }
 
+TEST(GribReader, HonorsMissingValuesWithoutBitmap) {
+    // regular_ll_missing.grib2 encodes three missing cells via complex-packing
+    // missing-value management (data template 5.3) with NO bitmap. Those cells
+    // must decode to NaN rather than leaking the 9999 sentinel as real data,
+    // and genuine values must stay finite. Regression: missing was honored only
+    // when a bitmap was present.
+    auto ds = readers::openDataset(std::filesystem::path(MET_FIXTURE_DIR) / "regular_ll_missing.grib2");
+    const auto& v = ds->catalog().variables().front();
+    core::Field2D f =
+        ds->readField(core::FieldKey{v.varName, v.levels.front(), v.times.front(), v.members.front()});
+    ASSERT_EQ(f.width(), 4);
+    ASSERT_EQ(f.height(), 4);
+    // Scan-order missing indices 5, 6, 10 -> (col,row) (1,1), (2,1), (2,2).
+    EXPECT_TRUE(std::isnan(f.at(1, 1)));
+    EXPECT_TRUE(std::isnan(f.at(2, 1)));
+    EXPECT_TRUE(std::isnan(f.at(2, 2)));
+    // Real cells stay finite (value 280 at scan index 0).
+    EXPECT_FALSE(std::isnan(f.at(0, 0)));
+    EXPECT_NEAR(f.at(0, 0), 280.0f, 1e-2);
+}
+
 TEST(GribReader, GridGeometryMatches) {
     auto ds = readers::openDataset(fixture());
     const auto& v = ds->catalog().variables().front();

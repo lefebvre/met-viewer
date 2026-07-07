@@ -7,6 +7,7 @@ add_executable(met_tests
     core/units_test.cpp
     core/catalog_test.cpp
     core/projected_grid_test.cpp
+    core/timeaxis_test.cpp
     render/colormap_test.cpp
     render/contour_test.cpp
     render/tilemath_test.cpp
@@ -20,8 +21,6 @@ add_executable(met_tests
     readers/netcdf_reader_test.cpp
     readers/lambert_test.cpp
     readers/arl_test.cpp
-    app/fieldcache_test.cpp
-    ${CMAKE_SOURCE_DIR}/viewer/app/fieldcache.cpp
 )
 
 target_include_directories(met_tests PRIVATE ${CMAKE_SOURCE_DIR})
@@ -49,3 +48,18 @@ target_compile_definitions(met_tests PRIVATE
 )
 
 gtest_discover_tests(met_tests)
+
+# App-layer tests link the met_app library. They need a QApplication and a
+# headless platform plugin (minimal), so they are a separate target — met_tests
+# stays Qt-free and fast. test_main_app forces QT_QPA_PLATFORM=minimal before
+# constructing QApplication so test discovery works headless.
+find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets Gui)
+add_executable(met_app_tests
+    test_main_app.cpp
+    app/fieldcache_test.cpp
+    app/timecontroller_test.cpp
+)
+target_include_directories(met_app_tests PRIVATE ${CMAKE_SOURCE_DIR})
+target_link_libraries(met_app_tests PRIVATE met_options met_app GTest::gtest)
+qt_import_plugins(met_app_tests INCLUDE Qt6::QMinimalIntegrationPlugin)
+gtest_discover_tests(met_app_tests)

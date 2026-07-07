@@ -13,7 +13,6 @@
     "hdf5",
     "proj",
     "fmt",
-    "spdlog",
     {
       "name": "gtest",
       "host": false

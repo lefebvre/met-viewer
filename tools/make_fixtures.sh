@@ -51,6 +51,12 @@ g++ "$ROOT/tools/make_wind_fixture.c" -I"$VI/include" -L"$VI/lib" \
     -Wl,-rpath,"$VI/lib" -o "$TMP/make_wind_fixture"
 "$TMP/make_wind_fixture" "$FIXDIR/wind_uv_850.grib2"
 
+echo "compiling + generating GRIB2 missing-without-bitmap fixture..."
+g++ "$ROOT/tools/make_grib_missing_fixture.c" -I"$VI/include" -L"$VI/lib" \
+    -leccodes -leccodes_memfs -lopenjp2 -laec -lpng16 -lz -lm \
+    -Wl,-rpath,"$VI/lib" -o "$TMP/make_grib_missing_fixture"
+"$TMP/make_grib_missing_fixture" "$FIXDIR/regular_ll_missing.grib2"
+
 echo "compiling make_netcdf_fixture..."
 # Static libnetcdf drags in HDF5, szip/aec, and curl (DAP) with its own chain.
 g++ "$ROOT/tools/make_netcdf_fixture.c" -I"$VI/include" -L"$VI/lib" \
@@ -61,6 +67,14 @@ g++ "$ROOT/tools/make_netcdf_fixture.c" -I"$VI/include" -L"$VI/lib" \
 
 echo "generating ERA5-shaped NetCDF fixture..."
 "$TMP/make_netcdf_fixture" "$FIXDIR/era5_t_pl.nc"
+
+echo "compiling + generating NetCDF height-level / T-time fixture..."
+g++ "$ROOT/tools/make_netcdf_levels_fixture.c" -I"$VI/include" -L"$VI/lib" \
+    -lnetcdf -lhdf5_hl -lhdf5 -lsz -laec \
+    -lcurl -lssl -lcrypto -lbrotlidec -lbrotlicommon -lbz2 -llzma -lz -ltinyxml2 -lzstd \
+    -lm -ldl -lpthread \
+    -Wl,-rpath,"$VI/lib" -o "$TMP/make_netcdf_levels_fixture"
+"$TMP/make_netcdf_levels_fixture" "$FIXDIR/height_levels.nc"
 
 echo "generating synthetic ARL fixture..."
 python3 "$ROOT/tools/make_arl_fixture.py" "$FIXDIR/small_latlon.arl"

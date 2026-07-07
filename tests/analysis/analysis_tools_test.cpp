@@ -60,6 +60,20 @@ TEST(CrossSection, SamplesEachLevelAlongPath) {
     EXPECT_GT(cs.distancesKm.back(), cs.distancesKm.front());
 }
 
+TEST(CrossSection, SortsUnorderedLevelsByPressure) {
+    // The extractor must sort by pressure ascending (top first) regardless of the
+    // caller's order, since the view's log-p mapping assumes a monotonic axis.
+    std::vector<std::pair<double, core::Field2D>> stack = {
+        {500.0, linearField(5.0)}, {1000.0, linearField(10.0)}, {250.0, linearField(2.0)}};
+    const auto cs = analysis::extractCrossSection(stack, {{68, 4}, {58, 26}}, 16);
+    ASSERT_EQ(cs.pressures.size(), 3u);
+    EXPECT_DOUBLE_EQ(cs.pressures[0], 250.0);
+    EXPECT_DOUBLE_EQ(cs.pressures[1], 500.0);
+    EXPECT_DOUBLE_EQ(cs.pressures[2], 1000.0);
+    // Each row's values track its own level's bias (2 at 250, 10 at 1000).
+    EXPECT_GT(cs.values[2].front(), cs.values[0].front());
+}
+
 TEST(Sounding, DewpointFromRH) {
     // RH 100% -> dewpoint equals temperature.
     EXPECT_NEAR(analysis::dewpointFromRH(293.15f, 100.0f), 293.15f, 0.2f);

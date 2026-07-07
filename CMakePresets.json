@@ -32,7 +32,8 @@
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "MET_ENABLE_ASAN": "ON"
+        "MET_ENABLE_ASAN": "ON",
+        "MET_WERROR": "ON"
       }
     }
   ],
