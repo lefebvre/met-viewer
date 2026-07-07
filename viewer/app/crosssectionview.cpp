@@ -32,15 +32,44 @@ CrossSectionView::CrossSectionView(QWidget* parent) : QWidget(parent) {
     setMinimumSize(420, 280);
 }
 
-void CrossSectionView::setSection(const analysis::CrossSection& cs) {
-    cs_ = cs;
+void CrossSectionView::applyAutoRange() {
     double lo = std::numeric_limits<double>::infinity(), hi = -lo;
     for (const auto& row : cs_.values)
         for (float x : row)
             if (!std::isnan(x)) { lo = std::min(lo, double(x)); hi = std::max(hi, double(x)); }
     if (!std::isfinite(lo) || lo == hi) { lo = 0; hi = 1; }
-    min_ = lo; max_ = hi;
+    min_ = lo;
+    max_ = hi;
     cmap_.setRange(lo, hi);
+}
+
+void CrossSectionView::setSection(const analysis::CrossSection& cs) {
+    cs_ = cs;
+    if (autoRange_) applyAutoRange();
+    emit rangeChanged(min_, max_);
+    update();
+}
+
+void CrossSectionView::setColormapByName(const QString& name) {
+    const double lo = cmap_.min(), hi = cmap_.max();
+    cmap_ = render::Colormap::builtin(name.toStdString());
+    cmap_.setRange(lo, hi);
+    update();
+}
+
+void CrossSectionView::setAutoRange(bool on) {
+    autoRange_ = on;
+    if (!on) return;
+    applyAutoRange();
+    emit rangeChanged(min_, max_);
+    update();
+}
+
+void CrossSectionView::setRange(double lo, double hi) {
+    min_ = lo;
+    max_ = hi;
+    cmap_.setRange(lo, hi);
+    emit rangeChanged(lo, hi);
     update();
 }
 

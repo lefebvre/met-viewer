@@ -1,9 +1,11 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <vector>
 
 #include <QMainWindow>
+#include <QPointer>
 
 #include "viewer/analysis/wind.h"
 #include "viewer/app/fieldcache.h"
@@ -27,6 +29,8 @@ class MapView;
 class TileLayer;
 class ColorbarWidget;
 class TimeController;
+class CrossSectionView;
+class ViewFrame;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -93,6 +97,20 @@ private slots:
 
 private:
     void buildUi();
+    // Wrap a cross-section view in a ViewFrame with its own colormap/range/legend
+    // control panel (controls live with the view, not in a shared inspector).
+    ViewFrame* wrapCrossSection(CrossSectionView* view);
+    // Re-run every open analysis tab's extraction at the current time so sections/
+    // soundings follow the time slider and the time-series marker tracks it.
+    void refreshAnalyses();
+
+    // One open analysis tab: its tab widget (for close cleanup) and a closure that
+    // re-extracts/updates it at the current time.
+    struct OpenAnalysis {
+        QPointer<QWidget> frame;
+        std::function<void()> refresh;
+    };
+    std::vector<OpenAnalysis> analyses_;
     void decodeCurrent();  // decode the field for the current var/level/time
     void displayField(std::shared_ptr<core::Field2D> field);  // show a decoded field
     void presentField();   // show the current raw field or a derived quantity

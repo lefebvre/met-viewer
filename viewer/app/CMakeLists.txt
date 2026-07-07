@@ -5,6 +5,8 @@ qt_standard_project_setup()
 # App logic as a static library so it can be linked into unit tests. The
 # executable is a thin main() on top; all widgets/orchestration live here.
 add_library(met_app STATIC
+    controlpanel.cpp
+    controlpanel.h
     mainwindow.cpp
     mainwindow.h
     plotview2d.cpp

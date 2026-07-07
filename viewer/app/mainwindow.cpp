@@ -36,6 +36,7 @@
 #include "viewer/analysis/timeseries.h"
 #include "viewer/app/coastlines.h"
 #include "viewer/app/colorbarwidget.h"
+#include "viewer/app/controlpanel.h"
 #include "viewer/app/crosssectionview.h"
 #include "viewer/app/datasetdock.h"
 #include "viewer/app/jobs.h"
@@ -373,6 +374,19 @@ void MainWindow::onTimeChanged(int index) {
     if (index < 0 || index >= static_cast<int>(currentTimes_.size())) return;
     timeIdx_ = index;
     decodeCurrent();
+    refreshAnalyses();  // sections/soundings re-extract; time-series marker moves
+}
+
+void MainWindow::refreshAnalyses() {
+    // Refresh each open analysis tab at the current time; prune closed ones.
+    for (auto it = analyses_.begin(); it != analyses_.end();) {
+        if (!it->frame) {
+            it = analyses_.erase(it);
+        } else {
+            if (it->refresh) it->refresh();
+            ++it;
+        }
+    }
 }
 
 void MainWindow::decodeCurrent() {
@@ -521,6 +535,62 @@ std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack
     return stack;
 }
 
+ViewFrame* MainWindow::wrapCrossSection(CrossSectionView* view) {
+    auto* panel = new ControlPanel(tr("Cross-section"));
+
+    auto* cmap = new QComboBox(panel);
+    for (const auto& name : render::Colormap::builtinNames())
+        cmap->addItem(QString::fromStdString(name));
+    cmap->setCurrentText(QString::fromStdString(view->colormap().name()));
+
+    auto* autoR = new QCheckBox(tr("Auto range"), panel);
+    autoR->setChecked(true);
+    auto* minS = new QDoubleSpinBox(panel);
+    minS->setRange(-1e12, 1e12);
+    minS->setDecimals(3);
+    minS->setEnabled(false);
+    auto* maxS = new QDoubleSpinBox(panel);
+    maxS->setRange(-1e12, 1e12);
+    maxS->setDecimals(3);
+    maxS->setEnabled(false);
+
+    auto* cbar = new ColorbarWidget(panel);
+    cbar->setColormap(view->colormap());
+
+    panel->addRow(tr("Colormap"), cmap);
+    panel->addRow(autoR);
+    panel->addRow(tr("Min"), minS);
+    panel->addRow(tr("Max"), maxS);
+    panel->addBlock(cbar);
+
+    connect(cmap, &QComboBox::currentTextChanged, view, [view, cbar](const QString& n) {
+        view->setColormapByName(n);
+        cbar->setColormap(view->colormap());
+    });
+    connect(autoR, &QCheckBox::toggled, view, [view, minS, maxS](bool on) {
+        view->setAutoRange(on);
+        minS->setEnabled(!on);
+        maxS->setEnabled(!on);
+    });
+    auto pushManual = [view, minS, maxS, autoR] {
+        if (!autoR->isChecked()) view->setRange(minS->value(), maxS->value());
+    };
+    connect(minS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
+    connect(maxS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
+    // Reflect the view's range (auto-fit on each new section, or manual) in the
+    // legend + spinners.
+    connect(view, &CrossSectionView::rangeChanged, view,
+            [view, cbar, minS, maxS](double lo, double hi) {
+                cbar->setColormap(view->colormap());
+                cbar->setUnits(view->units());
+                const QSignalBlocker b1(minS), b2(maxS);
+                minS->setValue(lo);
+                maxS->setValue(hi);
+            });
+
+    return new ViewFrame(view, panel);
+}
+
 void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) {
     if (currentVar_.empty() || !dataset_ || currentTimes_.empty()) return;
     const std::string var = currentVar_;
@@ -534,17 +604,34 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
             return analysis::extractCrossSection(MainWindow::readLevelStack(*ds, var, time, member),
                                                  path, 200);
         },
-        [this, var](analysis::CrossSection cs) {
+        [this, var, path](analysis::CrossSection cs) {
             if (cs.pressures.size() < 2) {
                 statusBar()->showMessage(tr("Cross-section needs a multi-level variable"), 4000);
                 return;
             }
             auto* view = new CrossSectionView;
-            view->setSection(cs);
+            auto* frame = wrapCrossSection(view);  // panel + legend wired first
+            view->setSection(cs);                  // emits rangeChanged -> fills the legend
             const int idx =
-                tabs_->addTab(view, tr("Section: %1").arg(QString::fromStdString(var)));
+                tabs_->addTab(frame, tr("Section: %1").arg(QString::fromStdString(var)));
             tabs_->setCurrentIndex(idx);
             statusBar()->clearMessage();
+            // Follow the time slider: re-extract this section at the current time.
+            analyses_.push_back({frame, [this, v = QPointer<CrossSectionView>(view), var, path]() {
+                if (!v || !dataset_ || currentTimes_.empty()) return;
+                const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+                const int mem = currentMember_;
+                auto dset = dataset_;
+                submitCompute<analysis::CrossSection>(
+                    *pool_, this,
+                    [dset, var, t, mem, path] {
+                        return analysis::extractCrossSection(
+                            MainWindow::readLevelStack(*dset, var, t, mem), path, 200);
+                    },
+                    [v](analysis::CrossSection ncs) {
+                        if (v && ncs.pressures.size() >= 2) v->setSection(ncs);
+                    });
+            }});
         });
 }
 
@@ -563,7 +650,7 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
             const auto rhStack = MainWindow::readLevelStack(*ds, "r", time, member);
             return analysis::extractSounding(tStack, rhStack, point);
         },
-        [this](analysis::Sounding s) {
+        [this, point](analysis::Sounding s) {
             if (s.levels.size() < 2) {
                 statusBar()->showMessage(tr("Sounding needs multi-level temperature (t)"), 4000);
                 return;
@@ -573,6 +660,24 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
             const int idx = tabs_->addTab(view, tr("Skew-T"));
             tabs_->setCurrentIndex(idx);
             statusBar()->clearMessage();
+            // Follow the time slider: re-extract this sounding at the current time.
+            analyses_.push_back({view, [this, v = QPointer<SkewTView>(view), point]() {
+                if (!v || !dataset_ || currentTimes_.empty()) return;
+                const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+                const int mem = currentMember_;
+                auto dset = dataset_;
+                submitCompute<analysis::Sounding>(
+                    *pool_, this,
+                    [dset, t, mem, point] {
+                        const auto tStack = MainWindow::readLevelStack(*dset, "t", t, mem);
+                        if (tStack.size() < 2) return analysis::Sounding{};
+                        const auto rhStack = MainWindow::readLevelStack(*dset, "r", t, mem);
+                        return analysis::extractSounding(tStack, rhStack, point);
+                    },
+                    [v](analysis::Sounding ns) {
+                        if (v && ns.levels.size() >= 2) v->setSounding(ns);
+                    });
+            }});
         });
 }
 
@@ -596,10 +701,15 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
             }
             auto* view = new TimeSeriesView;
             view->setSeries(ts, QString::fromStdString(var));
+            view->setCurrentIndex(timeIdx_);
             const int idx =
                 tabs_->addTab(view, tr("Series: %1").arg(QString::fromStdString(var)));
             tabs_->setCurrentIndex(idx);
             statusBar()->clearMessage();
+            // The series spans all times; just move its marker with the slider.
+            analyses_.push_back({view, [this, v = QPointer<TimeSeriesView>(view)]() {
+                if (v) v->setCurrentIndex(timeIdx_);
+            }});
         });
 }
 
@@ -612,6 +722,8 @@ void MainWindow::demoTimeSeries() { onTimeSeriesRequested({64.0, 12.0}); }
 void MainWindow::onTabCloseRequested(int index) {
     QWidget* w = tabs_->widget(index);
     if (!w || w == plot_ || w == mapView_) return;  // the base tabs are permanent
+    for (auto it = analyses_.begin(); it != analyses_.end();)
+        it = (it->frame == w) ? analyses_.erase(it) : it + 1;
     tabs_->removeTab(index);
     w->deleteLater();
 }

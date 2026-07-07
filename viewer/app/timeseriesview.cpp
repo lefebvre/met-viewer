@@ -21,6 +21,12 @@ void TimeSeriesView::setSeries(const analysis::TimeSeries& ts, const QString& va
     update();
 }
 
+void TimeSeriesView::setCurrentIndex(int index) {
+    if (index == currentIdx_) return;
+    currentIdx_ = index;
+    update();
+}
+
 void TimeSeriesView::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), palette().base());
@@ -77,6 +83,18 @@ void TimeSeriesView::paintEvent(QPaintEvent*) {
     p.drawPolyline(poly);
     p.setBrush(QColor(40, 90, 190));
     for (const QPointF& pt : poly) p.drawEllipse(pt, 2.5, 2.5);
+
+    // Current-time marker (follows the time slider).
+    if (currentIdx_ >= 0 && currentIdx_ < n) {
+        const double x = xOf(currentIdx_);
+        p.setPen(QPen(QColor(200, 60, 60, 180), 1.5));
+        p.drawLine(QPointF(x, r.top()), QPointF(x, r.bottom()));
+        const float cv = ts_.values[static_cast<std::size_t>(currentIdx_)];
+        if (!std::isnan(cv)) {
+            p.setBrush(QColor(200, 60, 60));
+            p.drawEllipse(QPointF(x, yOf(cv)), 3.5, 3.5);
+        }
+    }
 
     p.setPen(palette().color(QPalette::Text));
     p.drawText(QRectF(0, 2, width(), kMT - 2), Qt::AlignCenter,
