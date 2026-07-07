@@ -17,12 +17,15 @@ using core::RegularLatLonGrid;
 
 // NaN-aware bilinear sample at fractional (x, y). Inlined here to keep met_render
 // independent of met_analysis. Returns NaN if all corners are missing.
-float sampleBilinear(const core::Field2D& f, double x, double y) {
+float sampleBilinear(const core::Field2D& f, double x, double y, bool wrapX = false) {
     const int w = f.width();
     const int h = f.height();
     const int x0 = static_cast<int>(std::floor(x));
     const int y0 = static_cast<int>(std::floor(y));
-    const int x1 = std::min(x0 + 1, w - 1);
+    // On a global-wrap grid the east neighbor of the last column is column 0, so
+    // the ±180° seam interpolates instead of showing a one-cell clamp artifact.
+    int x1 = x0 + 1;
+    if (x1 >= w) x1 = wrapX ? 0 : w - 1;
     const int y1 = std::min(y0 + 1, h - 1);
     const double fx = x - x0;
     const double fy = y - y0;
@@ -115,7 +118,9 @@ void warpRegular(const core::Field2D& field, const RegularLatLonGrid& g, const C
             auto* scan = reinterpret_cast<QRgb*>(img.scanLine(py));
             for (int px = 0; px < view.width; ++px) {
                 if (!okCol[static_cast<std::size_t>(px)]) continue;
-                writePixel(scan, px, sampleBilinear(field, fxCol[static_cast<std::size_t>(px)], fy),
+                writePixel(scan, px,
+                           sampleBilinear(field, fxCol[static_cast<std::size_t>(px)], fy,
+                                          g.globalWrapLon),
                            cmap, alphaScale);
             }
         }

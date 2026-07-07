@@ -1,7 +1,10 @@
 #include "viewer/analysis/derived.h"
 
+#include <cctype>
 #include <cmath>
 #include <limits>
+#include <optional>
+#include <string>
 #include <variant>
 
 namespace met::analysis {
@@ -54,6 +57,15 @@ bool centralDerivatives(const core::Field2D& comp, int i, int j, double dxStep, 
     return true;
 }
 
+// Latitude (radians) at grid row j for a regular lat/lon grid, or NaN for a
+// projected grid — whose planar (metre) derivatives already carry the metric,
+// so no spherical curvature correction is applied there.
+double gridLatRadians(const core::GridDef& grid, int j) {
+    if (const auto* g = std::get_if<core::RegularLatLonGrid>(&grid))
+        return (g->lat0 + g->dlat * j) * M_PI / 180.0;
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
 }  // namespace
 
 core::Field2D windSpeedField(const WindField& w) {
@@ -88,6 +100,32 @@ core::Field2D potentialTemperatureField(const core::Field2D& tempK, double press
     return f;
 }
 
+std::optional<core::Field2D> asTemperatureKelvin(const core::Field2D& f) {
+    auto lower = [](std::string s) {
+        for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    const std::string sn = lower(f.meta.standardName);
+    const std::string vn = lower(f.meta.varName);
+    const std::string& u = f.meta.units;  // keep case: 'K' is distinct from 'k'
+    const std::string ul = lower(u);
+
+    const bool nameTemp = sn == "air_temperature" || sn == "temperature" || vn == "t" ||
+                          vn == "temp" || vn == "t2m" || vn == "2t" || vn == "tmp";
+    const bool kelvin = u == "K" || ul == "kelvin" || ul == "degk" || ul == "deg_k";
+    const bool celsius = ul == "c" || ul == "degc" || ul == "celsius" ||
+                         ul == "degrees_celsius" || ul == "deg_c" || u == "°C";
+
+    // Reject clearly non-temperature fields (geopotential, wind, RH, pressure…).
+    if (!nameTemp && !kelvin && !celsius) return std::nullopt;
+
+    core::Field2D out = f;
+    if (celsius)
+        for (float& v : out.values)
+            if (!std::isnan(v)) v += 273.15f;
+    return out;
+}
+
 core::Field2D relativeVorticityField(const WindField& w) {
     core::Field2D f = likeField(w.u, "vo", "s**-1", "Relative vorticity");
     const int width = w.width(), height = w.height();
@@ -98,8 +136,14 @@ core::Field2D relativeVorticityField(const WindField& w) {
             double dudx, dudy, dvdx, dvdy;
             if (!centralDerivatives(w.u, i, j, dxStep, dyStep, dudx, dudy)) continue;
             if (!centralDerivatives(w.v, i, j, dxStep, dyStep, dvdx, dvdy)) continue;
+            // ζ = ∂v/∂x − ∂u/∂y + (u/R)·tanφ. The last term is the spherical
+            // metric (map-factor) correction, applied only on lat/lon grids.
+            double vort = dvdx - dudy;
+            const double phi = gridLatRadians(w.u.grid, j);
+            const float uc = w.u.at(i, j);
+            if (!std::isnan(phi) && !std::isnan(uc)) vort += uc * std::tan(phi) / kR;
             f.values[static_cast<std::size_t>(j) * static_cast<std::size_t>(width) +
-                     static_cast<std::size_t>(i)] = static_cast<float>(dvdx - dudy);
+                     static_cast<std::size_t>(i)] = static_cast<float>(vort);
         }
     }
     return f;
@@ -115,8 +159,13 @@ core::Field2D divergenceField(const WindField& w) {
             double dudx, dudy, dvdx, dvdy;
             if (!centralDerivatives(w.u, i, j, dxStep, dyStep, dudx, dudy)) continue;
             if (!centralDerivatives(w.v, i, j, dxStep, dyStep, dvdx, dvdy)) continue;
+            // δ = ∂u/∂x + ∂v/∂y − (v/R)·tanφ (spherical metric term on lat/lon).
+            double div = dudx + dvdy;
+            const double phi = gridLatRadians(w.u.grid, j);
+            const float vc = w.v.at(i, j);
+            if (!std::isnan(phi) && !std::isnan(vc)) div -= vc * std::tan(phi) / kR;
             f.values[static_cast<std::size_t>(j) * static_cast<std::size_t>(width) +
-                     static_cast<std::size_t>(i)] = static_cast<float>(dudx + dvdy);
+                     static_cast<std::size_t>(i)] = static_cast<float>(div);
         }
     }
     return f;

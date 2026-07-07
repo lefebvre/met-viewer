@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "viewer/analysis/wind.h"
 #include "viewer/core/field.h"
 
@@ -16,6 +18,12 @@ namespace met::analysis {
 // field (K) at pressure `pressureHPa`.
 [[nodiscard]] core::Field2D potentialTemperatureField(const core::Field2D& tempK,
                                                       double pressureHPa);
+
+// If `f` is a temperature field (recognized by standard name, variable name, or
+// units of K/°C), return a copy with values in Kelvin; otherwise std::nullopt.
+// Guards potential-temperature computation against non-temperature or
+// wrong-unit input.
+[[nodiscard]] std::optional<core::Field2D> asTemperatureKelvin(const core::Field2D& f);
 
 // Relative vorticity zeta = dv/dx - du/dy (1/s), by centered finite differences.
 // Grid spacing is handled per grid type: metres directly for projected grids,
