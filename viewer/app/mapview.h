@@ -29,6 +29,7 @@ class MapView : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 public:
     explicit MapView(TileLayer* tiles, QWidget* parent = nullptr);
+    ~MapView() override;
 
     void setGpuEnabled(bool on);
 

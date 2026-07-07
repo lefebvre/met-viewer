@@ -28,12 +28,51 @@ using render::tile::lonToWorldX;
 using render::tile::worldXToLon;
 using render::tile::worldYToLat;
 constexpr int kTile = render::tile::kTileSize;
+
+// One-ring dilation of RGB into transparent (missing) cells, leaving alpha at 0.
+// Hardware GL_LINEAR then blends a neighbor's color instead of transparent-black
+// across a missing-data boundary, so the GPU path shows no dark fringe there.
+void dilateColors(std::vector<unsigned char>& rgba, int nx, int ny) {
+    const std::vector<unsigned char> src = rgba;  // sample from an unmodified copy
+    auto idx = [nx](int x, int y) {
+        return (static_cast<std::size_t>(y) * static_cast<std::size_t>(nx) +
+                static_cast<std::size_t>(x)) * 4;
+    };
+    for (int y = 0; y < ny; ++y) {
+        for (int x = 0; x < nx; ++x) {
+            const std::size_t k = idx(x, y);
+            if (src[k + 3] != 0) continue;  // already a valid cell
+            bool done = false;
+            for (int dy = -1; dy <= 1 && !done; ++dy)
+                for (int dx = -1; dx <= 1 && !done; ++dx) {
+                    const int xx = x + dx, yy = y + dy;
+                    if (xx < 0 || yy < 0 || xx >= nx || yy >= ny) continue;
+                    const std::size_t j = idx(xx, yy);
+                    if (src[j + 3] != 0) {
+                        rgba[k + 0] = src[j + 0];
+                        rgba[k + 1] = src[j + 1];
+                        rgba[k + 2] = src[j + 2];  // alpha stays 0 (still transparent)
+                        done = true;
+                    }
+                }
+        }
+    }
+}
 }  // namespace
 
 MapView::MapView(TileLayer* tiles, QWidget* parent) : QOpenGLWidget(parent), tiles_(tiles) {
     setMouseTracking(true);
     setMinimumSize(320, 240);
     if (tiles_) connect(tiles_, &TileLayer::tileReady, this, &MapView::onTileReady);
+}
+
+MapView::~MapView() {
+    // Release GL objects with the context current — QOpenGLWidget does not make it
+    // current for member sub-object destruction, so GlFieldRenderer's own dtor
+    // could otherwise leak its texture/buffer.
+    makeCurrent();
+    glField_.teardown();
+    doneCurrent();
 }
 
 void MapView::setGpuEnabled(bool on) {
@@ -175,12 +214,14 @@ bool MapView::drawFieldGpu() {
             rgba[k * 4 + 2] = c.b;
             rgba[k * 4 + 3] = c.a;
         }
+        dilateColors(rgba, g.nlon, g.nlat);
         glField_.uploadField(g.nlon, g.nlat, rgba.data());
         uploadedField_ = field_.get();
         uploadedCmap_ = cname;
         uploadedMin_ = cmap_.min();
         uploadedMax_ = cmap_.max();
     }
+    if (!glField_.haveField()) return false;  // upload rejected -> fall back to CPU warp
 
     const GlFieldRenderer::Grid grid{static_cast<float>(g.lon0), static_cast<float>(g.lat0),
                                      static_cast<float>(g.dlon), static_cast<float>(g.dlat),

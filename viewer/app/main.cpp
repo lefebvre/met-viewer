@@ -4,8 +4,9 @@
 #include "viewer/app/mainwindow.h"
 
 int main(int argc, char** argv) {
-    // Request a desktop OpenGL 3.3 compatibility context: floating-point (R32F)
-    // textures for the field, and QPainter still works for tiles/overlays.
+    // Request a desktop OpenGL 3.3 core context. The GPU field path uploads a
+    // colormapped RGBA8 texture (float textures were ruled out); QPainter still
+    // works for tiles/overlays.
     QSurfaceFormat fmt;
     fmt.setVersion(3, 3);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
@@ -48,6 +49,8 @@ int main(int argc, char** argv) {
             demo = "play";
         } else if (args.at(i) == "--cpu") {
             window.setGpuChecked(false);
+        } else if (args.at(i) == "--gpu") {
+            window.setGpuChecked(true);
         } else if (!args.at(i).startsWith("--")) {
             window.openFile(args.at(i));
         }

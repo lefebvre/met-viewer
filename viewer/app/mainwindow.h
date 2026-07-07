@@ -105,10 +105,14 @@ private:
     void saveSettings();
     void openPreferences();
 
-    // Read all pressure levels of `varName` at the current time (pressure, field).
-    std::vector<std::pair<double, core::Field2D>> readLevelStack(const std::string& varName);
-    // Read all times of `varName` at the current level (time, field).
-    std::vector<std::pair<core::TimePoint, core::Field2D>> readTimeStack(const std::string& varName);
+    // Read all pressure levels of `varName` at `time` (pressure, field). Static +
+    // dataset-by-reference so it can run off the GUI thread without touching
+    // mutable window state; readField is serialized inside the reader.
+    static std::vector<std::pair<double, core::Field2D>> readLevelStack(
+        readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member);
+    // Read all times of `varName` at `level` (time, field).
+    static std::vector<std::pair<core::TimePoint, core::Field2D>> readTimeStack(
+        readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member);
 
     std::shared_ptr<readers::IDataset> dataset_;
     QString currentUnits_;

@@ -56,6 +56,8 @@ private:
     QSet<QString> inFlight_;              // keys currently fetching
     QQueue<QString> pending_;             // keys waiting for a slot
     QHash<QString, QString> pendingUrls_; // key -> url
+    QSet<QNetworkReply*> replies_;        // active replies (to abort on source switch)
+    unsigned sourceGen_ = 0;             // bumped on setSource; stale replies are dropped
     int maxInFlight_ = 6;
 };
 

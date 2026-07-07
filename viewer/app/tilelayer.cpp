@@ -43,6 +43,14 @@ QList<TileSource> TileLayer::builtinSources() {
 
 void TileLayer::setSource(const TileSource& source) {
     source_ = source;
+    ++sourceGen_;
+    // Abort in-flight requests from the previous source so their tiles neither
+    // poison the new source's cache (keys are source-agnostic z/x/y) nor blow the
+    // concurrency budget. Iterate a copy: abort() delivers finished() synchronously,
+    // which re-enters onFinished and mutates replies_.
+    const QSet<QNetworkReply*> toAbort = replies_;
+    replies_.clear();
+    for (QNetworkReply* r : toAbort) r->abort();
     memory_.clear();
     inFlight_.clear();
     pending_.clear();
@@ -90,12 +98,19 @@ void TileLayer::pump() {
         req.setRawHeader("Accept", "image/png,image/*");
         QNetworkReply* reply = nam_->get(req);
         reply->setProperty("tileKey", key);
+        reply->setProperty("sourceGen", sourceGen_);
+        replies_.insert(reply);
         inFlight_.insert(key);
     }
 }
 
 void TileLayer::onFinished(QNetworkReply* reply) {
+    replies_.remove(reply);
     reply->deleteLater();
+    // Drop replies from a superseded source: don't cache their tiles under the
+    // new source's keys, and don't disturb the new source's in-flight bookkeeping.
+    if (reply->property("sourceGen").toUInt() != sourceGen_) return;
+
     const QString key = reply->property("tileKey").toString();
     inFlight_.remove(key);
 

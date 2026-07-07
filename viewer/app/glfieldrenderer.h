@@ -25,6 +25,15 @@ public:
     bool init();
     [[nodiscard]] bool ready() const { return ready_; }
 
+    // True once a field texture is successfully uploaded. False if the last
+    // upload was rejected (e.g. the grid exceeds GL_MAX_TEXTURE_SIZE), so the
+    // caller can fall back to the CPU warp.
+    [[nodiscard]] bool haveField() const { return haveField_; }
+
+    // Release all GL objects. Must be called with a current context (e.g. from
+    // the owning widget's destructor after makeCurrent()).
+    void teardown();
+
     // Upload the colormapped field (RGBA8, nlon x nlat, row-major grid order).
     void uploadField(int nlon, int nlat, const unsigned char* rgba);
 

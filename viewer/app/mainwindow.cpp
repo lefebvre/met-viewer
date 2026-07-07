@@ -376,11 +376,14 @@ void MainWindow::presentField() {
     // Derived quantities.
     std::shared_ptr<core::Field2D> derived;
     if (derivedMode_ == 5) {
-        // Potential temperature from the current field (assumed temperature).
+        // Potential temperature — only when the current field is actually
+        // temperature (converted to Kelvin), not any arbitrary variable.
         const auto& lvl = currentRaw_->meta.level;
-        if (lvl.type == core::VerticalLevel::Type::PressureHPa)
-            derived = std::make_shared<core::Field2D>(
-                analysis::potentialTemperatureField(*currentRaw_, lvl.value));
+        if (lvl.type == core::VerticalLevel::Type::PressureHPa) {
+            if (auto tk = analysis::asTemperatureKelvin(*currentRaw_))
+                derived = std::make_shared<core::Field2D>(
+                    analysis::potentialTemperatureField(*tk, lvl.value));
+        }
     } else {
         auto wind = buildWindField();
         if (wind) {
@@ -446,16 +449,14 @@ void MainWindow::prefetchAhead() {
 }
 
 std::vector<std::pair<double, core::Field2D>> MainWindow::readLevelStack(
-    const std::string& varName) {
+    readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member) {
     std::vector<std::pair<double, core::Field2D>> stack;
-    const auto* entry = dataset_ ? dataset_->catalog().find(varName) : nullptr;
-    if (!entry || currentTimes_.empty()) return stack;
-    const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    const auto* entry = ds.catalog().find(varName);
+    if (!entry) return stack;
     for (const auto& lvl : entry->levels) {
         if (lvl.type != core::VerticalLevel::Type::PressureHPa) continue;
         try {
-            stack.emplace_back(lvl.value,
-                               dataset_->readField(core::FieldKey{varName, lvl, time, currentMember_}));
+            stack.emplace_back(lvl.value, ds.readField(core::FieldKey{varName, lvl, time, member}));
         } catch (const std::exception&) {
         }
     }
@@ -463,15 +464,13 @@ std::vector<std::pair<double, core::Field2D>> MainWindow::readLevelStack(
 }
 
 std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack(
-    const std::string& varName) {
+    readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member) {
     std::vector<std::pair<core::TimePoint, core::Field2D>> stack;
-    const auto* entry = dataset_ ? dataset_->catalog().find(varName) : nullptr;
-    if (!entry || currentLevels_.empty()) return stack;
-    const core::VerticalLevel level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
+    const auto* entry = ds.catalog().find(varName);
+    if (!entry) return stack;
     for (const auto& t : entry->times) {
         try {
-            stack.emplace_back(t,
-                               dataset_->readField(core::FieldKey{varName, level, t, currentMember_}));
+            stack.emplace_back(t, ds.readField(core::FieldKey{varName, level, t, member}));
         } catch (const std::exception&) {
         }
     }
@@ -479,46 +478,85 @@ std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack
 }
 
 void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) {
-    if (currentVar_.empty()) return;
-    const auto stack = readLevelStack(currentVar_);
-    if (stack.size() < 2) {
-        statusBar()->showMessage(tr("Cross-section needs a multi-level variable"), 4000);
-        return;
-    }
-    const analysis::CrossSection cs = analysis::extractCrossSection(stack, path, 200);
-    auto* view = new CrossSectionView;
-    view->setSection(cs);
-    const int idx = tabs_->addTab(view, tr("Section: %1").arg(QString::fromStdString(currentVar_)));
-    tabs_->setCurrentIndex(idx);
+    if (currentVar_.empty() || !dataset_ || currentTimes_.empty()) return;
+    const std::string var = currentVar_;
+    const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    const int member = currentMember_;
+    auto ds = dataset_;
+    statusBar()->showMessage(tr("Extracting cross-section…"));
+    submitCompute<analysis::CrossSection>(
+        *pool_, this,
+        [ds, var, time, member, path] {
+            return analysis::extractCrossSection(MainWindow::readLevelStack(*ds, var, time, member),
+                                                 path, 200);
+        },
+        [this, var](analysis::CrossSection cs) {
+            if (cs.pressures.size() < 2) {
+                statusBar()->showMessage(tr("Cross-section needs a multi-level variable"), 4000);
+                return;
+            }
+            auto* view = new CrossSectionView;
+            view->setSection(cs);
+            const int idx =
+                tabs_->addTab(view, tr("Section: %1").arg(QString::fromStdString(var)));
+            tabs_->setCurrentIndex(idx);
+            statusBar()->clearMessage();
+        });
 }
 
 void MainWindow::onSoundingRequested(core::LatLon point) {
-    // Temperature is required; relative humidity is optional (for dewpoint).
-    const auto tStack = readLevelStack("t");
-    if (tStack.size() < 2) {
-        statusBar()->showMessage(tr("Sounding needs multi-level temperature (t)"), 4000);
-        return;
-    }
-    const auto rhStack = readLevelStack("r");
-    const analysis::Sounding s = analysis::extractSounding(tStack, rhStack, point);
-    auto* view = new SkewTView;
-    view->setSounding(s);
-    const int idx = tabs_->addTab(view, tr("Skew-T"));
-    tabs_->setCurrentIndex(idx);
+    if (!dataset_ || currentTimes_.empty()) return;
+    const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    const int member = currentMember_;
+    auto ds = dataset_;
+    statusBar()->showMessage(tr("Extracting sounding…"));
+    submitCompute<analysis::Sounding>(
+        *pool_, this,
+        [ds, time, member, point] {
+            // Temperature is required; relative humidity is optional (for dewpoint).
+            const auto tStack = MainWindow::readLevelStack(*ds, "t", time, member);
+            if (tStack.size() < 2) return analysis::Sounding{};
+            const auto rhStack = MainWindow::readLevelStack(*ds, "r", time, member);
+            return analysis::extractSounding(tStack, rhStack, point);
+        },
+        [this](analysis::Sounding s) {
+            if (s.levels.size() < 2) {
+                statusBar()->showMessage(tr("Sounding needs multi-level temperature (t)"), 4000);
+                return;
+            }
+            auto* view = new SkewTView;
+            view->setSounding(s);
+            const int idx = tabs_->addTab(view, tr("Skew-T"));
+            tabs_->setCurrentIndex(idx);
+            statusBar()->clearMessage();
+        });
 }
 
 void MainWindow::onTimeSeriesRequested(core::LatLon point) {
-    if (currentVar_.empty()) return;
-    const auto stack = readTimeStack(currentVar_);
-    if (stack.size() < 2) {
-        statusBar()->showMessage(tr("Time series needs multiple time steps"), 4000);
-        return;
-    }
-    const analysis::TimeSeries ts = analysis::extractTimeSeries(stack, point);
-    auto* view = new TimeSeriesView;
-    view->setSeries(ts, QString::fromStdString(currentVar_));
-    const int idx = tabs_->addTab(view, tr("Series: %1").arg(QString::fromStdString(currentVar_)));
-    tabs_->setCurrentIndex(idx);
+    if (currentVar_.empty() || !dataset_ || currentLevels_.empty()) return;
+    const std::string var = currentVar_;
+    const core::VerticalLevel level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
+    const int member = currentMember_;
+    auto ds = dataset_;
+    statusBar()->showMessage(tr("Extracting time series…"));
+    submitCompute<analysis::TimeSeries>(
+        *pool_, this,
+        [ds, var, level, member, point] {
+            return analysis::extractTimeSeries(MainWindow::readTimeStack(*ds, var, level, member),
+                                               point);
+        },
+        [this, var](analysis::TimeSeries ts) {
+            if (ts.values.size() < 2) {
+                statusBar()->showMessage(tr("Time series needs multiple time steps"), 4000);
+                return;
+            }
+            auto* view = new TimeSeriesView;
+            view->setSeries(ts, QString::fromStdString(var));
+            const int idx =
+                tabs_->addTab(view, tr("Series: %1").arg(QString::fromStdString(var)));
+            tabs_->setCurrentIndex(idx);
+            statusBar()->clearMessage();
+        });
 }
 
 void MainWindow::demoCrossSection() {
@@ -639,11 +677,19 @@ std::shared_ptr<analysis::WindField> MainWindow::buildWindField() {
 
     const core::VerticalLevel level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
     const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    // Route U/V through the field cache so animation with wind/derived overlays
+    // does not re-decode both components from disk on every frame.
+    auto fetch = [&](const core::FieldKey& key) -> std::shared_ptr<core::Field2D> {
+        if (auto c = fieldCache_.get(key)) return c;
+        auto f = std::make_shared<core::Field2D>(dataset_->readField(key));
+        fieldCache_.put(key, f);
+        return f;
+    };
     try {
         auto wind = std::make_shared<analysis::WindField>();
-        wind->u = dataset_->readField(core::FieldKey{pair->uName, level, time, currentMember_});
-        wind->v = dataset_->readField(core::FieldKey{pair->vName, level, time, currentMember_});
-        analysis::rotateToEarthRelative(*wind);
+        wind->u = *fetch(core::FieldKey{pair->uName, level, time, currentMember_});
+        wind->v = *fetch(core::FieldKey{pair->vName, level, time, currentMember_});
+        analysis::rotateToEarthRelative(*wind);  // rotates the copy, not the cached field
         return wind;
     } catch (const std::exception&) {
         return nullptr;  // U/V may not exist at this level/time
