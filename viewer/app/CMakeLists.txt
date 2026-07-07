@@ -6,6 +6,14 @@ add_executable(met_viewer
     main.cpp
     mainwindow.cpp
     mainwindow.h
+    plotview2d.cpp
+    plotview2d.h
+    colorbarwidget.cpp
+    colorbarwidget.h
+    datasetdock.cpp
+    datasetdock.h
+    jobs.cpp
+    jobs.h
 )
 
 target_include_directories(met_viewer PRIVATE ${CMAKE_SOURCE_DIR})

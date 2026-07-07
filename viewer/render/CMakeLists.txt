@@ -1,8 +1,9 @@
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Gui)
 
 add_library(met_render STATIC
-    render.cpp
+    colormap.cpp
+    fieldimage.cpp
 )
 
 target_include_directories(met_render PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(met_render PUBLIC met_options Qt6::Gui)
+target_link_libraries(met_render PUBLIC met_options met_core Qt6::Gui)

@@ -1,0 +1,177 @@
+#include "viewer/app/plotview2d.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+#include <QMouseEvent>
+#include <QPainter>
+
+#include "viewer/analysis/sample.h"
+#include "viewer/render/fieldimage.h"
+
+namespace met::app {
+namespace {
+constexpr int kMarginLeft = 56;
+constexpr int kMarginBottom = 34;
+constexpr int kMarginTop = 12;
+constexpr int kMarginRight = 16;
+
+// Choose a "nice" tick step for an axis spanning `range` into ~`target` ticks.
+double niceStep(double range, int target) {
+    if (range <= 0 || target <= 0) return 1.0;
+    const double raw = range / target;
+    const double mag = std::pow(10.0, std::floor(std::log10(raw)));
+    const double norm = raw / mag;
+    double step = 10.0;
+    if (norm < 1.5) step = 1.0;
+    else if (norm < 3.0) step = 2.0;
+    else if (norm < 7.0) step = 5.0;
+    return step * mag;
+}
+}  // namespace
+
+PlotView2D::PlotView2D(QWidget* parent) : QWidget(parent) {
+    setMouseTracking(true);
+    setMinimumSize(320, 240);
+    cmap_.setRange(0.0, 1.0);
+}
+
+void PlotView2D::setColormapByName(const QString& name) {
+    const double lo = cmap_.min();
+    const double hi = cmap_.max();
+    cmap_ = render::Colormap::builtin(name.toStdString());
+    cmap_.setRange(lo, hi);
+    rebuildImage();
+    update();
+}
+
+void PlotView2D::setField(std::shared_ptr<core::Field2D> field) {
+    field_ = std::move(field);
+    if (field_) {
+        bbox_ = core::gridBBox(field_->grid);
+        autorange();
+        rebuildImage();
+    } else {
+        image_ = {};
+    }
+    update();
+}
+
+void PlotView2D::clearField() {
+    field_.reset();
+    image_ = {};
+    update();
+}
+
+void PlotView2D::autorange() {
+    double lo = std::numeric_limits<double>::infinity();
+    double hi = -std::numeric_limits<double>::infinity();
+    for (float v : field_->values) {
+        if (std::isnan(v)) continue;
+        lo = std::min(lo, static_cast<double>(v));
+        hi = std::max(hi, static_cast<double>(v));
+    }
+    if (!std::isfinite(lo) || !std::isfinite(hi) || lo == hi) {
+        lo = 0.0;
+        hi = 1.0;
+    }
+    cmap_.setRange(lo, hi);
+}
+
+void PlotView2D::rebuildImage() {
+    if (field_) image_ = render::fieldToImage(*field_, cmap_);
+}
+
+QRectF PlotView2D::plotRect() const {
+    QRectF full(kMarginLeft, kMarginTop, width() - kMarginLeft - kMarginRight,
+                height() - kMarginTop - kMarginBottom);
+    if (full.width() <= 0 || full.height() <= 0 || !bbox_.valid()) return full;
+
+    // Preserve geographic aspect (weighted by cos of mean latitude).
+    const double lonSpan = bbox_.maxLon - bbox_.minLon;
+    const double latSpan = bbox_.maxLat - bbox_.minLat;
+    if (lonSpan <= 0 || latSpan <= 0) return full;
+    const double meanLat = 0.5 * (bbox_.minLat + bbox_.maxLat);
+    const double aspect = (lonSpan * std::cos(meanLat * M_PI / 180.0)) / latSpan;
+
+    double w = full.width();
+    double h = w / aspect;
+    if (h > full.height()) {
+        h = full.height();
+        w = h * aspect;
+    }
+    const double x = full.left() + 0.5 * (full.width() - w);
+    const double y = full.top() + 0.5 * (full.height() - h);
+    return {x, y, w, h};
+}
+
+void PlotView2D::paintEvent(QPaintEvent* /*event*/) {
+    QPainter p(this);
+    p.fillRect(rect(), palette().base());
+
+    if (!field_ || image_.isNull()) {
+        p.setPen(palette().color(QPalette::PlaceholderText));
+        p.drawText(rect(), Qt::AlignCenter, tr("Open a GRIB file to view a field"));
+        return;
+    }
+
+    const QRectF r = plotRect();
+    p.setRenderHint(QPainter::SmoothPixmapTransform, false);
+    p.drawImage(r, image_);
+    p.setPen(palette().color(QPalette::Text));
+    p.drawRect(r);
+
+    // Axis ticks (slightly smaller font; guard against pixel-sized fonts whose
+    // pointSizeF() is -1).
+    QFont f = p.font();
+    if (f.pointSizeF() > 2.0)
+        f.setPointSizeF(f.pointSizeF() - 1.0);
+    p.setFont(f);
+
+    const double lonStep = niceStep(bbox_.maxLon - bbox_.minLon, 6);
+    const double latStep = niceStep(bbox_.maxLat - bbox_.minLat, 6);
+
+    const double lonStart = std::ceil(bbox_.minLon / lonStep) * lonStep;
+    for (double lon = lonStart; lon <= bbox_.maxLon + 1e-6; lon += lonStep) {
+        const double fx = (lon - bbox_.minLon) / (bbox_.maxLon - bbox_.minLon);
+        const double x = r.left() + fx * r.width();
+        p.drawLine(QPointF(x, r.bottom()), QPointF(x, r.bottom() + 4));
+        p.drawText(QRectF(x - 30, r.bottom() + 5, 60, 16), Qt::AlignHCenter | Qt::AlignTop,
+                   QString::number(lon, 'g', 4) + QStringLiteral("°"));
+    }
+
+    const double latStart = std::ceil(bbox_.minLat / latStep) * latStep;
+    for (double lat = latStart; lat <= bbox_.maxLat + 1e-6; lat += latStep) {
+        const double fy = (bbox_.maxLat - lat) / (bbox_.maxLat - bbox_.minLat);
+        const double y = r.top() + fy * r.height();
+        p.drawLine(QPointF(r.left() - 4, y), QPointF(r.left(), y));
+        p.drawText(QRectF(0, y - 8, kMarginLeft - 6, 16), Qt::AlignRight | Qt::AlignVCenter,
+                   QString::number(lat, 'g', 4) + QStringLiteral("°"));
+    }
+}
+
+void PlotView2D::mouseMoveEvent(QMouseEvent* event) {
+    if (!field_) {
+        emit probeLeft();
+        return;
+    }
+    const QRectF r = plotRect();
+    const QPointF pos = event->position();
+    if (!r.contains(pos)) {
+        emit probeLeft();
+        return;
+    }
+
+    const double fx = (pos.x() - r.left()) / r.width();
+    const double fy = (pos.y() - r.top()) / r.height();
+    const double lon = bbox_.minLon + fx * (bbox_.maxLon - bbox_.minLon);
+    const double lat = bbox_.maxLat - fy * (bbox_.maxLat - bbox_.minLat);
+
+    const float v = analysis::sampleBilinear(*field_, core::LatLon{lat, lon});
+    emit probeMoved(lat, lon, static_cast<double>(v), !std::isnan(v));
+}
+
+void PlotView2D::leaveEvent(QEvent* /*event*/) { emit probeLeft(); }
+
+}  // namespace met::app
