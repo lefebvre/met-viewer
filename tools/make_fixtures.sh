@@ -45,6 +45,12 @@ g++ "$ROOT/tools/make_lambert_fixture.c" -I"$VI/include" -L"$VI/lib" \
     -Wl,-rpath,"$VI/lib" -o "$TMP/make_lambert_fixture"
 "$TMP/make_lambert_fixture" "$FIXDIR/lambert_sfc.grib2"
 
+echo "compiling + generating wind (u/v) GRIB2 fixture..."
+g++ "$ROOT/tools/make_wind_fixture.c" -I"$VI/include" -L"$VI/lib" \
+    -leccodes -leccodes_memfs -lopenjp2 -laec -lpng16 -lz -lm \
+    -Wl,-rpath,"$VI/lib" -o "$TMP/make_wind_fixture"
+"$TMP/make_wind_fixture" "$FIXDIR/wind_uv_850.grib2"
+
 echo "compiling make_netcdf_fixture..."
 # Static libnetcdf drags in HDF5, szip/aec, and curl (DAP) with its own chain.
 g++ "$ROOT/tools/make_netcdf_fixture.c" -I"$VI/include" -L"$VI/lib" \

@@ -7,6 +7,7 @@
 #include <QPointF>
 #include <QWidget>
 
+#include "viewer/analysis/wind.h"
 #include "viewer/app/coastlines.h"
 #include "viewer/core/field.h"
 #include "viewer/render/colormap.h"
@@ -30,6 +31,10 @@ public:
     void setCoastlinesVisible(bool on);
     void setCoastlines(std::shared_ptr<std::vector<GeoPolyline>> lines);
     void refreshSource();                     // basemap source changed
+
+    // Wind overlay. Modes: 0 = off, 1 = barbs, 2 = streamlines.
+    void setWind(std::shared_ptr<analysis::WindField> wind);
+    void setWindMode(int mode);
 
     [[nodiscard]] const render::Colormap& colormap() const { return cmap_; }
     [[nodiscard]] bool hasField() const { return field_ != nullptr; }
@@ -55,9 +60,12 @@ private:
     double topLeftWorldX() const;
     double topLeftWorldY() const;
     core::LatLon screenToLonLat(QPointF pos) const;
+    QPointF lonLatToScreen(core::LatLon ll) const;
     void fitToField();
     void ensureWarp();
     void autorange();
+    void drawBarbs(QPainter& p);
+    void drawStreamlines(QPainter& p);
 
     TileLayer* tiles_ = nullptr;
     std::shared_ptr<core::Field2D> field_;
@@ -66,6 +74,8 @@ private:
     bool graticule_ = true;
     bool coastlinesVisible_ = true;
     std::shared_ptr<std::vector<GeoPolyline>> coastlines_;
+    std::shared_ptr<analysis::WindField> wind_;
+    int windMode_ = 0;  // 0 off, 1 barbs, 2 streamlines
 
     int zoom_ = 2;
     double centerLon_ = 0.0;

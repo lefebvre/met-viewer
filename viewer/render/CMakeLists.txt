@@ -7,6 +7,7 @@ add_library(met_render STATIC
     fieldimage.cpp
     contour.cpp
     warp.cpp
+    windbarb.cpp
 )
 
 target_include_directories(met_render PUBLIC ${CMAKE_SOURCE_DIR})

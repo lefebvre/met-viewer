@@ -12,9 +12,11 @@
 #include <QWheelEvent>
 
 #include "viewer/analysis/sample.h"
+#include "viewer/analysis/wind.h"
 #include "viewer/app/tilelayer.h"
 #include "viewer/render/tilemath.h"
 #include "viewer/render/warp.h"
+#include "viewer/render/windbarb.h"
 
 namespace met::app {
 namespace {
@@ -38,6 +40,11 @@ double MapView::topLeftWorldY() const { return worldCenterY() - height() / 2.0; 
 
 core::LatLon MapView::screenToLonLat(QPointF pos) const {
     return render::tile::worldToLonLat(topLeftWorldX() + pos.x(), topLeftWorldY() + pos.y(), zoom_);
+}
+
+QPointF MapView::lonLatToScreen(core::LatLon ll) const {
+    return {lonToWorldX(ll.lon, zoom_) - topLeftWorldX(),
+            latToWorldY(ll.lat, zoom_) - topLeftWorldY()};
 }
 
 void MapView::setField(std::shared_ptr<core::Field2D> field) {
@@ -64,6 +71,14 @@ void MapView::setOpacity(double opacity) {
 
 void MapView::setGraticuleVisible(bool on) { graticule_ = on; update(); }
 void MapView::setCoastlinesVisible(bool on) { coastlinesVisible_ = on; update(); }
+void MapView::setWind(std::shared_ptr<analysis::WindField> wind) {
+    wind_ = std::move(wind);
+    update();
+}
+void MapView::setWindMode(int mode) {
+    windMode_ = mode;
+    update();
+}
 void MapView::setCoastlines(std::shared_ptr<std::vector<GeoPolyline>> lines) {
     coastlines_ = std::move(lines);
     update();
@@ -197,6 +212,10 @@ void MapView::paintEvent(QPaintEvent*) {
         }
     }
 
+    // Wind overlay.
+    if (wind_ && windMode_ == 1) drawBarbs(p);
+    else if (wind_ && windMode_ == 2) drawStreamlines(p);
+
     // Attribution.
     if (tiles_ && !tiles_->source().attribution.isEmpty()) {
         p.setRenderHint(QPainter::Antialiasing, true);
@@ -213,6 +232,110 @@ void MapView::paintEvent(QPaintEvent*) {
     if (!field_) {
         p.setPen(QColor(60, 60, 60));
         p.drawText(rect(), Qt::AlignCenter, tr("Open a file to drape a field over the map"));
+    }
+}
+
+void MapView::drawBarbs(QPainter& p) {
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(QColor(20, 20, 20, 220));
+    pen.setWidthF(1.0);
+    p.setPen(pen);
+    p.setBrush(QColor(20, 20, 20, 220));
+
+    const int spacing = 46;  // screen-space barb lattice
+    for (int sy = spacing / 2; sy < height(); sy += spacing) {
+        for (int sx = spacing / 2; sx < width(); sx += spacing) {
+            const core::LatLon ll = screenToLonLat({double(sx), double(sy)});
+            const analysis::UV uv = analysis::sampleWindLatLon(*wind_, ll);
+            if (std::isnan(uv.u) || std::isnan(uv.v)) continue;
+            const double speed = std::hypot(uv.u, uv.v);
+            // Wind blows toward (u east, v north); in screen space north is -y.
+            // The barb staff points in the direction the wind comes FROM.
+            QPointF fromDir(-uv.u, uv.v);
+            const render::WindBarb barb =
+                render::makeWindBarb({double(sx), double(sy)}, fromDir,
+                                     analysis::toKnots(speed), 22.0);
+            if (barb.calm) {
+                p.setBrush(Qt::NoBrush);
+                p.drawEllipse(QPointF(sx, sy), 2.0, 2.0);
+                p.setBrush(QColor(20, 20, 20, 220));
+                continue;
+            }
+            for (const QLineF& l : barb.lines) p.drawLine(l);
+            for (const QPolygonF& tri : barb.pennants) p.drawPolygon(tri);
+        }
+    }
+}
+
+void MapView::drawStreamlines(QPainter& p) {
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(QColor(25, 25, 35, 205));
+    pen.setWidthF(1.2);
+    p.setPen(pen);
+
+    // Evenly-spaced streamlines (simplified Jobard-Lefer): seed on a coarse
+    // lattice, integrate with RK4, and enforce separation via an occupancy grid.
+    // A streamline is exempt from the cells it marked itself, so it can traverse
+    // its own starting cell; it stops only when it meets a *different* line.
+    const int cell = 16;
+    const int gw = width() / cell + 2;
+    const int gh = height() / cell + 2;
+    std::vector<int> owner(static_cast<std::size_t>(gw) * static_cast<std::size_t>(gh), 0);
+    int lineId = 0;
+
+    auto cellOf = [&](QPointF s, std::size_t& idx) -> bool {
+        const int gx = static_cast<int>(s.x()) / cell;
+        const int gy = static_cast<int>(s.y()) / cell;
+        if (gx < 0 || gy < 0 || gx >= gw || gy >= gh) return false;
+        idx = static_cast<std::size_t>(gy) * static_cast<std::size_t>(gw) +
+              static_cast<std::size_t>(gx);
+        return true;
+    };
+
+    // Wind velocity as a unit vector in screen space (px), or false if invalid.
+    auto velScreen = [&](QPointF s, double& vx, double& vy) -> bool {
+        const analysis::UV uv = analysis::sampleWindLatLon(*wind_, screenToLonLat(s));
+        if (std::isnan(uv.u) || std::isnan(uv.v)) return false;
+        const double sp = std::hypot(uv.u, uv.v);
+        if (sp < 1e-3) return false;
+        vx = uv.u / sp;   // east -> +x
+        vy = -uv.v / sp;  // north -> -y
+        return true;
+    };
+
+    const double stepPx = 3.0;
+    const int maxSteps = 300;
+    for (int seedY = cell; seedY < height(); seedY += cell * 2) {
+        for (int seedX = cell; seedX < width(); seedX += cell * 2) {
+            std::size_t seedIdx = 0;
+            if (!cellOf(QPointF(seedX, seedY), seedIdx) || owner[seedIdx] != 0) continue;
+            ++lineId;
+            for (int dir = -1; dir <= 1; dir += 2) {
+                QPointF cur(seedX, seedY);
+                QPolygonF line;
+                line << cur;
+                for (int step = 0; step < maxSteps; ++step) {
+                    double k1x, k1y, k2x, k2y, k3x, k3y, k4x, k4y;
+                    if (!velScreen(cur, k1x, k1y)) break;
+                    if (!velScreen(cur + QPointF(0.5 * stepPx * dir * k1x, 0.5 * stepPx * dir * k1y),
+                                   k2x, k2y)) break;
+                    if (!velScreen(cur + QPointF(0.5 * stepPx * dir * k2x, 0.5 * stepPx * dir * k2y),
+                                   k3x, k3y)) break;
+                    if (!velScreen(cur + QPointF(stepPx * dir * k3x, stepPx * dir * k3y), k4x, k4y))
+                        break;
+                    cur += QPointF(stepPx * dir * (k1x + 2 * k2x + 2 * k3x + k4x) / 6.0,
+                                   stepPx * dir * (k1y + 2 * k2y + 2 * k3y + k4y) / 6.0);
+                    if (cur.x() < 0 || cur.y() < 0 || cur.x() >= width() || cur.y() >= height())
+                        break;
+                    std::size_t idx = 0;
+                    if (!cellOf(cur, idx)) break;
+                    if (owner[idx] != 0 && owner[idx] != lineId) break;  // meets another line
+                    owner[idx] = lineId;
+                    line << cur;
+                }
+                if (line.size() > 2) p.drawPolyline(line);
+            }
+        }
     }
 }
 

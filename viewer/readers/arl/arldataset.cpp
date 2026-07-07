@@ -270,6 +270,8 @@ Field2D ArlDataset::readField(const core::FieldKey& key) {
     field.meta.units = vm.units;
     field.meta.level = key.level;
     field.meta.validTime = key.validTime;
+    // ARL winds on a conformal grid are grid-relative; lat/lon are earth-relative.
+    field.meta.gridRelativeWind = std::holds_alternative<ProjectedGrid>(grid_);
     return field;
 }
 

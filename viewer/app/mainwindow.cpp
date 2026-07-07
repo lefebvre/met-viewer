@@ -121,6 +121,12 @@ void MainWindow::buildUi() {
     connect(coastlineCheck_, &QCheckBox::toggled, this, &MainWindow::onCoastlinesToggled);
     grid->addRow(QString(), coastlineCheck_);
 
+    windCombo_ = new QComboBox(controls);
+    windCombo_->addItems({tr("Off"), tr("Barbs"), tr("Streamlines")});
+    connect(windCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            &MainWindow::onWindModeChanged);
+    grid->addRow(tr("Wind"), windCombo_);
+
     colorbar_ = new ColorbarWidget(inspector);
     form->addWidget(controls);
     form->addWidget(colorbar_, 1);
@@ -272,6 +278,7 @@ void MainWindow::decodeCurrent() {
                                      met::core::formatLevel(outcome.field->meta.level)))
                                  .arg(outcome.field->width())
                                  .arg(outcome.field->height()));
+        updateWind();  // keep the wind overlay in sync with the current level/time
     });
 }
 
@@ -290,6 +297,10 @@ void MainWindow::showMapTab() {
     if (tabs_) tabs_->setCurrentWidget(mapView_);
 }
 
+void MainWindow::setWindComboIndex(int index) {
+    if (windCombo_) windCombo_->setCurrentIndex(index);
+}
+
 void MainWindow::onContoursToggled(bool on) { plot_->setContoursEnabled(on); }
 
 void MainWindow::onContourIntervalChanged(double value) { plot_->setContourInterval(value); }
@@ -306,6 +317,46 @@ void MainWindow::onOpacityChanged(int percent) { mapView_->setOpacity(percent / 
 void MainWindow::onGraticuleToggled(bool on) { mapView_->setGraticuleVisible(on); }
 
 void MainWindow::onCoastlinesToggled(bool on) { mapView_->setCoastlinesVisible(on); }
+
+void MainWindow::onWindModeChanged(int index) {
+    mapView_->setWindMode(index);
+    plot_->setWindMode(index);
+    updateWind();
+}
+
+void MainWindow::updateWind() {
+    if (!dataset_ || !windCombo_ || windCombo_->currentIndex() == 0 || currentLevels_.empty() ||
+        currentTimes_.empty()) {
+        mapView_->setWind(nullptr);
+        plot_->setWind(nullptr);
+        return;
+    }
+
+    // Find a U/V pair among the catalog's variables.
+    std::vector<std::string> names;
+    for (const auto& v : dataset_->catalog().variables()) names.push_back(v.varName);
+    const auto pair = analysis::findWindPair(names);
+    if (!pair) {
+        mapView_->setWind(nullptr);
+        statusBar()->showMessage(tr("No U/V wind pair in this dataset"), 3000);
+        return;
+    }
+
+    const core::VerticalLevel level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
+    const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    try {
+        auto wind = std::make_shared<analysis::WindField>();
+        wind->u = dataset_->readField(core::FieldKey{pair->uName, level, time, currentMember_});
+        wind->v = dataset_->readField(core::FieldKey{pair->vName, level, time, currentMember_});
+        analysis::rotateToEarthRelative(*wind);
+        mapView_->setWind(wind);
+        plot_->setWind(wind);
+    } catch (const std::exception&) {
+        // U/V may not exist at this level/time (e.g. surface-only pair).
+        mapView_->setWind(nullptr);
+        plot_->setWind(nullptr);
+    }
+}
 
 void MainWindow::onProbeMoved(double lat, double lon, double value, bool hasValue) {
     QString s = QStringLiteral("lat %1°  lon %2°").arg(lat, 0, 'f', 2).arg(lon, 0, 'f', 2);

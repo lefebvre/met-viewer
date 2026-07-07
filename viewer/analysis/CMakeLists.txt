@@ -1,5 +1,6 @@
 add_library(met_analysis STATIC
     sample.cpp
+    wind.cpp
 )
 
 target_include_directories(met_analysis PUBLIC ${CMAKE_SOURCE_DIR})

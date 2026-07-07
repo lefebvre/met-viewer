@@ -8,8 +8,10 @@
 #include <QPainter>
 
 #include "viewer/analysis/sample.h"
+#include "viewer/analysis/wind.h"
 #include "viewer/render/contour.h"
 #include "viewer/render/fieldimage.h"
+#include "viewer/render/windbarb.h"
 
 namespace met::app {
 namespace {
@@ -72,6 +74,16 @@ void PlotView2D::setContoursEnabled(bool enabled) {
 
 void PlotView2D::setContourInterval(double interval) {
     contourInterval_ = interval;
+    update();
+}
+
+void PlotView2D::setWind(std::shared_ptr<analysis::WindField> wind) {
+    wind_ = std::move(wind);
+    update();
+}
+
+void PlotView2D::setWindMode(int mode) {
+    windMode_ = mode;
     update();
 }
 
@@ -159,6 +171,31 @@ void PlotView2D::paintEvent(QPaintEvent* /*event*/) {
             }
             p.setRenderHint(QPainter::Antialiasing, false);
         }
+    }
+
+    // Wind barbs (mode 1), sampled on a screen lattice via the geographic map.
+    if (windMode_ == 1 && wind_) {
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setPen(QPen(QColor(20, 20, 20, 220), 1.0));
+        p.setBrush(QColor(20, 20, 20, 220));
+        const int spacing = 44;
+        const double lonSpan = bbox_.maxLon - bbox_.minLon;
+        const double latSpan = bbox_.maxLat - bbox_.minLat;
+        for (double sy = r.top() + spacing / 2.0; sy < r.bottom(); sy += spacing) {
+            for (double sx = r.left() + spacing / 2.0; sx < r.right(); sx += spacing) {
+                const double lon = bbox_.minLon + (sx - r.left()) / r.width() * lonSpan;
+                const double lat = bbox_.maxLat - (sy - r.top()) / r.height() * latSpan;
+                const analysis::UV uv = analysis::sampleWindLatLon(*wind_, core::LatLon{lat, lon});
+                if (std::isnan(uv.u) || std::isnan(uv.v)) continue;
+                const double speed = std::hypot(uv.u, uv.v);
+                const render::WindBarb barb = render::makeWindBarb(
+                    {sx, sy}, QPointF(-uv.u, uv.v), analysis::toKnots(speed), 20.0);
+                if (barb.calm) continue;
+                for (const QLineF& l : barb.lines) p.drawLine(l);
+                for (const QPolygonF& tri : barb.pennants) p.drawPolygon(tri);
+            }
+        }
+        p.setBrush(Qt::NoBrush);
     }
 
     // Axis ticks (slightly smaller font; guard against pixel-sized fonts whose

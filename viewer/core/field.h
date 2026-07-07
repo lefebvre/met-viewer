@@ -29,6 +29,9 @@ struct FieldMeta {
     std::string standardName;  // CF standard_name if known ("air_temperature")
     VerticalLevel level;
     TimePoint validTime;
+    // For wind components: true when u/v are resolved along the grid axes
+    // (grid-relative) rather than east/north (earth-relative).
+    bool gridRelativeWind = false;
 };
 
 // A decoded 2D field. Values are row-major (row 0 first), missing entries are

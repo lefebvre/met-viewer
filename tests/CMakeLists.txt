@@ -12,6 +12,7 @@ add_executable(met_tests
     render/tilemath_test.cpp
     render/warp_test.cpp
     analysis/sample_test.cpp
+    analysis/wind_test.cpp
     readers/grib_reader_test.cpp
     readers/grib1_test.cpp
     readers/netcdf_reader_test.cpp

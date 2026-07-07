@@ -43,6 +43,9 @@ public:
     // Switch the central view to the GIS map tab (used by --map).
     void showMapTab();
 
+    // Set the wind overlay mode (0 off, 1 barbs, 2 streamlines); used by --wind.
+    void setWindComboIndex(int index);
+
 private slots:
     void onOpenTriggered();
     void onFieldChosen(const core::FieldKey& key);
@@ -55,12 +58,14 @@ private slots:
     void onOpacityChanged(int percent);
     void onGraticuleToggled(bool on);
     void onCoastlinesToggled(bool on);
+    void onWindModeChanged(int index);
     void onProbeMoved(double lat, double lon, double value, bool hasValue);
     void onProbeLeft();
 
 private:
     void buildUi();
     void decodeCurrent();  // decode the field for the current var/level/time
+    void updateWind();     // (re)build the wind overlay for the current level/time
 
     std::shared_ptr<readers::IDataset> dataset_;
     QString currentUnits_;
@@ -88,6 +93,7 @@ private:
     QSlider* opacitySlider_ = nullptr;
     QCheckBox* graticuleCheck_ = nullptr;
     QCheckBox* coastlineCheck_ = nullptr;
+    QComboBox* windCombo_ = nullptr;
     TimeController* timeController_ = nullptr;
     QLabel* probeLabel_ = nullptr;
     QThreadPool* pool_ = nullptr;
