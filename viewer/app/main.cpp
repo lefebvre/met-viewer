@@ -1,9 +1,44 @@
+#include <cstdio>
+#include <cstdlib>
+
 #include <QApplication>
+#include <QString>
 #include <QSurfaceFormat>
+#include <QtGlobal>
 
 #include "viewer/app/mainwindow.h"
 
+namespace {
+
+QtMessageHandler g_prevHandler = nullptr;
+
+// Suppress a few known-benign warnings this (ICU-less) Qt build emits and pass
+// everything else through unchanged:
+//   - "... posix collation implementation" — QFileDialog's QCollator falls back
+//     to POSIX collation when Qt is built without ICU; numeric/case-insensitive
+//     sorting isn't supported there, but the dialog still works.
+//   - "QSslSocket): device not open" — a benign read on an HTTPS tile socket that
+//     is already closed during reply teardown/abort or app quit.
+// The filters match exact substrings, so real SSL/handshake errors still surface.
+void filterQtWarnings(QtMsgType type, const QMessageLogContext& ctx, const QString& msg) {
+    if (msg.contains(QLatin1String("posix collation implementation")) ||
+        msg.contains(QLatin1String("QSslSocket): device not open"))) {
+        return;
+    }
+    if (g_prevHandler) {
+        g_prevHandler(type, ctx, msg);
+        return;
+    }
+    std::fprintf(stderr, "%s\n", msg.toLocal8Bit().constData());
+    std::fflush(stderr);
+    if (type == QtFatalMsg) std::abort();
+}
+
+}  // namespace
+
 int main(int argc, char** argv) {
+    g_prevHandler = qInstallMessageHandler(filterQtWarnings);
+
     // Request a desktop OpenGL 3.3 core context. The GPU field path uploads a
     // colormapped RGBA8 texture (float textures were ruled out); QPainter still
     // works for tiles/overlays.
