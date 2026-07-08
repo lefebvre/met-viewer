@@ -406,6 +406,7 @@ void MainWindow::decodeCurrent() {
 void MainWindow::presentField() {
     if (!currentRaw_) return;
     if (derivedMode_ == 0) {
+        showingDerived_ = false;
         displayField(currentRaw_);
         return;
     }
@@ -435,8 +436,10 @@ void MainWindow::presentField() {
     }
 
     if (derived) {
+        showingDerived_ = true;
         displayField(derived);
     } else {
+        showingDerived_ = false;
         statusBar()->showMessage(tr("Derived quantity unavailable here — showing raw field"), 3000);
         displayField(currentRaw_);
     }
@@ -476,7 +479,7 @@ void MainWindow::updateShowingLabel() {
     }
     const auto& meta = currentRaw_->meta;
     QString quantity;
-    switch (derivedMode_) {
+    switch (showingDerived_ ? derivedMode_ : 0) {  // reflect what is actually on screen
         case 1: quantity = tr("Wind speed"); break;
         case 2: quantity = tr("Wind direction"); break;
         case 3: quantity = tr("Relative vorticity"); break;
@@ -487,7 +490,7 @@ void MainWindow::updateShowingLabel() {
             break;
     }
     const QString from =
-        derivedMode_ != 0 ? tr(" (from %1)").arg(QString::fromStdString(meta.varName)) : QString();
+        showingDerived_ ? tr(" (from %1)").arg(QString::fromStdString(meta.varName)) : QString();
     showingLabel_->setText(tr("Showing: %1%2\n@ %3 · %4")
                                .arg(quantity, from,
                                     QString::fromStdString(met::core::formatLevel(meta.level)),

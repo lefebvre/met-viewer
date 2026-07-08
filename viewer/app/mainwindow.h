@@ -140,6 +140,7 @@ private:
     int timeIdx_ = 0;
     std::shared_ptr<core::Field2D> currentRaw_;  // last decoded raw field
     int derivedMode_ = 0;                        // 0 = none; see the Derived combo
+    bool showingDerived_ = false;                // a derived quantity is actually on screen
 
     QTabWidget* tabs_ = nullptr;
     DatasetDock* datasetDock_ = nullptr;
