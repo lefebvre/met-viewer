@@ -61,6 +61,23 @@ void DatasetDock::setCatalog(const core::DatasetCatalog& catalog) {
     tree_->expandAll();
 }
 
+void DatasetDock::selectField(const QString& varName, const core::VerticalLevel& level) {
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* varItem = tree_->topLevelItem(i);
+        for (int j = 0; j < varItem->childCount(); ++j) {
+            QTreeWidgetItem* leaf = varItem->child(j);
+            if (leaf->data(0, kRoleVar).toString() != varName) continue;
+            const auto type = static_cast<core::VerticalLevel::Type>(
+                leaf->data(0, kRoleLevelType).toInt());
+            if (type == level.type && leaf->data(0, kRoleLevelValue).toDouble() == level.value) {
+                tree_->setCurrentItem(leaf);  // highlights; does not emit itemActivated
+                tree_->scrollToItem(leaf);
+                return;
+            }
+        }
+    }
+}
+
 void DatasetDock::onItemActivated(QTreeWidgetItem* item, int /*column*/) {
     if (!item || !item->data(0, kRoleIsLeaf).toBool()) return;
 

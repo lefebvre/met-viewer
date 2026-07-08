@@ -2,7 +2,9 @@
 #include <cstdlib>
 
 #include <QApplication>
+#include <QCommandLineParser>
 #include <QString>
+#include <QStringList>
 #include <QSurfaceFormat>
 #include <QtGlobal>
 
@@ -53,53 +55,80 @@ int main(int argc, char** argv) {
 
     QApplication app(argc, argv);
     QApplication::setApplicationName("met-viewer");
+    QApplication::setApplicationVersion("0.1.0");
     QApplication::setOrganizationName("met-viewer");
     QApplication::setOrganizationDomain("met-viewer.local");
 
     met::app::MainWindow window;
     window.show();
 
-    // Args: [file] [--contours] [--map] [--grab out.png]
-    const QStringList args = QApplication::arguments();
-    QString grabPath;
-    bool contours = false;
-    bool map = false;
-    int windMode = 0;
-    int derivedMode = 0;
-    QString demo;
-    for (int i = 1; i < args.size(); ++i) {
-        if (args.at(i) == "--grab" && i + 1 < args.size()) {
-            grabPath = args.at(++i);
-        } else if (args.at(i) == "--contours") {
-            contours = true;
-        } else if (args.at(i) == "--map") {
-            map = true;
-        } else if (args.at(i) == "--wind" && i + 1 < args.size()) {
-            windMode = args.at(++i).toInt();
-        } else if (args.at(i) == "--derived" && i + 1 < args.size()) {
-            derivedMode = args.at(++i).toInt();
-        } else if (args.at(i) == "--demo" && i + 1 < args.size()) {
-            demo = args.at(++i);
-        } else if (args.at(i) == "--play") {
-            demo = "play";
-        } else if (args.at(i) == "--cpu") {
-            window.setGpuChecked(false);
-        } else if (args.at(i) == "--gpu") {
-            window.setGpuChecked(true);
-        } else if (!args.at(i).startsWith("--")) {
-            window.openFile(args.at(i));
-        }
+    QCommandLineParser parser;
+    parser.setApplicationDescription(
+        "met-viewer — view and analyze gridded meteorological data (GRIB, NetCDF, ARL).");
+    parser.addHelpOption();
+    parser.addVersionOption();
+    parser.addPositionalArgument("file", "Data file(s) to open; the last one is shown.",
+                                 "[file...]");
+    parser.addOptions({
+        {"map", "Start on the GIS Map tab."},
+        {"contours", "Enable the 2D-plot contour overlay."},
+        {"wind", "Wind overlay mode: 1 barbs, 2 streamlines.", "mode"},
+        {"derived", "Select a derived quantity by index.", "index"},
+        {"demo", "Open an analysis view on the demo point: section|sounding|series.", "view"},
+        {"tile", "Tile a cross-section beside a skew-T to show a split layout."},
+        {"size", "Window size WxH in pixels (e.g. 1600x840).", "WxH"},
+        {"time", "Jump to a time-step index (e.g. for rendering GIF frames).", "index"},
+        {"play", "Start time-animation playback."},
+        {"gpu", "Force the GPU map-warp path."},
+        {"cpu", "Force the CPU map-warp path."},
+        {"grab", "Render the window to a PNG and quit (headless screenshot).", "out.png"},
+        {"var", "Select the displayed variable by short name (e.g. t, u).", "name"},
+        {"level", "Select the pressure level in hPa (e.g. 500).", "hPa"},
+        {"colormap", "Set the colormap by name (e.g. turbo, \"RdBu (diverging)\").", "name"},
+        {"basemap", "Set the map basemap by name (e.g. \"Carto Dark\").", "name"},
+        {"demo-at", "Sample point \"LAT,LON\" the --demo triggers use.", "lat,lon"},
+    });
+    parser.process(app);
+
+    if (parser.isSet("size")) {
+        const QStringList wh = parser.value("size").split('x', Qt::SkipEmptyParts);
+        if (wh.size() == 2) window.resize(wh.at(0).toInt(), wh.at(1).toInt());
     }
-    if (contours) window.setContoursChecked(true);
+
+    // Positional args open files; the last one ends up shown.
+    for (const QString& file : parser.positionalArguments()) window.openFile(file);
+
+    // Field selection first, so map/contours/wind/demo act on the intended field.
+    if (parser.isSet("var")) window.selectVariable(parser.value("var"));
+    if (parser.isSet("level")) window.selectLevelHpa(parser.value("level").toDouble());
+    if (parser.isSet("colormap")) window.setColormapByName(parser.value("colormap"));
+    if (parser.isSet("contours")) window.setContoursChecked(true);
+    if (parser.isSet("wind")) window.setWindComboIndex(parser.value("wind").toInt());
+    if (parser.isSet("derived")) window.setDerivedComboIndex(parser.value("derived").toInt());
+    if (parser.isSet("cpu")) window.setGpuChecked(false);
+    if (parser.isSet("gpu")) window.setGpuChecked(true);
+    if (parser.isSet("basemap")) window.setBasemapByName(parser.value("basemap"));
+
+    const bool map = parser.isSet("map");
     if (map) window.showMapTab();
-    if (windMode > 0) window.setWindComboIndex(windMode);
-    if (derivedMode > 0) window.setDerivedComboIndex(derivedMode);
+    if (parser.isSet("time")) window.setTimeIndex(parser.value("time").toInt());
+
+    if (parser.isSet("demo-at")) {
+        const QStringList xy = parser.value("demo-at").split(',');
+        if (xy.size() == 2) window.setDemoPoint(xy.at(0).toDouble(), xy.at(1).toDouble());
+    }
+
+    if (parser.isSet("tile")) window.demoTiledLayout();
+
+    QString demo = parser.value("demo");
+    if (parser.isSet("play")) demo = "play";
     if (demo == "section") window.demoCrossSection();
     else if (demo == "sounding") window.demoSounding();
     else if (demo == "series") window.demoTimeSeries();
     else if (demo == "play") window.startPlayback();
+
     // Give the map extra time to fetch tiles before a headless grab.
-    if (!grabPath.isEmpty()) window.scheduleGrabAndQuit(grabPath, map ? 3500 : 1200);
+    if (parser.isSet("grab")) window.scheduleGrabAndQuit(parser.value("grab"), map ? 3500 : 1200);
 
     return QApplication::exec();
 }

@@ -81,6 +81,15 @@ QT_QPA_PLATFORM=xcb ./build/release/viewer/app/met_viewer tests/fixtures/era5_t_
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
+…and the same layout in the running app:
+
+![The met-viewer main window showing a temperature field on the 2D Plot](images/01-window-overview.png)
+
+*The **Data** dock (left), the active view (center) with its control panel and
+colorbar (right), and the **Time** dock (bottom). The screenshots in this guide
+use an ERA5 pressure-level GRIB over the US Southwest; the numbered steps use the
+in-repo [`tests/fixtures/`](../tests/fixtures/) files so you can reproduce them.*
+
 - **Data dock (left)** — the variable/level tree, the **Level** selector, the
   **Derived** quantity selector, and a live **Showing:** label describing exactly
   what is on screen.
@@ -121,11 +130,22 @@ The 2D Plot's control panel gives you:
   comparing levels or times on a fixed scale).
 - **Colorbar** — a legend beneath the controls, labeled in the field's units.
 
+The same temperature field under the **turbo** colormap:
+
+![The temperature field rendered with the turbo colormap](images/03-colormap-turbo.png)
+
+Diverging colormaps auto-center on zero, so they suit signed fields — here the
+**RdBu (diverging)** map on the U-wind component (red eastward, blue westward):
+
+![U-wind rendered with the RdBu diverging colormap centered on zero](images/04-colormap-rdbu.png)
+
 ### Contours
 
 Check **Contours** to overlay isolines on the plot. Leave **Contour interval** at
 `auto` for a "nice" automatic spacing, or type an interval in the field's units
 (e.g. `2` for every 2 K).
+
+![Temperature with contour isolines overlaid on the 2D plot](images/02-plot-contours.png)
 
 ---
 
@@ -133,6 +153,8 @@ Check **Contours** to overlay isolines on the plot. Leave **Contour interval** a
 
 Click the **Map** tab. The field is warped into Web Mercator and draped
 semi-transparently over basemap tiles.
+
+![Temperature draped over an OpenStreetMap basemap on the GIS map](images/06-map-osm.png)
 
 - **Pan** — left-drag. **Zoom** — mouse wheel (zooms toward the cursor).
 - **Fit to data** — **right-click ▸ Fit to data** re-frames the view on the
@@ -146,6 +168,13 @@ The Map's control panel adds:
   `Esri World Imagery` (satellite), `OpenTopoMap` (terrain). Attribution is shown
   in the corner as each source requires.
 - **Field opacity** — blend the data against the basemap.
+
+The same field over the **Carto Dark** and **Esri World Imagery** basemaps:
+
+![The field over the Carto Dark basemap](images/07-map-carto-dark.png)
+
+![The field over the Esri World Imagery satellite basemap](images/08-map-esri.png)
+
 - **Graticule** / **Coastlines** — lat/lon grid and Natural Earth coastlines.
 - **GPU render (experimental)** — an OpenGL warp path. It is **off by default**;
   the CPU warp is the robust default (the GPU path shows a driver artifact on some
@@ -166,8 +195,14 @@ Map panel set **Wind** to:
 - **Barbs** — standard wind barbs on a screen lattice, or
 - **Streamlines** — traced flow lines.
 
+![Wind barbs over the wind field on the map](images/09-map-wind-barbs.png)
+
+![Streamlines traced over the wind field on the map](images/10-map-streamlines.png)
+
 The 2D Plot panel offers **Off / Barbs**. Grid-relative winds on projected grids
 are rotated to earth-relative automatically.
+
+![Wind barbs on the 2D Plot view](images/05-plot-wind-barbs.png)
 
 ---
 
@@ -187,6 +222,8 @@ back to the raw field and tells you so in the status bar.
 
 **Try it:** open `wind_uv_850.grib2`, set **Derived ▸ Wind speed**.
 
+![Derived wind speed computed from the U/V pair, shown on the map](images/11-derived-windspeed.png)
+
 ---
 
 ## 6. Time and animation
@@ -198,6 +235,8 @@ When a file has multiple time steps, the **Time** dock drives them:
 - **Play ▶** animates through the time axis at the configured frame rate.
   Decoded frames are held in an LRU **field cache** and upcoming steps are
   prefetched, so playback is smooth once frames are warm.
+
+![Animation stepping through the time axis; the Time-dock slider advances with each frame](images/12-time-animation.gif)
 
 Open cross-sections, soundings, and time-series markers **follow the time slider**
 — scrubbing time re-extracts them at the new step (see [§7](#7-analysis-tools)).
@@ -231,6 +270,8 @@ A new **Section** tab opens: your path along the x-axis, a log-pressure y-axis, 
 the field colormapped through the section's own color controls (with its own
 colorbar). It re-extracts as you scrub time.
 
+![A vertical cross-section of temperature with a log-pressure y-axis](images/13-cross-section.png)
+
 ### Skew-T sounding
 
 Needs **multi-level temperature** (`t`); humidity (`r`) adds a dewpoint trace, and
@@ -244,6 +285,8 @@ adiabats, and mixing-ratio lines in the background; the **temperature** (red) an
 **dewpoint** (green) traces; a **legend**; and — when the file has wind — a column
 of **wind barbs** down the right margin. It follows the time slider.
 
+![A skew-T log-p sounding with temperature, dewpoint, and a wind-barb column](images/14-skewt-sounding.png)
+
 ### Time series
 
 Needs **multiple time steps**.
@@ -254,6 +297,8 @@ Needs **multiple time steps**.
 
 A **Series** tab plots the value at that point across all times, with a marker that
 tracks the current time as you scrub.
+
+![A time series of the value at a point, with a marker on the current time](images/15-time-series.png)
 
 ---
 
@@ -272,6 +317,11 @@ The views live in a nested docking area, so you can build the layout you want:
 - **Collapse controls** — each view's control panel collapses via its **▾/▸**
   header to maximize canvas space.
 
+For example, a **cross-section** and a **skew-T** split side by side, each keeping
+its own control panel:
+
+![A vertical cross-section and a skew-T sounding docked side by side in a split layout](images/16-tiled-layout.png)
+
 ### Recently opened files
 
 **File ▸ Open Recent** lists the last files you opened (most-recent first). Pick
@@ -286,24 +336,36 @@ across sessions.
 QT_QPA_PLATFORM=xcb ./build/release/viewer/app/met_viewer [FILE] [options]
 ```
 
+Run with `--help` for the full, auto-generated list.
+
 | Option | Effect |
 | --- | --- |
 | `FILE` | Open a data file on launch (repeatable; the last one is shown) |
+| `--var NAME` | Select the displayed variable by short name (e.g. `t`, `u`) |
+| `--level HPA` | Select the pressure level in hPa (e.g. `500`) |
+| `--colormap NAME` | Set the colormap (e.g. `turbo`, `"RdBu (diverging)"`) |
+| `--basemap NAME` | Set the map basemap (e.g. `"Carto Dark"`) |
 | `--map` | Start on the GIS **Map** tab |
 | `--contours` | Turn on the 2D-plot contour overlay |
 | `--wind N` | Wind overlay mode: `1` barbs, `2` streamlines |
 | `--derived N` | Select a derived quantity by index |
-| `--demo section` \| `sounding` \| `series` | Open the named analysis view on a sample point |
+| `--demo section` \| `sounding` \| `series` | Open the named analysis view on the demo point |
+| `--demo-at LAT,LON` | Sample point the `--demo` triggers use |
+| `--tile` | Tile a cross-section beside a skew-T (demonstrates split layouts) |
+| `--size WxH` | Set the window size in pixels (e.g. `1680x860`) |
+| `--time N` | Jump to a time-step index (e.g. to render GIF frames) |
 | `--play` | Start time-animation playback |
 | `--gpu` / `--cpu` | Force the GPU or CPU map-warp path |
 | `--grab OUT.png` | Render the window to a PNG and quit (headless screenshot) |
 
 **Headless screenshot** — useful for scripting or verifying a render without a
-display (runs under `xcb`):
+display (runs under `xcb`). These field-selection flags are exactly what
+[`tools/gen_screenshots.sh`](../tools/gen_screenshots.sh) uses to render the images
+in this guide:
 
 ```sh
 QT_QPA_PLATFORM=xcb ./build/release/viewer/app/met_viewer \
-  tests/fixtures/era5_t_pl.nc --map --grab /tmp/frame.png
+  data.grib --var t --level 500 --map --grab /tmp/frame.png
 ```
 
 ---

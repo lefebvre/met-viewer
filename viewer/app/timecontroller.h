@@ -22,6 +22,9 @@ public:
     // `current`, clamped into range. A single or empty step disables the slider.
     void setSteps(const QStringList& labels, int current = 0);
     [[nodiscard]] int currentIndex() const;
+    // Move to `index` (clamped); moves the slider and emits indexChanged. Used by
+    // the --time CLI flag to render a specific animation frame headlessly.
+    void setCurrentIndex(int index);
 
     void setFps(int fps);
     [[nodiscard]] bool isPlaying() const;

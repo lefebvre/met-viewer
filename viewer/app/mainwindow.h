@@ -63,10 +63,31 @@ public:
     // Set the derived-quantity combo index; used by --derived.
     void setDerivedComboIndex(int index);
 
+    // Select the displayed variable by canonical short name (used by --var).
+    void selectVariable(const QString& name);
+
+    // Select the pressure level in hPa on the current variable (used by --level).
+    void selectLevelHpa(double hPa);
+
+    // Set the colormap on the 2D-plot and map views by name (used by --colormap).
+    void setColormapByName(const QString& name);
+
+    // Set the map basemap by name (used by --basemap).
+    void setBasemapByName(const QString& name);
+
+    // Set the sample point the --demo triggers use (used by --demo-at).
+    void setDemoPoint(double lat, double lon);
+
+    // Jump to a time step by index (used by --time, e.g. to render GIF frames).
+    void setTimeIndex(int index);
+
     // Headless demo triggers (used by --section / --sounding / --series).
     void demoCrossSection();
     void demoSounding();
     void demoTimeSeries();
+    // Open a cross-section and a skew-T side by side to demonstrate a tiled layout
+    // (used by --tile).
+    void demoTiledLayout();
 
 protected:
     void closeEvent(QCloseEvent* event) override;
@@ -149,9 +170,14 @@ private:
     int levelIdx_ = 0;
     int timeIdx_ = 0;
     std::shared_ptr<core::Field2D> currentRaw_;  // last decoded raw field
+    core::LatLon demoPoint_{64.0, 12.0};         // sample point for the --demo triggers
     int derivedMode_ = 0;                        // 0 = none; see the Derived combo
     bool showingDerived_ = false;                // a derived quantity is actually on screen
     int analysisSeq_ = 0;                        // unique object-name counter for analysis docks
+    // --tile: the analysis docks are created asynchronously, so collect the next
+    // `tilePending_` of them and, once the second arrives, split them side by side.
+    int tilePending_ = 0;
+    QDockWidget* tileFirst_ = nullptr;
 
     // Center is a nested QMainWindow whose dock widgets are the views; users drag a
     // view's tab/title to split the area, tab views together, or float them out.

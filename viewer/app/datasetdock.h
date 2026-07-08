@@ -21,6 +21,10 @@ public:
     void setCatalog(const core::DatasetCatalog& catalog);
     void clear();
 
+    // Highlight and scroll to the leaf for `varName` at `level` without emitting
+    // fieldChosen(). Used to reflect a programmatic (CLI) selection in the tree.
+    void selectField(const QString& varName, const core::VerticalLevel& level);
+
 signals:
     void fieldChosen(const core::FieldKey& key);
 
