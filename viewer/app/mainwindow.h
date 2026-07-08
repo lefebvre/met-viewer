@@ -18,6 +18,7 @@ class QComboBox;
 class QDockWidget;
 class QDoubleSpinBox;
 class QLabel;
+class QMenu;
 class QSlider;
 class QThreadPool;
 
@@ -115,6 +116,8 @@ private:
     void loadSettings();
     void saveSettings();
     void openPreferences();
+    void addRecentFile(const QString& path);  // record a successfully opened file
+    void updateRecentMenu();                   // rebuild the "Open Recent" submenu
 
     // Read all pressure levels of `varName` at `time` (pressure, field). Static +
     // dataset-by-reference so it can run off the GUI thread without touching
@@ -176,6 +179,7 @@ private:
 
     TimeController* timeController_ = nullptr;
     QLabel* probeLabel_ = nullptr;
+    QMenu* recentMenu_ = nullptr;  // File > Open Recent
     QThreadPool* pool_ = nullptr;
 };
 

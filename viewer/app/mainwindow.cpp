@@ -8,8 +8,10 @@
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QSignalBlocker>
@@ -223,6 +225,9 @@ void MainWindow::buildUi() {
     QAction* openAct = fileMenu->addAction(tr("&Open…"));
     openAct->setShortcut(QKeySequence::Open);
     connect(openAct, &QAction::triggered, this, &MainWindow::onOpenTriggered);
+    recentMenu_ = fileMenu->addMenu(tr("Open &Recent"));
+    recentMenu_->setToolTipsVisible(true);  // show full paths on hover
+    updateRecentMenu();
     QAction* prefAct = fileMenu->addAction(tr("&Preferences…"));
     connect(prefAct, &QAction::triggered, this, &MainWindow::openPreferences);
     fileMenu->addSeparator();
@@ -314,6 +319,7 @@ void MainWindow::openFile(const QString& path) {
     plot_->clearField();
     statusBar()->showMessage(
         tr("Opened %1 (%2)").arg(path).arg(QString::fromStdString(dataset_->formatName())), 4000);
+    addRecentFile(path);
 
     // Auto-display the first available field.
     const auto& vars = dataset_->catalog().variables();
@@ -917,6 +923,42 @@ void MainWindow::saveSettings() {
     s.setValue("coastlines", mapCoastlineCheck_->isChecked());
     s.setValue("cacheBudgetMB", cacheBudgetMB_);
     s.setValue("animationFps", animationFps_);
+}
+
+void MainWindow::addRecentFile(const QString& path) {
+    const QString abs = QFileInfo(path).absoluteFilePath();
+    QSettings s;
+    QStringList recent = s.value("recentFiles").toStringList();
+    recent.removeAll(abs);   // move-to-front (most-recent-first, deduplicated)
+    recent.prepend(abs);
+    while (recent.size() > 10) recent.removeLast();
+    s.setValue("recentFiles", recent);
+    updateRecentMenu();
+}
+
+void MainWindow::updateRecentMenu() {
+    if (!recentMenu_) return;
+    recentMenu_->clear();
+    const QStringList recent = QSettings().value("recentFiles").toStringList();
+    if (recent.isEmpty()) {
+        recentMenu_->addAction(tr("(no recent files)"))->setEnabled(false);
+        return;
+    }
+    for (const QString& path : recent) {
+        QAction* act = recentMenu_->addAction(QFileInfo(path).fileName());
+        act->setToolTip(path);
+        // Defer the open so this action isn't rebuilt/deleted inside its own
+        // triggered() emission (openFile -> addRecentFile -> updateRecentMenu).
+        connect(act, &QAction::triggered, this,
+                [this, path] { QTimer::singleShot(0, this, [this, path] { openFile(path); }); });
+    }
+    recentMenu_->addSeparator();
+    connect(recentMenu_->addAction(tr("Clear Recent")), &QAction::triggered, this, [this] {
+        QTimer::singleShot(0, this, [this] {
+            QSettings().remove("recentFiles");
+            updateRecentMenu();
+        });
+    });
 }
 
 void MainWindow::openPreferences() {
