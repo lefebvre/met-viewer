@@ -53,6 +53,14 @@
 namespace met::app {
 namespace {
 
+// Let a combo shrink to the column width (showing an elided current item) instead
+// of demanding the width of its longest item, which would clip the dropdown arrow
+// in a narrow panel.
+void makeShrinkable(QComboBox* c) {
+    c->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    c->setMinimumContentsLength(3);
+}
+
 // Add colormap + auto/manual range controls and a colorbar legend to `panel`,
 // wired to `view` (which must expose setColormapByName/setAutoRange/setRange/
 // colormap()/units() and a rangeChanged(double,double) signal). Returns the
@@ -64,6 +72,7 @@ QComboBox* addColormapControls(ControlPanel* panel, View* view) {
     for (const auto& name : render::Colormap::builtinNames())
         cmap->addItem(QString::fromStdString(name));
     cmap->setCurrentText(QString::fromStdString(view->colormap().name()));
+    makeShrinkable(cmap);
 
     auto* autoR = new QCheckBox(QObject::tr("Auto range"), panel);
     autoR->setChecked(true);
@@ -166,6 +175,7 @@ void MainWindow::buildUi() {
     auto* dataForm = new QFormLayout();
     dataForm->setContentsMargins(6, 4, 6, 2);
     levelCombo_ = new QComboBox(dataPanel);
+    makeShrinkable(levelCombo_);
     connect(levelCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &MainWindow::onLevelChanged);
     dataForm->addRow(tr("Level"), levelCombo_);
@@ -173,6 +183,7 @@ void MainWindow::buildUi() {
     derivedCombo_ = new QComboBox(dataPanel);
     derivedCombo_->addItems({tr("(raw field)"), tr("Wind speed"), tr("Wind direction"),
                              tr("Rel. vorticity"), tr("Divergence"), tr("Potential temp θ")});
+    makeShrinkable(derivedCombo_);
     derivedCombo_->setToolTip(tr("Compute a quantity from the current variable — e.g. θ from\n"
                                  "temperature, or wind speed/vorticity from the U/V pair."));
     connect(derivedCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -563,6 +574,7 @@ ViewFrame* MainWindow::buildPlotFrame() {
 
     plotWindCombo_ = new QComboBox(panel);
     plotWindCombo_->addItems({tr("Off"), tr("Barbs")});
+    makeShrinkable(plotWindCombo_);
     connect(plotWindCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int m) {
         plot_->setWindMode(m);
         updateWind();
@@ -578,6 +590,7 @@ ViewFrame* MainWindow::buildMapFrame() {
 
     mapBasemapCombo_ = new QComboBox(panel);
     for (const auto& src : TileLayer::builtinSources()) mapBasemapCombo_->addItem(src.name);
+    makeShrinkable(mapBasemapCombo_);
     connect(mapBasemapCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int index) {
                 const auto sources = TileLayer::builtinSources();
@@ -610,6 +623,7 @@ ViewFrame* MainWindow::buildMapFrame() {
 
     mapWindCombo_ = new QComboBox(panel);
     mapWindCombo_->addItems({tr("Off"), tr("Barbs"), tr("Streamlines")});
+    makeShrinkable(mapWindCombo_);
     connect(mapWindCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int m) {
         mapView_->setWindMode(m);
         updateWind();

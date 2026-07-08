@@ -27,6 +27,10 @@ ControlPanel::ControlPanel(const QString& title, QWidget* parent) : QWidget(pare
     bodyLayout_->setContentsMargins(6, 0, 6, 6);
     form_ = new QFormLayout();
     form_->setContentsMargins(0, 0, 0, 0);
+    // Let fields fill (and shrink to) the column so wide combos don't push their
+    // dropdown off the right edge of a narrow panel.
+    form_->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    form_->setRowWrapPolicy(QFormLayout::DontWrapRows);
     bodyLayout_->addLayout(form_);
     outer->addWidget(body_);
     outer->addStretch(1);
