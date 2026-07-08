@@ -45,6 +45,7 @@ void PlotView2D::setColormapByName(const QString& name) {
     const double hi = cmap_.max();
     cmap_ = render::Colormap::builtin(name.toStdString());
     cmap_.setRange(lo, hi);
+    if (autoRange_ && field_) autorange();  // re-center if the new map is diverging
     rebuildImage();
     update();
 }
@@ -74,6 +75,7 @@ void PlotView2D::setRange(double lo, double hi) {
     cmap_.setRange(lo, hi);
     rebuildImage();
     update();
+    emit rangeChanged(lo, hi);
 }
 
 void PlotView2D::clearField() {
@@ -123,7 +125,14 @@ void PlotView2D::autorange() {
         lo = 0.0;
         hi = 1.0;
     }
+    // Diverging colormaps read best centered on zero.
+    if (render::Colormap::isDiverging(cmap_.name())) {
+        const double m = std::max(std::abs(lo), std::abs(hi));
+        lo = -m;
+        hi = m;
+    }
     cmap_.setRange(lo, hi);
+    emit rangeChanged(lo, hi);
 }
 
 void PlotView2D::rebuildImage() {

@@ -38,11 +38,17 @@ public:
 
     [[nodiscard]] const render::Colormap& colormap() const { return cmap_; }
     [[nodiscard]] bool hasField() const { return field_ != nullptr; }
+    [[nodiscard]] QString units() const {
+        return field_ ? QString::fromStdString(field_->meta.units) : QString();
+    }
 
 signals:
     // value is NaN and hasValue=false when the cursor is off-grid.
     void probeMoved(double lat, double lon, double value, bool hasValue);
     void probeLeft();
+    // Emitted whenever the colormap value range changes (auto-fit or manual) so a
+    // per-view legend / range spinners can follow.
+    void rangeChanged(double lo, double hi);
 
 protected:
     void paintEvent(QPaintEvent* event) override;

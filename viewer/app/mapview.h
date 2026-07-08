@@ -54,10 +54,16 @@ public:
 
     [[nodiscard]] const render::Colormap& colormap() const { return cmap_; }
     [[nodiscard]] bool hasField() const { return field_ != nullptr; }
+    [[nodiscard]] QString units() const {
+        return field_ ? QString::fromStdString(field_->meta.units) : QString();
+    }
 
 signals:
     void probeMoved(double lat, double lon, double value, bool hasValue);
     void probeLeft();
+    // Emitted whenever the colormap value range changes so a per-view legend /
+    // range spinners can follow.
+    void rangeChanged(double lo, double hi);
     void crossSectionRequested(const std::vector<core::LatLon>& path);
     void soundingRequested(core::LatLon point);
     void timeSeriesRequested(core::LatLon point);

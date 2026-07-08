@@ -120,12 +120,14 @@ void MapView::setAutoRange(bool on) {
 void MapView::setRange(double lo, double hi) {
     cmap_.setRange(lo, hi);
     update();
+    emit rangeChanged(lo, hi);
 }
 
 void MapView::setColormapByName(const QString& name) {
     const double lo = cmap_.min(), hi = cmap_.max();
     cmap_ = render::Colormap::builtin(name.toStdString());
     cmap_.setRange(lo, hi);
+    if (autoRange_ && field_) autorange();  // re-center if the new map is diverging
     update();
 }
 
@@ -159,7 +161,14 @@ void MapView::autorange() {
         hi = std::max(hi, static_cast<double>(v));
     }
     if (!std::isfinite(lo) || !std::isfinite(hi) || lo == hi) { lo = 0; hi = 1; }
+    // Diverging colormaps read best centered on zero.
+    if (render::Colormap::isDiverging(cmap_.name())) {
+        const double m = std::max(std::abs(lo), std::abs(hi));
+        lo = -m;
+        hi = m;
+    }
     cmap_.setRange(lo, hi);
+    emit rangeChanged(lo, hi);
 }
 
 void MapView::fitToField() {
