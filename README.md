@@ -1,6 +1,6 @@
 # met-viewer
 
-C++20 desktop application for viewing and analyzing meteorological data (GRIB1/2, NetCDF4/CF, NOAA ARL). See [Design.md](Design.md) for architecture and roadmap.
+C++20 desktop application for viewing and analyzing meteorological data (GRIB1/2, NetCDF4/CF, NOAA ARL). New here? Start with the [Getting Started tutorial](docs/getting-started.md). See [Design.md](Design.md) for architecture and roadmap.
 
 ## System prerequisites (RHEL/Alma 10)
 
@@ -41,6 +41,10 @@ ctest --preset release
 
 On Wayland sessions, force the X11 backend (the vcpkg Qt build ships the `xcb`
 platform plugin, not `wayland`): `QT_QPA_PLATFORM=xcb ./build/release/viewer/app/met_viewer`.
+
+Once it's running, the [Getting Started tutorial](docs/getting-started.md) walks
+through opening data, colormaps, the GIS map, wind overlays, cross-sections,
+soundings, time series, and animation.
 
 Other presets: `debug`, `asan` (address/UB sanitizers — run before committing).
 
