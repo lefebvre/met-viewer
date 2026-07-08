@@ -51,6 +51,66 @@
 #include "viewer/readers/detect.h"
 
 namespace met::app {
+namespace {
+
+// Add colormap + auto/manual range controls and a colorbar legend to `panel`,
+// wired to `view` (which must expose setColormapByName/setAutoRange/setRange/
+// colormap()/units() and a rangeChanged(double,double) signal). Returns the
+// colormap combo so the caller can persist / drive it programmatically. Shared by
+// the 2D-Plot, Map, and cross-section panels so their color controls behave alike.
+template <typename View>
+QComboBox* addColormapControls(ControlPanel* panel, View* view) {
+    auto* cmap = new QComboBox(panel);
+    for (const auto& name : render::Colormap::builtinNames())
+        cmap->addItem(QString::fromStdString(name));
+    cmap->setCurrentText(QString::fromStdString(view->colormap().name()));
+
+    auto* autoR = new QCheckBox(QObject::tr("Auto range"), panel);
+    autoR->setChecked(true);
+    auto* minS = new QDoubleSpinBox(panel);
+    minS->setRange(-1e12, 1e12);
+    minS->setDecimals(3);
+    minS->setEnabled(false);
+    auto* maxS = new QDoubleSpinBox(panel);
+    maxS->setRange(-1e12, 1e12);
+    maxS->setDecimals(3);
+    maxS->setEnabled(false);
+
+    auto* cbar = new ColorbarWidget(panel);
+    cbar->setColormap(view->colormap());
+
+    panel->addRow(QObject::tr("Colormap"), cmap);
+    panel->addRow(autoR);
+    panel->addRow(QObject::tr("Min"), minS);
+    panel->addRow(QObject::tr("Max"), maxS);
+    panel->addBlock(cbar);
+
+    QObject::connect(cmap, &QComboBox::currentTextChanged, view, [view, cbar](const QString& n) {
+        view->setColormapByName(n);
+        cbar->setColormap(view->colormap());
+    });
+    QObject::connect(autoR, &QCheckBox::toggled, view, [view, minS, maxS](bool on) {
+        view->setAutoRange(on);
+        minS->setEnabled(!on);
+        maxS->setEnabled(!on);
+    });
+    auto pushManual = [view, minS, maxS, autoR] {
+        if (!autoR->isChecked()) view->setRange(minS->value(), maxS->value());
+    };
+    QObject::connect(minS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
+    QObject::connect(maxS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
+    QObject::connect(view, &View::rangeChanged, view,
+                     [view, cbar, minS, maxS](double lo, double hi) {
+                         cbar->setColormap(view->colormap());
+                         cbar->setUnits(view->units());
+                         const QSignalBlocker b1(minS), b2(maxS);
+                         minS->setValue(lo);
+                         maxS->setValue(hi);
+                     });
+    return cmap;
+}
+
+}  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(tr("met-viewer"));
@@ -61,20 +121,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 void MainWindow::buildUi() {
-    // Central: tabbed 2D plot + GIS map, both fed by the current field.
+    // Center: tabbed 2D plot + GIS map, each wrapped in a ViewFrame whose own
+    // control panel owns that view's display controls (contextual by construction).
     plot_ = new PlotView2D(this);
     tileLayer_ = new TileLayer(this);
     mapView_ = new MapView(tileLayer_, this);
     mapView_->setCoastlines(loadCoastlines(":/coastlines/ne_coastline_110m.bin"));
 
     tabs_ = new QTabWidget(this);
-    tabs_->addTab(plot_, tr("2D Plot"));
-    tabs_->addTab(mapView_, tr("Map"));
+    plotFrame_ = buildPlotFrame();
+    mapFrame_ = buildMapFrame();
+    tabs_->addTab(plotFrame_, tr("2D Plot"));
+    tabs_->addTab(mapFrame_, tr("Map"));
     setCentralWidget(tabs_);
 
-    // Analysis views (section/sounding/series) are added as closable tabs; the
-    // two base tabs stay permanent (strip their close buttons on both sides so
-    // it works regardless of the style's close-button position).
+    // Analysis views (section/sounding/series) are added as closable tabs; the two
+    // base tabs stay permanent (strip their close buttons on both button sides).
     tabs_->setTabsClosable(true);
     for (int side = 0; side <= 1; ++side) {
         const auto pos = static_cast<QTabBar::ButtonPosition>(side);
@@ -91,123 +153,42 @@ void MainWindow::buildUi() {
     connect(mapView_, &MapView::soundingRequested, this, &MainWindow::onSoundingRequested);
     connect(mapView_, &MapView::timeSeriesRequested, this, &MainWindow::onTimeSeriesRequested);
 
-    // Left: dataset browser.
+    // Left: Data dock — the variable tree plus the global level/derived selection
+    // (what data the field views show) and a live "Showing:" summary.
     datasetDock_ = new DatasetDock(this);
-    auto* leftDock = new QDockWidget(tr("Dataset"), this);
-    leftDock->setObjectName("datasetDock");
-    leftDock->setWidget(datasetDock_);
-    addDockWidget(Qt::LeftDockWidgetArea, leftDock);
     connect(datasetDock_, &DatasetDock::fieldChosen, this, &MainWindow::onFieldChosen);
 
-    // Right: inspector.
-    auto* inspector = new QWidget(this);
-    auto* form = new QVBoxLayout(inspector);
-    auto* controls = new QWidget(inspector);
-    auto* grid = new QFormLayout(controls);
-    grid->setContentsMargins(0, 0, 0, 0);
+    auto* dataPanel = new QWidget(this);
+    auto* dataLayout = new QVBoxLayout(dataPanel);
+    dataLayout->setContentsMargins(0, 0, 0, 0);
+    dataLayout->addWidget(datasetDock_, 1);
 
-    levelCombo_ = new QComboBox(controls);
+    auto* dataForm = new QFormLayout();
+    dataForm->setContentsMargins(6, 4, 6, 2);
+    levelCombo_ = new QComboBox(dataPanel);
     connect(levelCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &MainWindow::onLevelChanged);
-    grid->addRow(tr("Level"), levelCombo_);
+    dataForm->addRow(tr("Level"), levelCombo_);
 
-    derivedCombo_ = new QComboBox(controls);
+    derivedCombo_ = new QComboBox(dataPanel);
     derivedCombo_->addItems({tr("(raw field)"), tr("Wind speed"), tr("Wind direction"),
                              tr("Rel. vorticity"), tr("Divergence"), tr("Potential temp θ")});
+    derivedCombo_->setToolTip(tr("Compute a quantity from the current variable — e.g. θ from\n"
+                                 "temperature, or wind speed/vorticity from the U/V pair."));
     connect(derivedCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &MainWindow::onDerivedChanged);
-    grid->addRow(tr("Derived"), derivedCombo_);
+    dataForm->addRow(tr("Derived"), derivedCombo_);
+    dataLayout->addLayout(dataForm);
 
-    colormapCombo_ = new QComboBox(controls);
-    for (const auto& name : render::Colormap::builtinNames())
-        colormapCombo_->addItem(QString::fromStdString(name));
-    connect(colormapCombo_, &QComboBox::currentTextChanged, this, &MainWindow::onColormapChanged);
-    grid->addRow(tr("Colormap"), colormapCombo_);
+    showingLabel_ = new QLabel(tr("No field loaded"), dataPanel);
+    showingLabel_->setWordWrap(true);
+    showingLabel_->setContentsMargins(6, 0, 6, 6);
+    dataLayout->addWidget(showingLabel_);
 
-    autoRangeCheck_ = new QCheckBox(tr("Auto range"), controls);
-    autoRangeCheck_->setChecked(true);
-    connect(autoRangeCheck_, &QCheckBox::toggled, this, &MainWindow::onAutoRangeToggled);
-    grid->addRow(QString(), autoRangeCheck_);
-
-    symmetricCheck_ = new QCheckBox(tr("Symmetric (0-centered)"), controls);
-    connect(symmetricCheck_, &QCheckBox::toggled, this, &MainWindow::onSymmetricToggled);
-    grid->addRow(QString(), symmetricCheck_);
-
-    minSpin_ = new QDoubleSpinBox(controls);
-    minSpin_->setRange(-1e12, 1e12);
-    minSpin_->setDecimals(4);
-    minSpin_->setEnabled(false);
-    connect(minSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
-            &MainWindow::onRangeSpinChanged);
-    grid->addRow(tr("Min"), minSpin_);
-
-    maxSpin_ = new QDoubleSpinBox(controls);
-    maxSpin_->setRange(-1e12, 1e12);
-    maxSpin_->setDecimals(4);
-    maxSpin_->setEnabled(false);
-    connect(maxSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
-            &MainWindow::onRangeSpinChanged);
-    grid->addRow(tr("Max"), maxSpin_);
-
-    contourCheck_ = new QCheckBox(tr("Contours"), controls);
-    contourCheck_->setToolTip(tr("Overlay contour lines on the 2D plot."));
-    connect(contourCheck_, &QCheckBox::toggled, this, &MainWindow::onContoursToggled);
-    grid->addRow(QString(), contourCheck_);
-
-    contourSpin_ = new QDoubleSpinBox(controls);
-    contourSpin_->setRange(0.0, 1e6);
-    contourSpin_->setDecimals(3);
-    contourSpin_->setValue(0.0);
-    contourSpin_->setSpecialValueText(tr("auto"));
-    contourSpin_->setToolTip(
-        tr("Spacing between contour lines, in the field's units. \"auto\" picks a\n"
-           "round interval from the data range. Applies to the 2D plot."));
-    connect(contourSpin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
-            &MainWindow::onContourIntervalChanged);
-    grid->addRow(tr("Contour interval"), contourSpin_);
-
-    // Map-specific controls.
-    basemapCombo_ = new QComboBox(controls);
-    for (const auto& src : TileLayer::builtinSources()) basemapCombo_->addItem(src.name);
-    connect(basemapCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-            &MainWindow::onBasemapChanged);
-    grid->addRow(tr("Basemap"), basemapCombo_);
-
-    opacitySlider_ = new QSlider(Qt::Horizontal, controls);
-    opacitySlider_->setRange(0, 100);
-    opacitySlider_->setValue(75);
-    connect(opacitySlider_, &QSlider::valueChanged, this, &MainWindow::onOpacityChanged);
-    grid->addRow(tr("Field opacity"), opacitySlider_);
-
-    graticuleCheck_ = new QCheckBox(tr("Graticule"), controls);
-    graticuleCheck_->setChecked(true);
-    connect(graticuleCheck_, &QCheckBox::toggled, this, &MainWindow::onGraticuleToggled);
-    grid->addRow(QString(), graticuleCheck_);
-
-    coastlineCheck_ = new QCheckBox(tr("Coastlines"), controls);
-    coastlineCheck_->setChecked(true);
-    connect(coastlineCheck_, &QCheckBox::toggled, this, &MainWindow::onCoastlinesToggled);
-    grid->addRow(QString(), coastlineCheck_);
-
-    gpuCheck_ = new QCheckBox(tr("GPU render (experimental)"), controls);
-    gpuCheck_->setChecked(false);
-    connect(gpuCheck_, &QCheckBox::toggled, this, &MainWindow::onGpuToggled);
-    grid->addRow(QString(), gpuCheck_);
-
-    windCombo_ = new QComboBox(controls);
-    windCombo_->addItems({tr("Off"), tr("Barbs"), tr("Streamlines")});
-    connect(windCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-            &MainWindow::onWindModeChanged);
-    grid->addRow(tr("Wind"), windCombo_);
-
-    colorbar_ = new ColorbarWidget(inspector);
-    form->addWidget(controls);
-    form->addWidget(colorbar_, 1);
-
-    auto* rightDock = new QDockWidget(tr("Inspector"), this);
-    rightDock->setObjectName("inspectorDock");
-    rightDock->setWidget(inspector);
-    addDockWidget(Qt::RightDockWidgetArea, rightDock);
+    auto* leftDock = new QDockWidget(tr("Data"), this);
+    leftDock->setObjectName("dataDock");
+    leftDock->setWidget(dataPanel);
+    addDockWidget(Qt::LeftDockWidgetArea, leftDock);
 
     // Bottom: time controller.
     timeController_ = new TimeController(this);
@@ -246,7 +227,7 @@ void MainWindow::buildUi() {
         const MapView::Mode mode = m.mode;
         connect(act, &QAction::triggered, this, [this, mode]() {
             mapView_->setInteractionMode(mode);
-            if (mode != MapView::Mode::Pan) tabs_->setCurrentWidget(mapView_);
+            if (mode != MapView::Mode::Pan) tabs_->setCurrentWidget(mapFrame_);
             // Tell the user what this picking mode expects (the actions aren't
             // otherwise discoverable, e.g. double-click to finish a section).
             QString hint;
@@ -274,7 +255,6 @@ void MainWindow::buildUi() {
     // action auto-labeled with the panel's title.
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     viewMenu->addAction(leftDock->toggleViewAction());
-    viewMenu->addAction(rightDock->toggleViewAction());
     viewMenu->addAction(bottomDock->toggleViewAction());
     viewMenu->addSeparator();
     viewMenu->addAction(toolbar->toggleViewAction());
@@ -309,7 +289,6 @@ void MainWindow::openFile(const QString& path) {
     fieldCache_.clear();  // a new file invalidates cached fields
     datasetDock_->setCatalog(dataset_->catalog());
     plot_->clearField();
-    colorbar_->clear();
     statusBar()->showMessage(
         tr("Opened %1 (%2)").arg(path).arg(QString::fromStdString(dataset_->formatName())), 4000);
 
@@ -465,28 +444,54 @@ void MainWindow::presentField() {
 
 void MainWindow::onDerivedChanged(int index) {
     derivedMode_ = index;
-    // Signed fields (vorticity/divergence) read best on a diverging map centered
-    // at zero — switch to it automatically unless the user already chose one.
+    // Signed fields read best on a diverging map (which the views auto-center at
+    // zero); switch both field views to one unless a diverging map is already set.
     const bool signedField = (index == 3 || index == 4);
-    if (signedField && !render::Colormap::isDiverging(colormapCombo_->currentText().toStdString())) {
-        colormapCombo_->setCurrentText("RdBu (diverging)");  // triggers onColormapChanged
-        symmetricCheck_->setChecked(true);                   // triggers applyRange
+    if (signedField) {
+        for (QComboBox* c : {plotColormapCombo_, mapColormapCombo_})
+            if (c && !render::Colormap::isDiverging(c->currentText().toStdString()))
+                c->setCurrentText("RdBu (diverging)");
     }
     presentField();
 }
 
 void MainWindow::displayField(std::shared_ptr<core::Field2D> field) {
     currentUnits_ = QString::fromStdString(field->meta.units);
-    plot_->setField(field);
+    plot_->setField(field);    // each view auto-ranges and updates its own legend
     mapView_->setField(field);
-    colorbar_->setUnits(currentUnits_);
-    applyRange();  // apply auto/manual/symmetric range and sync the colorbar
     probeLabel_->setText(tr("%1 @ %2 — %3×%4")
                              .arg(QString::fromStdString(field->meta.varName))
                              .arg(QString::fromStdString(met::core::formatLevel(field->meta.level)))
                              .arg(field->width())
                              .arg(field->height()));
+    updateShowingLabel();
     updateWind();
+}
+
+void MainWindow::updateShowingLabel() {
+    if (!showingLabel_) return;
+    if (!currentRaw_) {
+        showingLabel_->setText(tr("No field loaded"));
+        return;
+    }
+    const auto& meta = currentRaw_->meta;
+    QString quantity;
+    switch (derivedMode_) {
+        case 1: quantity = tr("Wind speed"); break;
+        case 2: quantity = tr("Wind direction"); break;
+        case 3: quantity = tr("Relative vorticity"); break;
+        case 4: quantity = tr("Divergence"); break;
+        case 5: quantity = tr("Potential temperature θ"); break;
+        default:
+            quantity = QString::fromStdString(meta.longName.empty() ? meta.varName : meta.longName);
+            break;
+    }
+    const QString from =
+        derivedMode_ != 0 ? tr(" (from %1)").arg(QString::fromStdString(meta.varName)) : QString();
+    showingLabel_->setText(tr("Showing: %1%2\n@ %3 · %4")
+                               .arg(quantity, from,
+                                    QString::fromStdString(met::core::formatLevel(meta.level)),
+                                    QString::fromStdString(met::core::formatTime(meta.validTime))));
 }
 
 void MainWindow::prefetchAhead() {
@@ -535,59 +540,85 @@ std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack
     return stack;
 }
 
+ViewFrame* MainWindow::buildPlotFrame() {
+    auto* panel = new ControlPanel(tr("2D Plot"));
+    plotColormapCombo_ = addColormapControls(panel, plot_);
+
+    plotContourCheck_ = new QCheckBox(tr("Contours"), panel);
+    plotContourCheck_->setToolTip(tr("Overlay contour lines on the 2D plot."));
+    connect(plotContourCheck_, &QCheckBox::toggled, plot_, &PlotView2D::setContoursEnabled);
+    panel->addRow(plotContourCheck_);
+
+    auto* interval = new QDoubleSpinBox(panel);
+    interval->setRange(0.0, 1e6);
+    interval->setDecimals(3);
+    interval->setSpecialValueText(tr("auto"));
+    interval->setToolTip(tr("Spacing between contour lines (field units); \"auto\" picks a round value."));
+    connect(interval, qOverload<double>(&QDoubleSpinBox::valueChanged), plot_,
+            &PlotView2D::setContourInterval);
+    panel->addRow(tr("Contour interval"), interval);
+
+    plotWindCombo_ = new QComboBox(panel);
+    plotWindCombo_->addItems({tr("Off"), tr("Barbs")});
+    connect(plotWindCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int m) {
+        plot_->setWindMode(m);
+        updateWind();
+    });
+    panel->addRow(tr("Wind"), plotWindCombo_);
+
+    return new ViewFrame(plot_, panel);
+}
+
+ViewFrame* MainWindow::buildMapFrame() {
+    auto* panel = new ControlPanel(tr("Map"));
+    mapColormapCombo_ = addColormapControls(panel, mapView_);
+
+    mapBasemapCombo_ = new QComboBox(panel);
+    for (const auto& src : TileLayer::builtinSources()) mapBasemapCombo_->addItem(src.name);
+    connect(mapBasemapCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int index) {
+                const auto sources = TileLayer::builtinSources();
+                if (index < 0 || index >= sources.size()) return;
+                tileLayer_->setSource(sources.at(index));
+                mapView_->refreshSource();
+            });
+    panel->addRow(tr("Basemap"), mapBasemapCombo_);
+
+    mapOpacitySlider_ = new QSlider(Qt::Horizontal, panel);
+    mapOpacitySlider_->setRange(0, 100);
+    mapOpacitySlider_->setValue(75);
+    connect(mapOpacitySlider_, &QSlider::valueChanged, mapView_,
+            [this](int p) { mapView_->setOpacity(p / 100.0); });
+    panel->addRow(tr("Field opacity"), mapOpacitySlider_);
+
+    mapGraticuleCheck_ = new QCheckBox(tr("Graticule"), panel);
+    mapGraticuleCheck_->setChecked(true);
+    connect(mapGraticuleCheck_, &QCheckBox::toggled, mapView_, &MapView::setGraticuleVisible);
+    panel->addRow(mapGraticuleCheck_);
+
+    mapCoastlineCheck_ = new QCheckBox(tr("Coastlines"), panel);
+    mapCoastlineCheck_->setChecked(true);
+    connect(mapCoastlineCheck_, &QCheckBox::toggled, mapView_, &MapView::setCoastlinesVisible);
+    panel->addRow(mapCoastlineCheck_);
+
+    mapGpuCheck_ = new QCheckBox(tr("GPU render (experimental)"), panel);
+    connect(mapGpuCheck_, &QCheckBox::toggled, mapView_, &MapView::setGpuEnabled);
+    panel->addRow(mapGpuCheck_);
+
+    mapWindCombo_ = new QComboBox(panel);
+    mapWindCombo_->addItems({tr("Off"), tr("Barbs"), tr("Streamlines")});
+    connect(mapWindCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int m) {
+        mapView_->setWindMode(m);
+        updateWind();
+    });
+    panel->addRow(tr("Wind"), mapWindCombo_);
+
+    return new ViewFrame(mapView_, panel);
+}
+
 ViewFrame* MainWindow::wrapCrossSection(CrossSectionView* view) {
     auto* panel = new ControlPanel(tr("Cross-section"));
-
-    auto* cmap = new QComboBox(panel);
-    for (const auto& name : render::Colormap::builtinNames())
-        cmap->addItem(QString::fromStdString(name));
-    cmap->setCurrentText(QString::fromStdString(view->colormap().name()));
-
-    auto* autoR = new QCheckBox(tr("Auto range"), panel);
-    autoR->setChecked(true);
-    auto* minS = new QDoubleSpinBox(panel);
-    minS->setRange(-1e12, 1e12);
-    minS->setDecimals(3);
-    minS->setEnabled(false);
-    auto* maxS = new QDoubleSpinBox(panel);
-    maxS->setRange(-1e12, 1e12);
-    maxS->setDecimals(3);
-    maxS->setEnabled(false);
-
-    auto* cbar = new ColorbarWidget(panel);
-    cbar->setColormap(view->colormap());
-
-    panel->addRow(tr("Colormap"), cmap);
-    panel->addRow(autoR);
-    panel->addRow(tr("Min"), minS);
-    panel->addRow(tr("Max"), maxS);
-    panel->addBlock(cbar);
-
-    connect(cmap, &QComboBox::currentTextChanged, view, [view, cbar](const QString& n) {
-        view->setColormapByName(n);
-        cbar->setColormap(view->colormap());
-    });
-    connect(autoR, &QCheckBox::toggled, view, [view, minS, maxS](bool on) {
-        view->setAutoRange(on);
-        minS->setEnabled(!on);
-        maxS->setEnabled(!on);
-    });
-    auto pushManual = [view, minS, maxS, autoR] {
-        if (!autoR->isChecked()) view->setRange(minS->value(), maxS->value());
-    };
-    connect(minS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
-    connect(maxS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
-    // Reflect the view's range (auto-fit on each new section, or manual) in the
-    // legend + spinners.
-    connect(view, &CrossSectionView::rangeChanged, view,
-            [view, cbar, minS, maxS](double lo, double hi) {
-                cbar->setColormap(view->colormap());
-                cbar->setUnits(view->units());
-                const QSignalBlocker b1(minS), b2(maxS);
-                minS->setValue(lo);
-                maxS->setValue(hi);
-            });
-
+    addColormapControls(panel, view);  // colormap + range + legend, wired to the section
     return new ViewFrame(view, panel);
 }
 
@@ -721,114 +752,34 @@ void MainWindow::demoTimeSeries() { onTimeSeriesRequested({64.0, 12.0}); }
 
 void MainWindow::onTabCloseRequested(int index) {
     QWidget* w = tabs_->widget(index);
-    if (!w || w == plot_ || w == mapView_) return;  // the base tabs are permanent
+    if (!w || w == plotFrame_ || w == mapFrame_) return;  // the base tabs are permanent
     for (auto it = analyses_.begin(); it != analyses_.end();)
         it = (it->frame == w) ? analyses_.erase(it) : it + 1;
     tabs_->removeTab(index);
     w->deleteLater();
 }
 
-void MainWindow::onColormapChanged(const QString& name) {
-    plot_->setColormapByName(name);
-    mapView_->setColormapByName(name);
-    applyRange();  // re-apply the current range through the new colormap
-    if (plot_->hasField()) {
-        colorbar_->setColormap(plot_->colormap());
-        colorbar_->setUnits(currentUnits_);
-    }
+void MainWindow::setContoursChecked(bool on) {
+    if (plotContourCheck_) plotContourCheck_->setChecked(on);
 }
-
-void MainWindow::applyRange() {
-    const bool autoOn = autoRangeCheck_ && autoRangeCheck_->isChecked();
-    minSpin_->setEnabled(!autoOn);
-    maxSpin_->setEnabled(!autoOn);
-
-    if (autoOn) {
-        plot_->setAutoRange(true);
-        mapView_->setAutoRange(true);
-        // A symmetric auto-range centers the field's extent on zero (for signed
-        // fields with a diverging map).
-        if (symmetricCheck_ && symmetricCheck_->isChecked() && plot_->hasField()) {
-            const double a = std::max(std::abs(plot_->colormap().min()),
-                                      std::abs(plot_->colormap().max()));
-            plot_->setAutoRange(false);
-            mapView_->setAutoRange(false);
-            plot_->setRange(-a, a);
-            mapView_->setRange(-a, a);
-        }
-        syncRangeSpins();
-    } else {
-        double lo = minSpin_->value();
-        double hi = maxSpin_->value();
-        if (symmetricCheck_ && symmetricCheck_->isChecked()) {
-            const double a = std::max(std::abs(lo), std::abs(hi));
-            lo = -a;
-            hi = a;
-        }
-        if (hi <= lo) hi = lo + 1.0;
-        plot_->setAutoRange(false);
-        mapView_->setAutoRange(false);
-        plot_->setRange(lo, hi);
-        mapView_->setRange(lo, hi);
-    }
-    if (plot_->hasField()) colorbar_->setColormap(plot_->colormap());
-}
-
-void MainWindow::syncRangeSpins() {
-    QSignalBlocker b1(minSpin_), b2(maxSpin_);
-    minSpin_->setValue(plot_->colormap().min());
-    maxSpin_->setValue(plot_->colormap().max());
-}
-
-void MainWindow::onAutoRangeToggled(bool /*on*/) { applyRange(); }
-void MainWindow::onSymmetricToggled(bool /*on*/) { applyRange(); }
-void MainWindow::onRangeSpinChanged() {
-    if (autoRangeCheck_ && !autoRangeCheck_->isChecked()) applyRange();
-}
-
-void MainWindow::setContoursChecked(bool on) { contourCheck_->setChecked(on); }
 
 void MainWindow::showMapTab() {
-    if (tabs_) tabs_->setCurrentWidget(mapView_);
+    if (tabs_) tabs_->setCurrentWidget(mapFrame_);
 }
 
 void MainWindow::setWindComboIndex(int index) {
-    if (windCombo_) windCombo_->setCurrentIndex(index);
+    if (mapWindCombo_) mapWindCombo_->setCurrentIndex(index);
+    if (plotWindCombo_) plotWindCombo_->setCurrentIndex(index > 0 ? 1 : 0);  // plot: off/barbs only
 }
 
 void MainWindow::startPlayback() { timeController_->play(); }
 
 void MainWindow::setGpuChecked(bool on) {
-    if (gpuCheck_) gpuCheck_->setChecked(on);
+    if (mapGpuCheck_) mapGpuCheck_->setChecked(on);
 }
 
 void MainWindow::setDerivedComboIndex(int index) {
     if (derivedCombo_) derivedCombo_->setCurrentIndex(index);
-}
-
-void MainWindow::onContoursToggled(bool on) { plot_->setContoursEnabled(on); }
-
-void MainWindow::onContourIntervalChanged(double value) { plot_->setContourInterval(value); }
-
-void MainWindow::onBasemapChanged(int index) {
-    const auto sources = TileLayer::builtinSources();
-    if (index < 0 || index >= sources.size()) return;
-    tileLayer_->setSource(sources.at(index));
-    mapView_->refreshSource();
-}
-
-void MainWindow::onOpacityChanged(int percent) { mapView_->setOpacity(percent / 100.0); }
-
-void MainWindow::onGraticuleToggled(bool on) { mapView_->setGraticuleVisible(on); }
-
-void MainWindow::onCoastlinesToggled(bool on) { mapView_->setCoastlinesVisible(on); }
-
-void MainWindow::onGpuToggled(bool on) { mapView_->setGpuEnabled(on); }
-
-void MainWindow::onWindModeChanged(int index) {
-    mapView_->setWindMode(index);
-    plot_->setWindMode(index);
-    updateWind();
 }
 
 std::shared_ptr<analysis::WindField> MainWindow::buildWindField() {
@@ -860,12 +811,14 @@ std::shared_ptr<analysis::WindField> MainWindow::buildWindField() {
 }
 
 void MainWindow::updateWind() {
-    if (!windCombo_ || windCombo_->currentIndex() == 0) {
+    const int plotMode = plotWindCombo_ ? plotWindCombo_->currentIndex() : 0;
+    const int mapMode = mapWindCombo_ ? mapWindCombo_->currentIndex() : 0;
+    if (plotMode == 0 && mapMode == 0) {
         mapView_->setWind(nullptr);
         plot_->setWind(nullptr);
         return;
     }
-    auto wind = buildWindField();
+    auto wind = buildWindField();  // shared field; each view draws per its own mode
     if (!wind) statusBar()->showMessage(tr("No U/V wind pair at this level/time"), 3000);
     mapView_->setWind(wind);
     plot_->setWind(wind);
@@ -899,13 +852,15 @@ void MainWindow::loadSettings() {
     if (s.contains("windowState")) restoreState(s.value("windowState").toByteArray());
 
     const QString cmap = s.value("colormap", "viridis").toString();
-    const int ci = colormapCombo_->findText(cmap);
-    if (ci >= 0) colormapCombo_->setCurrentIndex(ci);
+    for (QComboBox* c : {plotColormapCombo_, mapColormapCombo_}) {
+        const int ci = c->findText(cmap);
+        if (ci >= 0) c->setCurrentIndex(ci);
+    }
     const int bi = s.value("basemap", 0).toInt();
-    if (bi >= 0 && bi < basemapCombo_->count()) basemapCombo_->setCurrentIndex(bi);
-    opacitySlider_->setValue(s.value("opacity", 75).toInt());
-    graticuleCheck_->setChecked(s.value("graticule", true).toBool());
-    coastlineCheck_->setChecked(s.value("coastlines", true).toBool());
+    if (bi >= 0 && bi < mapBasemapCombo_->count()) mapBasemapCombo_->setCurrentIndex(bi);
+    mapOpacitySlider_->setValue(s.value("opacity", 75).toInt());
+    mapGraticuleCheck_->setChecked(s.value("graticule", true).toBool());
+    mapCoastlineCheck_->setChecked(s.value("coastlines", true).toBool());
 
     cacheBudgetMB_ = s.value("cacheBudgetMB", 1024).toInt();
     fieldCache_.setBudgetBytes(static_cast<std::size_t>(cacheBudgetMB_) * 1024 * 1024);
@@ -917,11 +872,11 @@ void MainWindow::saveSettings() {
     QSettings s;
     s.setValue("geometry", saveGeometry());
     s.setValue("windowState", saveState());
-    s.setValue("colormap", colormapCombo_->currentText());
-    s.setValue("basemap", basemapCombo_->currentIndex());
-    s.setValue("opacity", opacitySlider_->value());
-    s.setValue("graticule", graticuleCheck_->isChecked());
-    s.setValue("coastlines", coastlineCheck_->isChecked());
+    s.setValue("colormap", mapColormapCombo_->currentText());
+    s.setValue("basemap", mapBasemapCombo_->currentIndex());
+    s.setValue("opacity", mapOpacitySlider_->value());
+    s.setValue("graticule", mapGraticuleCheck_->isChecked());
+    s.setValue("coastlines", mapCoastlineCheck_->isChecked());
     s.setValue("cacheBudgetMB", cacheBudgetMB_);
     s.setValue("animationFps", animationFps_);
 }

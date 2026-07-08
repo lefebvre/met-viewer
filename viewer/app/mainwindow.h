@@ -75,18 +75,6 @@ private slots:
     void onFieldChosen(const core::FieldKey& key);
     void onLevelChanged(int index);
     void onTimeChanged(int index);
-    void onColormapChanged(const QString& name);
-    void onAutoRangeToggled(bool on);
-    void onRangeSpinChanged();
-    void onSymmetricToggled(bool on);
-    void onContoursToggled(bool on);
-    void onContourIntervalChanged(double value);
-    void onBasemapChanged(int index);
-    void onOpacityChanged(int percent);
-    void onGraticuleToggled(bool on);
-    void onCoastlinesToggled(bool on);
-    void onGpuToggled(bool on);
-    void onWindModeChanged(int index);
     void onDerivedChanged(int index);
     void onCrossSectionRequested(const std::vector<core::LatLon>& path);
     void onSoundingRequested(core::LatLon point);
@@ -97,9 +85,13 @@ private slots:
 
 private:
     void buildUi();
-    // Wrap a cross-section view in a ViewFrame with its own colormap/range/legend
-    // control panel (controls live with the view, not in a shared inspector).
+    // Build the 2D-Plot / Map tabs, each a ViewFrame whose control panel owns that
+    // view's display controls (colormap/range/legend + view-specific controls).
+    ViewFrame* buildPlotFrame();
+    ViewFrame* buildMapFrame();
+    // Wrap a cross-section view in a ViewFrame with its own colormap/range/legend.
     ViewFrame* wrapCrossSection(CrossSectionView* view);
+    void updateShowingLabel();  // "Showing: <quantity> @ <level>, <valid time>"
     // Re-run every open analysis tab's extraction at the current time so sections/
     // soundings follow the time slider and the time-series marker tracks it.
     void refreshAnalyses();
@@ -116,8 +108,6 @@ private:
     void presentField();   // show the current raw field or a derived quantity
     void prefetchAhead();  // decode upcoming time steps into the cache
     void updateWind();     // (re)build the wind overlay for the current level/time
-    void applyRange();     // push the current auto/manual range to the views
-    void syncRangeSpins(); // populate the min/max spins from the active colormap
     // Build the earth-relative wind field for the current level/time, or null.
     std::shared_ptr<analysis::WindField> buildWindField();
     void loadSettings();
@@ -156,22 +146,26 @@ private:
     PlotView2D* plot_ = nullptr;
     MapView* mapView_ = nullptr;
     TileLayer* tileLayer_ = nullptr;
-    ColorbarWidget* colorbar_ = nullptr;
-    QComboBox* colormapCombo_ = nullptr;
-    QCheckBox* autoRangeCheck_ = nullptr;
-    QCheckBox* symmetricCheck_ = nullptr;
-    QDoubleSpinBox* minSpin_ = nullptr;
-    QDoubleSpinBox* maxSpin_ = nullptr;
+    ViewFrame* plotFrame_ = nullptr;  // base tab wrappers (canvas + control panel)
+    ViewFrame* mapFrame_ = nullptr;
+
+    // Global data selection (left "Data" dock).
     QComboBox* levelCombo_ = nullptr;
     QComboBox* derivedCombo_ = nullptr;
-    QComboBox* basemapCombo_ = nullptr;
-    QCheckBox* contourCheck_ = nullptr;
-    QDoubleSpinBox* contourSpin_ = nullptr;
-    QSlider* opacitySlider_ = nullptr;
-    QCheckBox* graticuleCheck_ = nullptr;
-    QCheckBox* coastlineCheck_ = nullptr;
-    QCheckBox* gpuCheck_ = nullptr;
-    QComboBox* windCombo_ = nullptr;
+    QLabel* showingLabel_ = nullptr;
+
+    // Per-view display controls, kept for persistence / test hooks / derived sync.
+    QComboBox* plotColormapCombo_ = nullptr;
+    QComboBox* mapColormapCombo_ = nullptr;
+    QCheckBox* plotContourCheck_ = nullptr;
+    QComboBox* mapBasemapCombo_ = nullptr;
+    QSlider* mapOpacitySlider_ = nullptr;
+    QCheckBox* mapGraticuleCheck_ = nullptr;
+    QCheckBox* mapCoastlineCheck_ = nullptr;
+    QCheckBox* mapGpuCheck_ = nullptr;
+    QComboBox* plotWindCombo_ = nullptr;
+    QComboBox* mapWindCombo_ = nullptr;
+
     TimeController* timeController_ = nullptr;
     QLabel* probeLabel_ = nullptr;
     QThreadPool* pool_ = nullptr;
