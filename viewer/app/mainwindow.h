@@ -15,10 +15,10 @@
 
 class QCheckBox;
 class QComboBox;
+class QDockWidget;
 class QDoubleSpinBox;
 class QLabel;
 class QSlider;
-class QTabWidget;
 class QThreadPool;
 
 namespace met::app {
@@ -79,7 +79,6 @@ private slots:
     void onCrossSectionRequested(const std::vector<core::LatLon>& path);
     void onSoundingRequested(core::LatLon point);
     void onTimeSeriesRequested(core::LatLon point);
-    void onTabCloseRequested(int index);  // close an analysis tab (not the base tabs)
     void onProbeMoved(double lat, double lon, double value, bool hasValue);
     void onProbeLeft();
 
@@ -91,6 +90,9 @@ private:
     ViewFrame* buildMapFrame();
     // Wrap a cross-section view in a ViewFrame with its own colormap/range/legend.
     ViewFrame* wrapCrossSection(CrossSectionView* view);
+    // Add an analysis view as a closable, dockable, floatable panel in the view
+    // area (drag its tab to split/tab/float). Deleted on close. Returns the dock.
+    QDockWidget* addAnalysisDock(QWidget* frame, const QString& title);
     void updateShowingLabel();  // "Showing: <quantity> @ <level>, <valid time>"
     // Re-run every open analysis tab's extraction at the current time so sections/
     // soundings follow the time slider and the time-series marker tracks it.
@@ -141,13 +143,18 @@ private:
     std::shared_ptr<core::Field2D> currentRaw_;  // last decoded raw field
     int derivedMode_ = 0;                        // 0 = none; see the Derived combo
     bool showingDerived_ = false;                // a derived quantity is actually on screen
+    int analysisSeq_ = 0;                        // unique object-name counter for analysis docks
 
-    QTabWidget* tabs_ = nullptr;
+    // Center is a nested QMainWindow whose dock widgets are the views; users drag a
+    // view's tab/title to split the area, tab views together, or float them out.
+    QMainWindow* viewArea_ = nullptr;
+    QDockWidget* plotDock_ = nullptr;  // base view docks (non-closable)
+    QDockWidget* mapDock_ = nullptr;
     DatasetDock* datasetDock_ = nullptr;
     PlotView2D* plot_ = nullptr;
     MapView* mapView_ = nullptr;
     TileLayer* tileLayer_ = nullptr;
-    ViewFrame* plotFrame_ = nullptr;  // base tab wrappers (canvas + control panel)
+    ViewFrame* plotFrame_ = nullptr;  // view wrappers (canvas + control panel)
     ViewFrame* mapFrame_ = nullptr;
 
     // Global data selection (left "Data" dock).

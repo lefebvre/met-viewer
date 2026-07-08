@@ -137,22 +137,31 @@ void MainWindow::buildUi() {
     mapView_ = new MapView(tileLayer_, this);
     mapView_->setCoastlines(loadCoastlines(":/coastlines/ne_coastline_110m.bin"));
 
-    tabs_ = new QTabWidget(this);
+    // The center is a nested QMainWindow whose views are dock widgets, so the user
+    // can drag a view's tab to split the area horizontally/vertically, tab views
+    // together, or float them out (IDE-style). Base views are non-closable (they
+    // simply omit the Closable feature); analysis views are closable.
+    viewArea_ = new QMainWindow(this);
+    viewArea_->setWindowFlags(Qt::Widget);  // act as a child widget, not a window
+    viewArea_->setDockNestingEnabled(true);
+    viewArea_->setDockOptions(QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks |
+                              QMainWindow::GroupedDragging);
+    setCentralWidget(viewArea_);
+
     plotFrame_ = buildPlotFrame();
     mapFrame_ = buildMapFrame();
-    tabs_->addTab(plotFrame_, tr("2D Plot"));
-    tabs_->addTab(mapFrame_, tr("Map"));
-    setCentralWidget(tabs_);
-
-    // Analysis views (section/sounding/series) are added as closable tabs; the two
-    // base tabs stay permanent (strip their close buttons on both button sides).
-    tabs_->setTabsClosable(true);
-    for (int side = 0; side <= 1; ++side) {
-        const auto pos = static_cast<QTabBar::ButtonPosition>(side);
-        tabs_->tabBar()->setTabButton(0, pos, nullptr);
-        tabs_->tabBar()->setTabButton(1, pos, nullptr);
-    }
-    connect(tabs_, &QTabWidget::tabCloseRequested, this, &MainWindow::onTabCloseRequested);
+    plotDock_ = new QDockWidget(tr("2D Plot"), viewArea_);
+    plotDock_->setObjectName("plotDock");
+    plotDock_->setWidget(plotFrame_);
+    plotDock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+    mapDock_ = new QDockWidget(tr("Map"), viewArea_);
+    mapDock_->setObjectName("mapDock");
+    mapDock_->setWidget(mapFrame_);
+    mapDock_->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+    viewArea_->addDockWidget(Qt::LeftDockWidgetArea, plotDock_);
+    viewArea_->addDockWidget(Qt::LeftDockWidgetArea, mapDock_);
+    viewArea_->tabifyDockWidget(plotDock_, mapDock_);  // start tabbed; drag a tab to split
+    plotDock_->raise();
 
     connect(plot_, &PlotView2D::probeMoved, this, &MainWindow::onProbeMoved);
     connect(plot_, &PlotView2D::probeLeft, this, &MainWindow::onProbeLeft);
@@ -238,7 +247,10 @@ void MainWindow::buildUi() {
         const MapView::Mode mode = m.mode;
         connect(act, &QAction::triggered, this, [this, mode]() {
             mapView_->setInteractionMode(mode);
-            if (mode != MapView::Mode::Pan) tabs_->setCurrentWidget(mapFrame_);
+            if (mode != MapView::Mode::Pan) {
+                mapDock_->show();
+                mapDock_->raise();
+            }
             // Tell the user what this picking mode expects (the actions aren't
             // otherwise discoverable, e.g. double-click to finish a section).
             QString hint;
@@ -660,9 +672,7 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
             auto* view = new CrossSectionView;
             auto* frame = wrapCrossSection(view);  // panel + legend wired first
             view->setSection(cs);                  // emits rangeChanged -> fills the legend
-            const int idx =
-                tabs_->addTab(frame, tr("Section: %1").arg(QString::fromStdString(var)));
-            tabs_->setCurrentIndex(idx);
+            addAnalysisDock(frame, tr("Section: %1").arg(QString::fromStdString(var)));
             statusBar()->clearMessage();
             // Follow the time slider: re-extract this section at the current time.
             analyses_.push_back({frame, [this, v = QPointer<CrossSectionView>(view), var, path]() {
@@ -705,8 +715,7 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
             }
             auto* view = new SkewTView;
             view->setSounding(s);
-            const int idx = tabs_->addTab(view, tr("Skew-T"));
-            tabs_->setCurrentIndex(idx);
+            addAnalysisDock(view, tr("Skew-T"));
             statusBar()->clearMessage();
             // Follow the time slider: re-extract this sounding at the current time.
             analyses_.push_back({view, [this, v = QPointer<SkewTView>(view), point]() {
@@ -750,9 +759,7 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
             auto* view = new TimeSeriesView;
             view->setSeries(ts, QString::fromStdString(var));
             view->setCurrentIndex(timeIdx_);
-            const int idx =
-                tabs_->addTab(view, tr("Series: %1").arg(QString::fromStdString(var)));
-            tabs_->setCurrentIndex(idx);
+            addAnalysisDock(view, tr("Series: %1").arg(QString::fromStdString(var)));
             statusBar()->clearMessage();
             // The series spans all times; just move its marker with the slider.
             analyses_.push_back({view, [this, v = QPointer<TimeSeriesView>(view)]() {
@@ -767,13 +774,20 @@ void MainWindow::demoCrossSection() {
 void MainWindow::demoSounding() { onSoundingRequested({64.0, 12.0}); }
 void MainWindow::demoTimeSeries() { onTimeSeriesRequested({64.0, 12.0}); }
 
-void MainWindow::onTabCloseRequested(int index) {
-    QWidget* w = tabs_->widget(index);
-    if (!w || w == plotFrame_ || w == mapFrame_) return;  // the base tabs are permanent
-    for (auto it = analyses_.begin(); it != analyses_.end();)
-        it = (it->frame == w) ? analyses_.erase(it) : it + 1;
-    tabs_->removeTab(index);
-    w->deleteLater();
+QDockWidget* MainWindow::addAnalysisDock(QWidget* frame, const QString& title) {
+    auto* dock = new QDockWidget(title, viewArea_);
+    dock->setObjectName(QStringLiteral("analysisDock%1").arg(analysisSeq_++));  // for saveState()
+    dock->setWidget(frame);
+    dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
+                      QDockWidget::DockWidgetClosable);
+    dock->setAttribute(Qt::WA_DeleteOnClose);  // closing deletes the dock + its view
+    viewArea_->addDockWidget(Qt::LeftDockWidgetArea, dock);
+    viewArea_->tabifyDockWidget(mapDock_, dock);  // tab with the existing views; drag to split
+    dock->show();
+    dock->raise();
+    // Closed docks are pruned lazily: the QPointer in analyses_ nulls when the dock
+    // is deleted, and refreshAnalyses() drops null entries.
+    return dock;
 }
 
 void MainWindow::setContoursChecked(bool on) {
@@ -781,7 +795,10 @@ void MainWindow::setContoursChecked(bool on) {
 }
 
 void MainWindow::showMapTab() {
-    if (tabs_) tabs_->setCurrentWidget(mapFrame_);
+    if (mapDock_) {
+        mapDock_->show();
+        mapDock_->raise();
+    }
 }
 
 void MainWindow::setWindComboIndex(int index) {
@@ -867,6 +884,9 @@ void MainWindow::loadSettings() {
     QSettings s;
     if (s.contains("geometry")) restoreGeometry(s.value("geometry").toByteArray());
     if (s.contains("windowState")) restoreState(s.value("windowState").toByteArray());
+    // Restore the view-area split/tab arrangement of the base views (analysis docks
+    // don't exist yet and are skipped by restoreState).
+    if (s.contains("viewAreaState")) viewArea_->restoreState(s.value("viewAreaState").toByteArray());
 
     const QString cmap = s.value("colormap", "viridis").toString();
     for (QComboBox* c : {plotColormapCombo_, mapColormapCombo_}) {
@@ -889,6 +909,7 @@ void MainWindow::saveSettings() {
     QSettings s;
     s.setValue("geometry", saveGeometry());
     s.setValue("windowState", saveState());
+    s.setValue("viewAreaState", viewArea_->saveState());
     s.setValue("colormap", mapColormapCombo_->currentText());
     s.setValue("basemap", mapBasemapCombo_->currentIndex());
     s.setValue("opacity", mapOpacitySlider_->value());
