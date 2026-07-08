@@ -57,6 +57,7 @@ find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets Gui)
 add_executable(met_app_tests
     test_main_app.cpp
     app/fieldcache_test.cpp
+    app/skewtview_test.cpp
     app/timecontroller_test.cpp
 )
 target_include_directories(met_app_tests PRIVATE ${CMAKE_SOURCE_DIR})

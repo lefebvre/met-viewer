@@ -100,6 +100,33 @@ TEST(Sounding, ExtractsSortedProfileWithDewpoint) {
     }
 }
 
+TEST(Sounding, ExtractsWindProfileWhenUVPresent) {
+    std::vector<std::pair<double, core::Field2D>> t = {
+        {850.0, linearField(21.0)}, {500.0, linearField(0.0)}};
+    const std::vector<std::pair<double, core::Field2D>> rh;  // no humidity
+
+    core::Field2D uField = linearField(0.0), vField = linearField(0.0);
+    uField.values.assign(uField.values.size(), 10.0f);  // 10 m/s eastward
+    vField.values.assign(vField.values.size(), -5.0f);  // 5 m/s southward
+    const std::vector<std::pair<double, core::Field2D>> u = {{850.0, uField}, {500.0, uField}};
+    const std::vector<std::pair<double, core::Field2D>> v = {{850.0, vField}, {500.0, vField}};
+
+    const auto s = analysis::extractSounding(t, rh, {64, 12}, u, v);
+    ASSERT_EQ(s.levels.size(), 2u);
+    for (const auto& lvl : s.levels) {
+        // Regular lat/lon grid: earth-relative components equal the grid-relative ones.
+        EXPECT_NEAR(lvl.windU, 10.0f, 1e-3f);
+        EXPECT_NEAR(lvl.windV, -5.0f, 1e-3f);
+    }
+
+    // Without U/V stacks the wind stays NaN (the profile is data-dependent).
+    const auto sNoWind = analysis::extractSounding(t, rh, {64, 12});
+    for (const auto& lvl : sNoWind.levels) {
+        EXPECT_TRUE(std::isnan(lvl.windU));
+        EXPECT_TRUE(std::isnan(lvl.windV));
+    }
+}
+
 TEST(TimeSeries, SamplesEachTime) {
     core::TimePoint t0{100}, t1{200}, t2{300};
     std::vector<std::pair<core::TimePoint, core::Field2D>> stack = {

@@ -572,6 +572,19 @@ std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack
     return stack;
 }
 
+void MainWindow::readWindStacks(readers::IDataset& ds, core::TimePoint time, int member,
+                                std::vector<std::pair<double, core::Field2D>>& uStack,
+                                std::vector<std::pair<double, core::Field2D>>& vStack) {
+    uStack.clear();
+    vStack.clear();
+    std::vector<std::string> names;
+    for (const auto& v : ds.catalog().variables()) names.push_back(v.varName);
+    const auto pair = analysis::findWindPair(names);
+    if (!pair) return;  // no U/V pair -> no wind profile
+    uStack = readLevelStack(ds, pair->uName, time, member);
+    vStack = readLevelStack(ds, pair->vName, time, member);
+}
+
 ViewFrame* MainWindow::buildPlotFrame() {
     auto* panel = new ControlPanel(tr("2D Plot"));
     plotColormapCombo_ = addColormapControls(panel, plot_);
@@ -708,11 +721,14 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
     submitCompute<analysis::Sounding>(
         *pool_, this,
         [ds, time, member, point] {
-            // Temperature is required; relative humidity is optional (for dewpoint).
+            // Temperature is required; relative humidity is optional (for dewpoint),
+            // and the U/V wind stacks are optional (for the wind profile).
             const auto tStack = MainWindow::readLevelStack(*ds, "t", time, member);
             if (tStack.size() < 2) return analysis::Sounding{};
             const auto rhStack = MainWindow::readLevelStack(*ds, "r", time, member);
-            return analysis::extractSounding(tStack, rhStack, point);
+            std::vector<std::pair<double, core::Field2D>> uStack, vStack;
+            MainWindow::readWindStacks(*ds, time, member, uStack, vStack);
+            return analysis::extractSounding(tStack, rhStack, point, uStack, vStack);
         },
         [this, point](analysis::Sounding s) {
             if (s.levels.size() < 2) {
@@ -735,7 +751,9 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
                         const auto tStack = MainWindow::readLevelStack(*dset, "t", t, mem);
                         if (tStack.size() < 2) return analysis::Sounding{};
                         const auto rhStack = MainWindow::readLevelStack(*dset, "r", t, mem);
-                        return analysis::extractSounding(tStack, rhStack, point);
+                        std::vector<std::pair<double, core::Field2D>> uStack, vStack;
+                        MainWindow::readWindStacks(*dset, t, mem, uStack, vStack);
+                        return analysis::extractSounding(tStack, rhStack, point, uStack, vStack);
                     },
                     [v](analysis::Sounding ns) {
                         if (v && ns.levels.size() >= 2) v->setSounding(ns);

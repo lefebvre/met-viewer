@@ -127,6 +127,11 @@ private:
     // Read all times of `varName` at `level` (time, field).
     static std::vector<std::pair<core::TimePoint, core::Field2D>> readTimeStack(
         readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member);
+    // Read the U/V wind pressure-level stacks at `time` into uStack/vStack (both left
+    // empty when the dataset has no recognizable wind pair).
+    static void readWindStacks(readers::IDataset& ds, core::TimePoint time, int member,
+                               std::vector<std::pair<double, core::Field2D>>& uStack,
+                               std::vector<std::pair<double, core::Field2D>>& vStack);
 
     std::shared_ptr<readers::IDataset> dataset_;
     QString currentUnits_;
