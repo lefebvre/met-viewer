@@ -90,6 +90,10 @@ void TimeController::setSteps(const QStringList& labels, int current) {
 
 int TimeController::currentIndex() const { return slider_->value(); }
 
+void TimeController::setCurrentIndex(int index) {
+    slider_->setValue(std::clamp(index, 0, slider_->maximum()));  // emits valueChanged if it moves
+}
+
 void TimeController::onSliderMoved(int value) {
     updateLabel();
     emit indexChanged(value);

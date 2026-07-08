@@ -793,10 +793,23 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
 }
 
 void MainWindow::demoCrossSection() {
-    onCrossSectionRequested({{68.0, 4.0}, {58.0, 26.0}});
+    // A short slanted transect centered on the demo point (stays inside typical
+    // regional domains): ~8° of latitude by ~16° of longitude.
+    const core::LatLon a{demoPoint_.lat + 4.0, demoPoint_.lon - 8.0};
+    const core::LatLon b{demoPoint_.lat - 4.0, demoPoint_.lon + 8.0};
+    onCrossSectionRequested({a, b});
 }
-void MainWindow::demoSounding() { onSoundingRequested({64.0, 12.0}); }
-void MainWindow::demoTimeSeries() { onTimeSeriesRequested({64.0, 12.0}); }
+void MainWindow::demoSounding() { onSoundingRequested(demoPoint_); }
+void MainWindow::demoTimeSeries() { onTimeSeriesRequested(demoPoint_); }
+
+void MainWindow::demoTiledLayout() {
+    // Build a cross-section and a skew-T; addAnalysisDock() tiles them side by side
+    // once both have been created (the extractions run asynchronously).
+    tilePending_ = 2;
+    tileFirst_ = nullptr;
+    demoCrossSection();
+    demoSounding();
+}
 
 QDockWidget* MainWindow::addAnalysisDock(QWidget* frame, const QString& title) {
     auto* dock = new QDockWidget(title, viewArea_);
@@ -811,6 +824,36 @@ QDockWidget* MainWindow::addAnalysisDock(QWidget* frame, const QString& title) {
     dock->raise();
     // Closed docks are pruned lazily: the QPointer in analyses_ nulls when the dock
     // is deleted, and refreshAnalyses() drops null entries.
+
+    // --tile: tile the next two analysis docks side by side once both exist.
+    if (tilePending_ > 0) {
+        --tilePending_;
+        if (!tileFirst_) {
+            tileFirst_ = dock;  // wait for the second one
+        } else {
+            // Defer to the next tick so we're not rearranging docks reentrantly from
+            // inside this dock's own creation. Hide the base 2D Plot/Map, leave `a` as
+            // the sole in-layout dock (splitDockWidget only splits a non-tabbed
+            // reference), then split `b` beside it.
+            QDockWidget* a = tileFirst_;
+            QDockWidget* b = dock;
+            tileFirst_ = nullptr;
+            QTimer::singleShot(0, this, [this, a, b]() {
+                // Empty the area, then re-dock `a` (removing its tab-siblings leaves it
+                // floating, so add it back explicitly) and split `b` beside it.
+                for (QDockWidget* d : {plotDock_, mapDock_, a, b})
+                    viewArea_->removeDockWidget(d);
+                viewArea_->addDockWidget(Qt::LeftDockWidgetArea, a);
+                viewArea_->splitDockWidget(a, b, Qt::Horizontal);
+                a->show(); a->raise();
+                b->show(); b->raise();
+                // Even the split — otherwise the cross-section (which carries a control
+                // panel) claims most of the width and squeezes the skew-T.
+                const int half = viewArea_->width() / 2;
+                viewArea_->resizeDocks({a, b}, {half, half}, Qt::Horizontal);
+            });
+        }
+    }
     return dock;
 }
 
@@ -838,6 +881,51 @@ void MainWindow::setGpuChecked(bool on) {
 
 void MainWindow::setDerivedComboIndex(int index) {
     if (derivedCombo_) derivedCombo_->setCurrentIndex(index);
+}
+
+void MainWindow::selectVariable(const QString& name) {
+    if (!dataset_) return;
+    const auto* entry = dataset_->catalog().find(name.toStdString());
+    if (!entry) return;
+    core::FieldKey key;
+    key.varName = name.toStdString();
+    if (!entry->levels.empty()) key.level = entry->levels.front();
+    if (!entry->times.empty()) key.validTime = entry->times.front();
+    onFieldChosen(key);  // populates the level/time combos and decodes
+    if (datasetDock_) datasetDock_->selectField(name, key.level);
+}
+
+void MainWindow::selectLevelHpa(double hPa) {
+    for (std::size_t i = 0; i < currentLevels_.size(); ++i) {
+        const auto& lvl = currentLevels_[i];
+        if (lvl.type == core::VerticalLevel::Type::PressureHPa &&
+            std::abs(lvl.value - hPa) < 0.5) {
+            if (levelCombo_) levelCombo_->setCurrentIndex(static_cast<int>(i));  // triggers onLevelChanged
+            if (datasetDock_)
+                datasetDock_->selectField(QString::fromStdString(currentVar_), lvl);
+            return;
+        }
+    }
+}
+
+void MainWindow::setColormapByName(const QString& name) {
+    for (QComboBox* c : {plotColormapCombo_, mapColormapCombo_}) {
+        if (!c) continue;
+        const int i = c->findText(name);
+        if (i >= 0) c->setCurrentIndex(i);  // currentTextChanged repaints the view
+    }
+}
+
+void MainWindow::setBasemapByName(const QString& name) {
+    if (!mapBasemapCombo_) return;
+    const int i = mapBasemapCombo_->findText(name);
+    if (i >= 0) mapBasemapCombo_->setCurrentIndex(i);
+}
+
+void MainWindow::setDemoPoint(double lat, double lon) { demoPoint_ = {lat, lon}; }
+
+void MainWindow::setTimeIndex(int index) {
+    if (timeController_) timeController_->setCurrentIndex(index);
 }
 
 std::shared_ptr<analysis::WindField> MainWindow::buildWindField() {
