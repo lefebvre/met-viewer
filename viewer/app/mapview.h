@@ -80,6 +80,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
     void leaveEvent(QEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;  // right-click: Fit to data
 
 private:
     double worldCenterX() const;  // world-pixel coords of the view center

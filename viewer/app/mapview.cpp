@@ -8,7 +8,10 @@
 #include <variant>
 #include <vector>
 
+#include <QAction>
+#include <QContextMenuEvent>
 #include <QFontMetrics>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPolygonF>
@@ -28,6 +31,13 @@ using render::tile::lonToWorldX;
 using render::tile::worldXToLon;
 using render::tile::worldYToLat;
 constexpr int kTile = render::tile::kTileSize;
+
+// True when two boxes cover the same geographic extent. Fields from one file share
+// identical grid parameters (hence identical bboxes); a different file/grid differs.
+bool sameExtent(const core::BBox& a, const core::BBox& b) {
+    return a.minLon == b.minLon && a.maxLon == b.maxLon && a.minLat == b.minLat &&
+           a.maxLat == b.maxLat;
+}
 
 // One-ring dilation of RGB into transparent (missing) cells, leaving alpha at 0.
 // Hardware GL_LINEAR then blends a neighbor's color instead of transparent-black
@@ -100,11 +110,15 @@ QPointF MapView::lonLatToScreen(core::LatLon ll) const {
 }
 
 void MapView::setField(std::shared_ptr<core::Field2D> field) {
-    const bool firstField = (field_ == nullptr);
+    // Re-fit the view when the geographic extent changes — the first field, or a new
+    // dataset with a different grid. Level/time changes within one file keep the same
+    // grid (same bbox), so the user's current pan/zoom is preserved.
+    const bool hadField = (field_ != nullptr);
+    const core::BBox prevBox = hadField ? core::gridBBox(field_->grid) : core::BBox{};
     field_ = std::move(field);
     if (field_) {
         if (autoRange_) autorange();
-        if (firstField) fitToField();
+        if (!hadField || !sameExtent(prevBox, core::gridBBox(field_->grid))) fitToField();
     }
     update();
 }
@@ -182,6 +196,17 @@ void MapView::fitToField() {
     int z = zx;
     while (z > 0 && latPxSpan * std::pow(2.0, z - zx) > std::max(64, height() - 8)) --z;
     zoom_ = std::clamp(z, 0, 19);
+}
+
+void MapView::contextMenuEvent(QContextMenuEvent* event) {
+    if (!field_) return;  // nothing loaded — no extent to fit
+    QMenu menu(this);
+    QAction* fit = menu.addAction(tr("Fit to data"));
+    connect(fit, &QAction::triggered, this, [this] {
+        fitToField();
+        update();
+    });
+    menu.exec(event->globalPos());
 }
 
 void MapView::ensureWarp() {
