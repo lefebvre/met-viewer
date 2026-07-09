@@ -10,6 +10,8 @@ class QToolButton;
 
 namespace met::app {
 
+class IconThemer;
+
 // A timeline control: a slider over the loaded time steps with prev/next
 // buttons and a label. Emits indexChanged() as the step changes. (Playback is
 // added in a later milestone.)
@@ -17,6 +19,10 @@ class TimeController : public QWidget {
     Q_OBJECT
 public:
     explicit TimeController(QWidget* parent = nullptr);
+
+    // Give the transport buttons themed glyph icons (prev/play/pause/next). The
+    // play button's icon tracks the play/pause state and the active theme.
+    void setIcons(IconThemer* icons);
 
     // Set the time-step labels (e.g. ISO strings). Resets the current index to
     // `current`, clamped into range. A single or empty step disables the slider.
@@ -43,7 +49,9 @@ private slots:
 private:
     void updateLabel();
     void setPlaying(bool playing);
+    void updatePlayIcon();
 
+    IconThemer* icons_ = nullptr;
     QSlider* slider_ = nullptr;
     QLabel* label_ = nullptr;
     QToolButton* prev_ = nullptr;

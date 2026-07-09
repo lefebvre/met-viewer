@@ -37,6 +37,7 @@ ControlPanel::ControlPanel(const QString& title, QWidget* parent) : QWidget(pare
 }
 
 void ControlPanel::addRow(const QString& label, QWidget* w) { form_->addRow(label, w); }
+void ControlPanel::addRow(QWidget* label, QWidget* w) { form_->addRow(label, w); }
 void ControlPanel::addRow(QWidget* w) { form_->addRow(w); }
 void ControlPanel::addBlock(QWidget* w) { bodyLayout_->addWidget(w); }
 

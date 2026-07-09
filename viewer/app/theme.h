@@ -31,11 +31,16 @@ public:
 
 signals:
     void modeChanged(Mode mode);
+    // Emitted whenever the *effective* light/dark scheme changes — from a user
+    // mode change or a live OS scheme switch while in System mode. This is the
+    // trigger for reloading theme-variant icons.
+    void effectiveSchemeChanged(bool dark);
 
 private:
-    void apply() const;
+    void apply();
 
     Mode mode_ = Mode::System;
+    bool lastDark_ = false;
 };
 
 }  // namespace met::app

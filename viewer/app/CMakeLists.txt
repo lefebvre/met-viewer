@@ -19,6 +19,8 @@ add_library(met_app STATIC
     tilelayer.h
     coastlines.cpp
     coastlines.h
+    icons.cpp
+    icons.h
     colorbarwidget.cpp
     colorbarwidget.h
     crosssectionview.cpp
