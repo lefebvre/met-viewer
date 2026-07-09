@@ -22,8 +22,8 @@ sudo dnf install -y perl-IPC-Cmd perl-FindBin perl-Text-Template perl-Time-Piece
   perl-Unicode-Normalize perl-Test-Harness perl-Module-Loaded perl-ExtUtils-MakeMaker \
   perl-Sys-Hostname
 
-# autoconf-archive (required to build libb2, a Qt dependency)
-sudo dnf install -y autoconf-archive
+# autotools (required to build libb2, a Qt dependency)
+sudo dnf install -y autoconf automake libtool autoconf-archive
 ```
 
 ## Build

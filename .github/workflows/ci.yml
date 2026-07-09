@@ -41,7 +41,8 @@ jobs:
             xcb-util-image-devel xcb-util-keysyms-devel xcb-util-renderutil-devel \
             perl-IPC-Cmd perl-FindBin perl-Text-Template perl-Time-Piece \
             perl-Unicode-Normalize perl-Test-Harness perl-Module-Loaded \
-            perl-ExtUtils-MakeMaker perl-Sys-Hostname autoconf-archive \
+            perl-ExtUtils-MakeMaker perl-Sys-Hostname \
+            autoconf automake libtool autoconf-archive \
             xorg-x11-server-Xvfb mesa-dri-drivers
 
       - uses: actions/checkout@v4
