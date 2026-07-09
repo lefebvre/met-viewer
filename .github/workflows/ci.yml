@@ -33,7 +33,7 @@ jobs:
           dnf install -y dnf-plugins-core epel-release
           dnf config-manager --set-enabled crb
           dnf install -y \
-            git cmake ninja-build gcc-c++ make perl zip file which curl tar \
+            git cmake ninja-build gcc-c++ make perl zip file which tar \
             libxcb-devel libX11-devel mesa-libGLU-devel libXrender-devel \
             libXi-devel libxkbcommon-devel libxkbcommon-x11-devel mesa-libEGL-devel \
             gperf fontconfig-devel freetype-devel \
