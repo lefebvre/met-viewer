@@ -30,6 +30,7 @@ class MapView;
 class TileLayer;
 class ColorbarWidget;
 class TimeController;
+class ThemeManager;
 class CrossSectionView;
 class ViewFrame;
 
@@ -209,6 +210,7 @@ private:
     QComboBox* mapWindCombo_ = nullptr;
 
     TimeController* timeController_ = nullptr;
+    ThemeManager* theme_ = nullptr;
     QLabel* probeLabel_ = nullptr;
     QMenu* recentMenu_ = nullptr;  // File > Open Recent
     QThreadPool* pool_ = nullptr;

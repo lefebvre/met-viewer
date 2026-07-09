@@ -31,6 +31,8 @@ add_library(met_app STATIC
     datasetdock.h
     timecontroller.cpp
     timecontroller.h
+    theme.cpp
+    theme.h
     jobs.cpp
     jobs.h
     fieldcache.cpp

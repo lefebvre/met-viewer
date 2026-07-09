@@ -46,6 +46,7 @@
 #include "viewer/app/plotview2d.h"
 #include "viewer/app/skewtview.h"
 #include "viewer/app/tilelayer.h"
+#include "viewer/app/theme.h"
 #include "viewer/app/timecontroller.h"
 #include "viewer/app/timeseriesview.h"
 #include "viewer/core/timeaxis.h"
@@ -127,6 +128,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(tr("met-viewer"));
     resize(1280, 800);
     pool_ = new QThreadPool(this);
+    // Apply the saved theme before building widgets so they start correctly styled.
+    theme_ = new ThemeManager(this);
     buildUi();
     loadSettings();
 }
@@ -286,6 +289,24 @@ void MainWindow::buildUi() {
     viewMenu->addAction(bottomDock->toggleViewAction());
     viewMenu->addSeparator();
     viewMenu->addAction(toolbar->toggleViewAction());
+
+    // Theme: System (follow OS light/dark) / Light / Dark, persisted by ThemeManager.
+    viewMenu->addSeparator();
+    auto* themeMenu = viewMenu->addMenu(tr("&Theme"));
+    auto* themeGroup = new QActionGroup(this);
+    const struct { const char* label; ThemeManager::Mode mode; } themes[] = {
+        {QT_TR_NOOP("&System"), ThemeManager::Mode::System},
+        {QT_TR_NOOP("&Light"), ThemeManager::Mode::Light},
+        {QT_TR_NOOP("&Dark"), ThemeManager::Mode::Dark},
+    };
+    for (const auto& t : themes) {
+        QAction* act = themeMenu->addAction(tr(t.label));
+        act->setCheckable(true);
+        act->setChecked(theme_->mode() == t.mode);
+        themeGroup->addAction(act);
+        const ThemeManager::Mode mode = t.mode;
+        connect(act, &QAction::triggered, this, [this, mode]() { theme_->setMode(mode); });
+    }
 
     probeLabel_ = new QLabel(tr("Ready"), this);
     statusBar()->addWidget(probeLabel_);
