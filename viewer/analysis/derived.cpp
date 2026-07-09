@@ -3,6 +3,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <variant>
@@ -31,7 +32,7 @@ core::Field2D likeField(const core::Field2D& src, const std::string& var, const 
 void gridSpacing(const core::GridDef& grid, int i, int j, double& dxStep, double& dyStep) {
     if (const auto* g = std::get_if<core::RegularLatLonGrid>(&grid)) {
         const double lat = g->lat0 + g->dlat * j;
-        const double d2r = M_PI / 180.0;
+        const double d2r = std::numbers::pi / 180.0;
         dxStep = g->dlon * d2r * kR * std::cos(lat * d2r);
         dyStep = g->dlat * d2r * kR;
     } else {
@@ -62,7 +63,7 @@ bool centralDerivatives(const core::Field2D& comp, int i, int j, double dxStep, 
 // so no spherical curvature correction is applied there.
 double gridLatRadians(const core::GridDef& grid, int j) {
     if (const auto* g = std::get_if<core::RegularLatLonGrid>(&grid))
-        return (g->lat0 + g->dlat * j) * M_PI / 180.0;
+        return (g->lat0 + g->dlat * j) * std::numbers::pi / 180.0;
     return std::numeric_limits<double>::quiet_NaN();
 }
 
@@ -82,7 +83,7 @@ core::Field2D windDirectionField(const WindField& w) {
     for (std::size_t k = 0; k < f.values.size(); ++k) {
         const float u = w.u.values[k], v = w.v.values[k];
         if (std::isnan(u) || std::isnan(v)) continue;
-        double dir = std::atan2(-u, -v) * 180.0 / M_PI;  // direction wind comes FROM
+        double dir = std::atan2(-u, -v) * 180.0 / std::numbers::pi;  // direction wind comes FROM
         if (dir < 0) dir += 360.0;
         f.values[k] = static_cast<float>(dir);
     }

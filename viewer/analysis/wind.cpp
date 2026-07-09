@@ -4,6 +4,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <numbers>
 
 #include "viewer/analysis/sample.h"
 
@@ -81,7 +82,7 @@ double gridNorthAngle(const core::GridDef& grid, double i, double j) {
     double dlon = b.lon - a.lon;
     while (dlon > 180.0) dlon -= 360.0;
     while (dlon < -180.0) dlon += 360.0;
-    const double east = dlon * std::cos(a.lat * M_PI / 180.0);
+    const double east = dlon * std::cos(a.lat * std::numbers::pi / 180.0);
     const double north = b.lat - a.lat;
     // Bearing of grid-north east of true north.
     return std::atan2(east, north);

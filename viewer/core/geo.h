@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <vector>
 
 namespace met::core {
@@ -44,7 +45,7 @@ inline constexpr double kEarthRadiusKm = 6371.0088;
 
 // Great-circle distance (km) between two points.
 [[nodiscard]] inline double greatCircleKm(LatLon a, LatLon b) {
-    const double d2r = M_PI / 180.0;
+    const double d2r = std::numbers::pi / 180.0;
     const double la1 = a.lat * d2r, la2 = b.lat * d2r;
     const double dla = (b.lat - a.lat) * d2r, dlo = (b.lon - a.lon) * d2r;
     const double h = std::sin(dla / 2) * std::sin(dla / 2) +
@@ -54,7 +55,7 @@ inline constexpr double kEarthRadiusKm = 6371.0088;
 
 // Interpolate a point a fraction t in [0,1] along the great-circle arc a->b.
 [[nodiscard]] inline LatLon slerp(LatLon a, LatLon b, double t) {
-    const double d2r = M_PI / 180.0, r2d = 180.0 / M_PI;
+    const double d2r = std::numbers::pi / 180.0, r2d = 180.0 / std::numbers::pi;
     const double la1 = a.lat * d2r, lo1 = a.lon * d2r, la2 = b.lat * d2r, lo2 = b.lon * d2r;
     const double d = greatCircleKm(a, b) / kEarthRadiusKm;  // angular distance
     if (d < 1e-9) return a;
