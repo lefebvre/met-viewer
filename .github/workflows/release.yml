@@ -62,6 +62,15 @@ jobs:
           cmake --preset dist-linux
           cmake --build --preset dist-linux
 
+      - name: Dump vcpkg logs on failure
+        if: failure()
+        run: |
+          echo "===== vcpkg-manifest-install.log ====="
+          cat build/dist-linux/vcpkg-manifest-install.log 2>/dev/null || echo "(not found)"
+          echo "===== port build logs (errors) ====="
+          for f in $(find vcpkg/buildtrees -maxdepth 2 -name '*-err.log' -o -name 'config-*.log' -o -name 'install-*.log' 2>/dev/null); do
+            echo "----- $f -----"; tail -n 80 "$f"; done
+
       - name: Install into AppDir
         run: cmake --install build/dist-linux --prefix "$PWD/AppDir/usr"
 
