@@ -1,0 +1,5 @@
+// Windows resource script: embeds the application icon into met_viewer.exe so
+// Explorer, the taskbar, and the title bar show it. IDI_ICON1 (the lowest icon
+// ordinal) is what Windows uses as the executable's display icon. The .ico is
+// generated from resources/icons/png/app/*.png by tools/gen_win_ico.py.
+IDI_ICON1 ICON "../icons/met-viewer.ico"

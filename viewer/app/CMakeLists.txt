@@ -52,5 +52,16 @@ target_link_libraries(met_app PUBLIC
 add_executable(met_viewer
     main.cpp
     ${CMAKE_SOURCE_DIR}/resources/met-viewer.qrc
+    # Embeds the app icon into the .exe (Explorer/taskbar); ignored elsewhere.
+    $<$<PLATFORM_ID:Windows>:${CMAKE_SOURCE_DIR}/resources/win/met-viewer.rc>
 )
 target_link_libraries(met_viewer PRIVATE met_app)
+
+# AUTORCC compiles the .qrc listed in the sources above (app icon, coastline
+# data). qt_standard_project_setup() enables AUTOMOC/AUTOUIC but NOT AUTORCC, so
+# without this the resource is silently dropped and ":/..." lookups fail.
+# On Windows, build a GUI subsystem app so launching from Explorer doesn't pop a
+# console window. Qt supplies the WinMain->main entry point via Qt6::EntryPoint.
+set_target_properties(met_viewer PROPERTIES
+    AUTORCC ON
+    WIN32_EXECUTABLE $<PLATFORM_ID:Windows>)

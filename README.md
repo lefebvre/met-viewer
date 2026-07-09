@@ -49,3 +49,43 @@ soundings, time series, and animation.
 Other presets: `debug`, `asan` (address/UB sanitizers — run before committing).
 
 The first configure builds Qt and other dependencies from source via vcpkg; expect this to take a while.
+
+## Installers
+
+Tagged releases (`v*`) publish downloadable installers via GitHub Actions
+(see [`.github/workflows/release.yml`](.github/workflows/release.yml)):
+
+- **Linux** — a self-contained `.AppImage` built on AlmaLinux 9, so it runs on
+  RHEL/Alma/Rocky 9 and 10 (glibc ≥ 2.34).
+- **Windows** — an NSIS `.exe` installer.
+
+Releases are currently **unsigned**: Windows SmartScreen may warn ("More info →
+Run anyway"), and Linux may require `chmod +x` on the AppImage.
+
+The distributable builds link Qt **dynamically** (LGPL-friendly) via dedicated
+presets that CI uses:
+
+```sh
+cmake --preset dist-linux     # x64-linux-dynamic; AppImage source tree
+cmake --build --preset dist-linux
+```
+
+To produce the local packages CPack knows about (a `.tar.gz` on Linux, the NSIS
+installer on Windows):
+
+```sh
+cd build/dist-linux && cpack        # or: cpack -G TGZ
+```
+
+The AppImage itself is assembled by `linuxdeploy` in CI; `dist-windows` bundles
+the Qt runtime via `windeployqt`. The app icon set lives in
+[`resources/icons/`](resources/icons/); `tools/gen_app_icons.py` regenerates the
+Windows `.ico` from the largest app PNG.
+
+## CI
+
+Every push to `master` and every pull request is built and tested on Linux
+(AlmaLinux 9 container) and Windows via
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml), including a headless
+render smoke test on Linux. vcpkg dependencies are cached in the GitHub Actions
+cache so Qt is compiled from source only once.

@@ -2,5 +2,12 @@
 <RCC version="1.0">
   <qresource prefix="/">
     <file alias="coastlines/ne_coastline_110m.bin">ne_coastline_110m.bin</file>
+    <file alias="icons/app/met-viewer_16.png">icons/png/app/met-viewer_16.png</file>
+    <file alias="icons/app/met-viewer_24.png">icons/png/app/met-viewer_24.png</file>
+    <file alias="icons/app/met-viewer_32.png">icons/png/app/met-viewer_32.png</file>
+    <file alias="icons/app/met-viewer_48.png">icons/png/app/met-viewer_48.png</file>
+    <file alias="icons/app/met-viewer_64.png">icons/png/app/met-viewer_64.png</file>
+    <file alias="icons/app/met-viewer_128.png">icons/png/app/met-viewer_128.png</file>
+    <file alias="icons/app/met-viewer_256.png">icons/png/app/met-viewer_256.png</file>
   </qresource>
 </RCC>

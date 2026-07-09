@@ -2,12 +2,24 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <mutex>
+#include <string>
 #include <unordered_map>
 
 #include <proj.h>
 
 namespace met::core {
 namespace {
+
+// Runtime-registered PROJ data directory (see setProjDataPath). Written once at
+// startup, read from every thread's ThreadProj ctor, so it is mutex-guarded.
+std::mutex g_projDataMutex;
+std::string g_projDataPath;
+
+std::string projDataOverride() {
+    std::lock_guard<std::mutex> lock(g_projDataMutex);
+    return g_projDataPath;
+}
 
 // Per-thread PROJ context and a cache of normalized lon/lat<->projected
 // transforms keyed by projection string. proj_normalize_for_visualization gives
@@ -19,14 +31,24 @@ struct ThreadProj {
     ThreadProj() {
         ctx = proj_context_create();
         // Ensure PROJ can find proj.db (needed to resolve EPSG:4326) even when
-        // PROJ_DATA is not set in the environment. MET_PROJ_DATA is baked in at
-        // build time; an explicit PROJ_DATA env var still takes precedence.
-#ifdef MET_PROJ_DATA
+        // PROJ_DATA is not set in the environment. Precedence:
+        //   1. PROJ_DATA / PROJ_LIB env vars (handled by PROJ itself) — honored
+        //      by leaving the search path unset here.
+        //   2. A path registered via setProjDataPath() — used by installed
+        //      builds, resolved relative to the executable at startup.
+        //   3. The compile-time MET_PROJ_DATA fallback — the dev/build-tree path.
         if (!std::getenv("PROJ_DATA") && !std::getenv("PROJ_LIB")) {
-            const char* path = MET_PROJ_DATA;
-            proj_context_set_search_paths(ctx, 1, &path);
-        }
+            const std::string override = projDataOverride();
+#ifdef MET_PROJ_DATA
+            const std::string path = override.empty() ? std::string(MET_PROJ_DATA) : override;
+#else
+            const std::string path = override;
 #endif
+            if (!path.empty()) {
+                const char* p = path.c_str();
+                proj_context_set_search_paths(ctx, 1, &p);
+            }
+        }
     }
     ~ThreadProj() {
         for (auto& [k, pj] : cache)
@@ -51,6 +73,11 @@ ThreadProj& tls() {
 }
 
 }  // namespace
+
+void setProjDataPath(std::string path) {
+    std::lock_guard<std::mutex> lock(g_projDataMutex);
+    g_projDataPath = std::move(path);
+}
 
 bool Crs::forward(double lon, double lat, double& x, double& y) const {
     PJ* pj = tls().get(proj_);

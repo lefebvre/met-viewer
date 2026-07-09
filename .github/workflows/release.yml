@@ -1,0 +1,131 @@
+name: Release
+
+# On a version tag (e.g. v0.1.0), build a distributable installer per platform
+# and attach it to a DRAFT GitHub Release for review before publishing:
+#   - Linux:   AppImage (dynamic Qt bundled by linuxdeploy)
+#   - Windows: NSIS installer (dynamic Qt bundled by windeployqt via CPack)
+# Artifacts are UNSIGNED; see the release notes for SmartScreen/Gatekeeper hints.
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+permissions:
+  contents: write   # needed to create/update the GitHub Release
+
+jobs:
+  linux:
+    name: Linux AppImage
+    runs-on: ubuntu-latest
+    container: almalinux:9
+    steps:
+      - name: Install system build dependencies
+        run: |
+          set -euxo pipefail
+          dnf install -y dnf-plugins-core epel-release
+          dnf config-manager --set-enabled crb
+          dnf install -y \
+            git cmake ninja-build gcc-c++ make perl zip file which curl tar \
+            libxcb-devel libX11-devel mesa-libGLU-devel libXrender-devel \
+            libXi-devel libxkbcommon-devel libxkbcommon-x11-devel mesa-libEGL-devel \
+            gperf fontconfig-devel freetype-devel \
+            xcb-util-cursor-devel xcb-util-wm-devel xcb-util-devel \
+            xcb-util-image-devel xcb-util-keysyms-devel xcb-util-renderutil-devel \
+            perl-IPC-Cmd perl-FindBin perl-Text-Template perl-Time-Piece \
+            perl-Unicode-Normalize perl-Test-Harness perl-Module-Loaded \
+            perl-ExtUtils-MakeMaker perl-Sys-Hostname autoconf-archive \
+            fuse-libs
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Trust workspace (git runs as root in the container)
+        run: git config --global --add safe.directory '*'
+
+      - name: Enable vcpkg GitHub Actions binary cache
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Build
+        run: |
+          cmake --preset dist-linux
+          cmake --build --preset dist-linux
+
+      - name: Install into AppDir
+        run: cmake --install build/dist-linux --prefix "$PWD/AppDir/usr"
+
+      - name: Build AppImage
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          base=https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous
+          curl -fsSLO "$base/linuxdeploy-x86_64.AppImage"
+          curl -fsSLO "$base/linuxdeploy-plugin-qt-x86_64.AppImage"
+          chmod +x linuxdeploy*.AppImage
+          # FUSE is unavailable in containers; run the AppImages extracted.
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          # Point the Qt plugin at the vcpkg Qt, and let linuxdeploy find the
+          # bundled .so dependencies (PROJ, eccodes, netcdf, ...).
+          export QMAKE="$PWD/vcpkg_installed/x64-linux-dynamic/tools/Qt6/bin/qmake"
+          export LD_LIBRARY_PATH="$PWD/vcpkg_installed/x64-linux-dynamic/lib:${LD_LIBRARY_PATH:-}"
+          # linuxdeploy-plugin-appimage names its output from $OUTPUT.
+          export OUTPUT="met-viewer-${VERSION}-x86_64.AppImage"
+          ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir --plugin qt --output appimage \
+            --executable AppDir/usr/bin/met_viewer \
+            --desktop-file AppDir/usr/share/applications/met-viewer.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/met-viewer.png
+
+      - name: Attach AppImage to release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: met-viewer-*-x86_64.AppImage
+
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Enable vcpkg GitHub Actions binary cache
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Build
+        run: |
+          cmake --preset dist-windows
+          cmake --build --preset dist-windows
+
+      - name: Package (NSIS)
+        # CPack runs the install (which invokes windeployqt via install(SCRIPT))
+        # then builds the NSIS installer.
+        working-directory: build/dist-windows
+        run: cpack
+
+      - name: Attach installer to release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: build/dist-windows/met-viewer-*.exe
