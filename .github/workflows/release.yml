@@ -66,11 +66,14 @@ jobs:
       - name: Dump vcpkg logs on failure
         if: failure()
         run: |
-          echo "===== vcpkg-manifest-install.log ====="
+          echo "===== vcpkg-manifest-install.log (names the failed port) ====="
           cat build/dist-linux/vcpkg-manifest-install.log 2>/dev/null || echo "(not found)"
-          echo "===== port build logs (errors) ====="
-          for f in $(find vcpkg/buildtrees -maxdepth 2 -name '*-err.log' -o -name 'config-*.log' -o -name 'install-*.log' 2>/dev/null); do
-            echo "----- $f -----"; tail -n 80 "$f"; done
+          echo "===== port build stdout/stderr (the real error) ====="
+          # Skip config-*.log: its arch-probe failures (arm_acle.h etc.) are expected noise.
+          for f in $(find vcpkg/buildtrees -maxdepth 2 \
+                       \( -name 'install-*-out.log' -o -name 'install-*-err.log' \
+                          -o -name 'build-*-out.log' -o -name 'build-*-err.log' \) 2>/dev/null); do
+            echo "----- $f -----"; tail -n 60 "$f"; done
 
       - name: Install into AppDir
         run: cmake --install build/dist-linux --prefix "$PWD/AppDir/usr"
