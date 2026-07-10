@@ -47,7 +47,11 @@ target_compile_definitions(met_tests PRIVATE
     MET_ECCODES_SAMPLES_PATH="${_met_vcpkg_installed}/${VCPKG_TARGET_TRIPLET}/share/eccodes/samples"
 )
 
-gtest_discover_tests(met_tests)
+# PRE_TEST discovery runs the enumeration at ctest time rather than as a
+# post-build step. On Windows the test exe needs the Qt/vcpkg DLLs, which are
+# only deployed next to it after the build finishes; discovering at build time
+# would launch the exe before the DLLs exist and hang (missing-DLL dialog).
+gtest_discover_tests(met_tests DISCOVERY_MODE PRE_TEST)
 
 # App-layer tests link the met_app library. They need a QApplication and a
 # headless platform plugin (minimal), so they are a separate target — met_tests
@@ -63,4 +67,4 @@ add_executable(met_app_tests
 target_include_directories(met_app_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(met_app_tests PRIVATE met_options met_app GTest::gtest)
 qt_import_plugins(met_app_tests INCLUDE Qt6::QMinimalIntegrationPlugin)
-gtest_discover_tests(met_app_tests)
+gtest_discover_tests(met_app_tests DISCOVERY_MODE PRE_TEST)
