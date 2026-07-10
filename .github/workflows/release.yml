@@ -41,8 +41,17 @@ jobs:
             perl-IPC-Cmd perl-FindBin perl-Text-Template perl-Time-Piece \
             perl-Unicode-Normalize perl-Test-Harness perl-Module-Loaded \
             perl-ExtUtils-MakeMaker perl-Sys-Hostname \
-            autoconf automake libtool autoconf-archive \
+            automake libtool autoconf-archive m4 \
             fuse-libs
+          # AlmaLinux 9 ships autoconf 2.69, but some ports (libb2) need >= 2.71.
+          # The autoconf tarball ships a pre-generated configure, so building it
+          # needs only m4/perl/make (no bootstrap autoconf).
+          curl -fsSLO https://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz
+          tar xf autoconf-2.71.tar.gz
+          (cd autoconf-2.71 && ./configure --prefix=/usr/local >/dev/null \
+             && make -j"$(nproc)" >/dev/null && make install >/dev/null)
+          hash -r
+          autoconf --version | head -1
 
       - uses: actions/checkout@v4
         with:
