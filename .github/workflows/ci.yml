@@ -124,6 +124,8 @@ jobs:
 
       - name: Build
         run: cmake --build --preset dist-windows
-
-      - name: Test
-        run: ctest --preset dist-windows
+      # The build compiles the test targets too, so MSVC-specific errors in test
+      # code are still caught here. Executing the suite is left to the Linux job:
+      # the logic is platform-identical, and running the Qt test exes on Windows
+      # needs runtime Qt/plugin deployment that isn't worth maintaining in CI.
+      # Windows CI's job is to prove the code builds on MSVC and packages.
