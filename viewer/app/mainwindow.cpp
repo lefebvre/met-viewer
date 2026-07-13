@@ -10,6 +10,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QHash>
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
@@ -41,11 +42,13 @@
 #include "viewer/app/controlpanel.h"
 #include "viewer/app/crosssectionview.h"
 #include "viewer/app/datasetdock.h"
+#include "viewer/app/icons.h"
 #include "viewer/app/jobs.h"
 #include "viewer/app/mapview.h"
 #include "viewer/app/plotview2d.h"
 #include "viewer/app/skewtview.h"
 #include "viewer/app/tilelayer.h"
+#include "viewer/app/theme.h"
 #include "viewer/app/timecontroller.h"
 #include "viewer/app/timeseriesview.h"
 #include "viewer/core/timeaxis.h"
@@ -69,7 +72,7 @@ void makeShrinkable(QComboBox* c) {
 // colormap combo so the caller can persist / drive it programmatically. Shared by
 // the 2D-Plot, Map, and cross-section panels so their color controls behave alike.
 template <typename View>
-QComboBox* addColormapControls(ControlPanel* panel, View* view) {
+QComboBox* addColormapControls(ControlPanel* panel, View* view, IconThemer* icons) {
     auto* cmap = new QComboBox(panel);
     for (const auto& name : render::Colormap::builtinNames())
         cmap->addItem(QString::fromStdString(name));
@@ -90,7 +93,7 @@ QComboBox* addColormapControls(ControlPanel* panel, View* view) {
     auto* cbar = new ColorbarWidget(panel);
     cbar->setColormap(view->colormap());
 
-    panel->addRow(QObject::tr("Colormap"), cmap);
+    panel->addRow(icons->iconLabel("render-cmap", 20, QObject::tr("Colormap")), cmap);
     panel->addRow(autoR);
     panel->addRow(QObject::tr("Min"), minS);
     panel->addRow(QObject::tr("Max"), maxS);
@@ -127,6 +130,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle(tr("met-viewer"));
     resize(1280, 800);
     pool_ = new QThreadPool(this);
+    // Apply the saved theme before building widgets so they start correctly styled.
+    theme_ = new ThemeManager(this);
+    icons_ = new IconThemer(theme_, this);
     buildUi();
     loadSettings();
 }
@@ -164,6 +170,9 @@ void MainWindow::buildUi() {
     viewArea_->addDockWidget(Qt::LeftDockWidgetArea, mapDock_);
     viewArea_->tabifyDockWidget(plotDock_, mapDock_);  // start tabbed; drag a tab to split
     plotDock_->raise();
+    // Tab icons for the base views (a tabified dock shows its windowIcon).
+    icons_->applyWindowIcon(plotDock_, "view-plot2d");
+    icons_->applyWindowIcon(mapDock_, "view-map");
 
     connect(plot_, &PlotView2D::probeMoved, this, &MainWindow::onProbeMoved);
     connect(plot_, &PlotView2D::probeLeft, this, &MainWindow::onProbeLeft);
@@ -189,7 +198,7 @@ void MainWindow::buildUi() {
     makeShrinkable(levelCombo_);
     connect(levelCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &MainWindow::onLevelChanged);
-    dataForm->addRow(tr("Level"), levelCombo_);
+    dataForm->addRow(icons_->iconLabel("axis-level", 20, tr("Level")), levelCombo_);
 
     derivedCombo_ = new QComboBox(dataPanel);
     derivedCombo_->addItems({tr("(raw field)"), tr("Wind speed"), tr("Wind direction"),
@@ -199,7 +208,7 @@ void MainWindow::buildUi() {
                                  "temperature, or wind speed/vorticity from the U/V pair."));
     connect(derivedCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &MainWindow::onDerivedChanged);
-    dataForm->addRow(tr("Derived"), derivedCombo_);
+    dataForm->addRow(icons_->iconLabel("data-grid", 20, tr("Derived")), derivedCombo_);
     dataLayout->addLayout(dataForm);
 
     showingLabel_ = new QLabel(tr("No field loaded"), dataPanel);
@@ -214,6 +223,7 @@ void MainWindow::buildUi() {
 
     // Bottom: time controller.
     timeController_ = new TimeController(this);
+    timeController_->setIcons(icons_);
     auto* bottomDock = new QDockWidget(tr("Time"), this);
     bottomDock->setObjectName("timeDock");
     bottomDock->setWidget(timeController_);
@@ -224,11 +234,13 @@ void MainWindow::buildUi() {
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
     QAction* openAct = fileMenu->addAction(tr("&Open…"));
     openAct->setShortcut(QKeySequence::Open);
+    icons_->applyAction(openAct, "file-open");
     connect(openAct, &QAction::triggered, this, &MainWindow::onOpenTriggered);
     recentMenu_ = fileMenu->addMenu(tr("Open &Recent"));
     recentMenu_->setToolTipsVisible(true);  // show full paths on hover
     updateRecentMenu();
     QAction* prefAct = fileMenu->addAction(tr("&Preferences…"));
+    icons_->applyAction(prefAct, "app-settings");
     connect(prefAct, &QAction::triggered, this, &MainWindow::openPreferences);
     fileMenu->addSeparator();
     QAction* quitAct = fileMenu->addAction(tr("&Quit"));
@@ -238,16 +250,18 @@ void MainWindow::buildUi() {
     // Interaction-mode toolbar (map picking).
     auto* toolbar = addToolBar(tr("Tools"));
     toolbar->setObjectName("toolsToolbar");
+    toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);  // icons + tooltips
     auto* modeGroup = new QActionGroup(this);
     modeGroup->setExclusive(true);
-    struct ModeDef { const char* label; MapView::Mode mode; };
-    const ModeDef modes[] = {{"Pan", MapView::Mode::Pan},
-                             {"Cross-section", MapView::Mode::CrossSection},
-                             {"Sounding", MapView::Mode::Sounding},
-                             {"Time series", MapView::Mode::TimeSeries}};
+    struct ModeDef { const char* label; MapView::Mode mode; const char* icon; };
+    const ModeDef modes[] = {{"Pan", MapView::Mode::Pan, "view-pan"},
+                             {"Cross-section", MapView::Mode::CrossSection, "mode-section"},
+                             {"Sounding", MapView::Mode::Sounding, "mode-skewt"},
+                             {"Time series", MapView::Mode::TimeSeries, "mode-tseries"}};
     for (const auto& m : modes) {
         QAction* act = toolbar->addAction(tr(m.label));
         act->setCheckable(true);
+        icons_->applyAction(act, m.icon);
         modeGroup->addAction(act);
         const MapView::Mode mode = m.mode;
         connect(act, &QAction::triggered, this, [this, mode]() {
@@ -282,10 +296,32 @@ void MainWindow::buildUi() {
     // button, so offer a way to bring them back. toggleViewAction() is a checkable
     // action auto-labeled with the panel's title.
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
-    viewMenu->addAction(leftDock->toggleViewAction());
-    viewMenu->addAction(bottomDock->toggleViewAction());
+    QAction* dataToggle = leftDock->toggleViewAction();
+    icons_->applyAction(dataToggle, "view-layers");
+    viewMenu->addAction(dataToggle);
+    QAction* timeToggle = bottomDock->toggleViewAction();
+    icons_->applyAction(timeToggle, "axis-time");
+    viewMenu->addAction(timeToggle);
     viewMenu->addSeparator();
     viewMenu->addAction(toolbar->toggleViewAction());
+
+    // Theme: System (follow OS light/dark) / Light / Dark, persisted by ThemeManager.
+    viewMenu->addSeparator();
+    auto* themeMenu = viewMenu->addMenu(tr("&Theme"));
+    auto* themeGroup = new QActionGroup(this);
+    const struct { const char* label; ThemeManager::Mode mode; } themes[] = {
+        {QT_TR_NOOP("&System"), ThemeManager::Mode::System},
+        {QT_TR_NOOP("&Light"), ThemeManager::Mode::Light},
+        {QT_TR_NOOP("&Dark"), ThemeManager::Mode::Dark},
+    };
+    for (const auto& t : themes) {
+        QAction* act = themeMenu->addAction(tr(t.label));
+        act->setCheckable(true);
+        act->setChecked(theme_->mode() == t.mode);
+        themeGroup->addAction(act);
+        const ThemeManager::Mode mode = t.mode;
+        connect(act, &QAction::triggered, this, [this, mode]() { theme_->setMode(mode); });
+    }
 
     probeLabel_ = new QLabel(tr("Ready"), this);
     statusBar()->addWidget(probeLabel_);
@@ -587,10 +623,12 @@ void MainWindow::readWindStacks(readers::IDataset& ds, core::TimePoint time, int
 
 ViewFrame* MainWindow::buildPlotFrame() {
     auto* panel = new ControlPanel(tr("2D Plot"));
-    plotColormapCombo_ = addColormapControls(panel, plot_);
+    plotColormapCombo_ = addColormapControls(panel, plot_, icons_);
 
-    plotContourCheck_ = new QCheckBox(tr("Contours"), panel);
+    plotContourCheck_ = new QCheckBox(panel);
     plotContourCheck_->setToolTip(tr("Overlay contour lines on the 2D plot."));
+    plotContourCheck_->setAccessibleName(tr("Contours"));
+    icons_->applyButton(plotContourCheck_, "render-contours");
     connect(plotContourCheck_, &QCheckBox::toggled, plot_, &PlotView2D::setContoursEnabled);
     panel->addRow(plotContourCheck_);
 
@@ -605,22 +643,33 @@ ViewFrame* MainWindow::buildPlotFrame() {
 
     plotWindCombo_ = new QComboBox(panel);
     plotWindCombo_->addItems({tr("Off"), tr("Barbs")});
+    icons_->applyComboItem(plotWindCombo_, 1, "wind-barb");
     makeShrinkable(plotWindCombo_);
     connect(plotWindCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int m) {
         plot_->setWindMode(m);
         updateWind();
     });
-    panel->addRow(tr("Wind"), plotWindCombo_);
+    panel->addRow(icons_->iconLabel("wind-barb", 20, tr("Wind")), plotWindCombo_);
 
     return new ViewFrame(plot_, panel);
 }
 
 ViewFrame* MainWindow::buildMapFrame() {
     auto* panel = new ControlPanel(tr("Map"));
-    mapColormapCombo_ = addColormapControls(panel, mapView_);
+    mapColormapCombo_ = addColormapControls(panel, mapView_, icons_);
 
     mapBasemapCombo_ = new QComboBox(panel);
-    for (const auto& src : TileLayer::builtinSources()) mapBasemapCombo_->addItem(src.name);
+    // Map each basemap source name to a glyph token where one fits.
+    static const QHash<QString, QString> kBasemapIcons = {
+        {"OpenStreetMap", "base-osm"},     {"Carto Light", "base-light"},
+        {"Carto Dark", "base-dark"},       {"Esri World Imagery", "base-imagery"},
+        {"OpenTopoMap", "base-terrain"},
+    };
+    for (const auto& src : TileLayer::builtinSources()) {
+        mapBasemapCombo_->addItem(src.name);
+        const QString token = kBasemapIcons.value(src.name, QStringLiteral("base-custom"));
+        icons_->applyComboItem(mapBasemapCombo_, mapBasemapCombo_->count() - 1, token);
+    }
     makeShrinkable(mapBasemapCombo_);
     connect(mapBasemapCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int index) {
@@ -629,22 +678,28 @@ ViewFrame* MainWindow::buildMapFrame() {
                 tileLayer_->setSource(sources.at(index));
                 mapView_->refreshSource();
             });
-    panel->addRow(tr("Basemap"), mapBasemapCombo_);
+    panel->addRow(icons_->iconLabel("base-osm", 20, tr("Basemap")), mapBasemapCombo_);
 
     mapOpacitySlider_ = new QSlider(Qt::Horizontal, panel);
     mapOpacitySlider_->setRange(0, 100);
     mapOpacitySlider_->setValue(75);
     connect(mapOpacitySlider_, &QSlider::valueChanged, mapView_,
             [this](int p) { mapView_->setOpacity(p / 100.0); });
-    panel->addRow(tr("Field opacity"), mapOpacitySlider_);
+    panel->addRow(icons_->iconLabel("layer-opacity", 20, tr("Field opacity")), mapOpacitySlider_);
 
-    mapGraticuleCheck_ = new QCheckBox(tr("Graticule"), panel);
+    mapGraticuleCheck_ = new QCheckBox(panel);
     mapGraticuleCheck_->setChecked(true);
+    mapGraticuleCheck_->setToolTip(tr("Graticule"));
+    mapGraticuleCheck_->setAccessibleName(tr("Graticule"));
+    icons_->applyButton(mapGraticuleCheck_, "overlay-graticule");
     connect(mapGraticuleCheck_, &QCheckBox::toggled, mapView_, &MapView::setGraticuleVisible);
     panel->addRow(mapGraticuleCheck_);
 
-    mapCoastlineCheck_ = new QCheckBox(tr("Coastlines"), panel);
+    mapCoastlineCheck_ = new QCheckBox(panel);
     mapCoastlineCheck_->setChecked(true);
+    mapCoastlineCheck_->setToolTip(tr("Coastlines"));
+    mapCoastlineCheck_->setAccessibleName(tr("Coastlines"));
+    icons_->applyButton(mapCoastlineCheck_, "overlay-coast");
     connect(mapCoastlineCheck_, &QCheckBox::toggled, mapView_, &MapView::setCoastlinesVisible);
     panel->addRow(mapCoastlineCheck_);
 
@@ -654,19 +709,21 @@ ViewFrame* MainWindow::buildMapFrame() {
 
     mapWindCombo_ = new QComboBox(panel);
     mapWindCombo_->addItems({tr("Off"), tr("Barbs"), tr("Streamlines")});
+    icons_->applyComboItem(mapWindCombo_, 1, "wind-barb");
+    icons_->applyComboItem(mapWindCombo_, 2, "wind-streamlines");
     makeShrinkable(mapWindCombo_);
     connect(mapWindCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int m) {
         mapView_->setWindMode(m);
         updateWind();
     });
-    panel->addRow(tr("Wind"), mapWindCombo_);
+    panel->addRow(icons_->iconLabel("wind-barb", 20, tr("Wind")), mapWindCombo_);
 
     return new ViewFrame(mapView_, panel);
 }
 
 ViewFrame* MainWindow::wrapCrossSection(CrossSectionView* view) {
     auto* panel = new ControlPanel(tr("Cross-section"));
-    addColormapControls(panel, view);  // colormap + range + legend, wired to the section
+    addColormapControls(panel, view, icons_);  // colormap + range + legend, wired to the section
     return new ViewFrame(view, panel);
 }
 

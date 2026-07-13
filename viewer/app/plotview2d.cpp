@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numbers>
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -149,7 +150,7 @@ QRectF PlotView2D::plotRect() const {
     const double latSpan = bbox_.maxLat - bbox_.minLat;
     if (lonSpan <= 0 || latSpan <= 0) return full;
     const double meanLat = 0.5 * (bbox_.minLat + bbox_.maxLat);
-    const double aspect = (lonSpan * std::cos(meanLat * M_PI / 180.0)) / latSpan;
+    const double aspect = (lonSpan * std::cos(meanLat * std::numbers::pi / 180.0)) / latSpan;
 
     double w = full.width();
     double h = w / aspect;

@@ -35,16 +35,44 @@
         "MET_ENABLE_ASAN": "ON",
         "MET_WERROR": "ON"
       }
+    },
+    {
+      "name": "dist-linux",
+      "displayName": "Distribution (Linux, dynamic Qt)",
+      "description": "Release build with dynamically-linked Qt for redistributable installers (AppImage). Used by CI; triggers a full from-source dep rebuild the first time.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlay-ports"
+      }
+    },
+    {
+      "name": "dist-windows",
+      "displayName": "Distribution (Windows, dynamic Qt)",
+      "description": "Release build with dynamically-linked Qt for the NSIS installer. Requires the MSVC toolchain in the environment (CI provides it).",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlay-ports"
+      }
     }
   ],
   "buildPresets": [
     { "name": "debug", "configurePreset": "debug" },
     { "name": "release", "configurePreset": "release" },
-    { "name": "asan", "configurePreset": "asan" }
+    { "name": "asan", "configurePreset": "asan" },
+    { "name": "dist-linux", "configurePreset": "dist-linux" },
+    { "name": "dist-windows", "configurePreset": "dist-windows" }
   ],
   "testPresets": [
     { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
     { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
-    { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } }
+    { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } },
+    { "name": "dist-linux", "configurePreset": "dist-linux", "output": { "outputOnFailure": true } },
+    { "name": "dist-windows", "configurePreset": "dist-windows", "output": { "outputOnFailure": true } }
   ]
 }

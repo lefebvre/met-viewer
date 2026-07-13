@@ -30,6 +30,8 @@ class MapView;
 class TileLayer;
 class ColorbarWidget;
 class TimeController;
+class ThemeManager;
+class IconThemer;
 class CrossSectionView;
 class ViewFrame;
 
@@ -37,6 +39,10 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+
+    // The app-wide theme controller (light/dark). Exposed so main() can swap the
+    // window icon variant when the effective scheme changes.
+    [[nodiscard]] ThemeManager* theme() const { return theme_; }
 
     // Open a file directly (used by the File menu and by command-line args).
     void openFile(const QString& path);
@@ -209,6 +215,8 @@ private:
     QComboBox* mapWindCombo_ = nullptr;
 
     TimeController* timeController_ = nullptr;
+    ThemeManager* theme_ = nullptr;
+    IconThemer* icons_ = nullptr;
     QLabel* probeLabel_ = nullptr;
     QMenu* recentMenu_ = nullptr;  // File > Open Recent
     QThreadPool* pool_ = nullptr;

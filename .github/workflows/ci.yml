@@ -1,0 +1,131 @@
+name: CI
+
+# Build + test on every push to master and every pull request. Uses the same
+# dynamic-Qt "dist" presets that the release pipeline ships, so CI exercises the
+# exact configuration users receive.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Cache vcpkg-built dependencies (Qt, PROJ, etc.) in the GitHub Actions cache
+  # so Qt is compiled from source once and restored on later runs.
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+jobs:
+  linux:
+    name: Linux (AlmaLinux 9)
+    runs-on: ubuntu-latest
+    # Build inside AlmaLinux 9 so the toolchain/glibc floor (2.34) matches the
+    # supported RHEL/Alma/Rocky 9 + 10 range, and the dnf deps below match the
+    # ones documented in README.md.
+    container: almalinux:9
+    steps:
+      - name: Install system build dependencies
+        run: |
+          set -euxo pipefail
+          dnf install -y dnf-plugins-core epel-release
+          dnf config-manager --set-enabled crb
+          dnf install -y \
+            git cmake ninja-build gcc-c++ make perl zip file which tar \
+            libxcb-devel libX11-devel mesa-libGLU-devel libXrender-devel \
+            libXi-devel libxkbcommon-devel libxkbcommon-x11-devel mesa-libEGL-devel \
+            gperf fontconfig-devel freetype-devel \
+            xcb-util-cursor-devel xcb-util-wm-devel xcb-util-devel \
+            xcb-util-image-devel xcb-util-keysyms-devel xcb-util-renderutil-devel \
+            perl-IPC-Cmd perl-FindBin perl-Text-Template perl-Time-Piece \
+            perl-Unicode-Normalize perl-Test-Harness perl-Module-Loaded \
+            perl-ExtUtils-MakeMaker perl-Sys-Hostname \
+            automake libtool autoconf-archive m4 bison flex \
+            xorg-x11-server-Xvfb mesa-dri-drivers
+          # AlmaLinux 9 ships autoconf 2.69, but some ports (libb2) need >= 2.71.
+          # The autoconf tarball ships a pre-generated configure, so building it
+          # needs only m4/perl/make (no bootstrap autoconf).
+          curl -fsSLO https://ftp.gnu.org/gnu/autoconf/autoconf-2.71.tar.gz
+          tar xf autoconf-2.71.tar.gz
+          (cd autoconf-2.71 && ./configure --prefix=/usr/local >/dev/null \
+             && make -j"$(nproc)" >/dev/null && make install >/dev/null)
+          hash -r
+          autoconf --version | head -1
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Trust workspace (git runs as root in the container)
+        run: git config --global --add safe.directory '*'
+
+      - name: Enable vcpkg GitHub Actions binary cache
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Configure
+        run: cmake --preset dist-linux
+
+      - name: Dump vcpkg logs on failure
+        if: failure()
+        run: |
+          echo "===== vcpkg-manifest-install.log (names the failed port) ====="
+          cat build/dist-linux/vcpkg-manifest-install.log 2>/dev/null || echo "(not found)"
+          echo "===== port build stdout/stderr (the real error) ====="
+          # Skip config-*.log: its arch-probe failures (arm_acle.h etc.) are expected noise.
+          for f in $(find vcpkg/buildtrees -maxdepth 2 \
+                       \( -name 'install-*-out.log' -o -name 'install-*-err.log' \
+                          -o -name 'build-*-out.log' -o -name 'build-*-err.log' \) 2>/dev/null); do
+            echo "----- $f -----"; tail -n 60 "$f"; done
+
+      - name: Build
+        run: cmake --build --preset dist-linux
+
+      - name: Test
+        run: ctest --preset dist-linux
+
+      - name: Headless smoke test (software GL)
+        run: |
+          set -euxo pipefail
+          Xvfb :99 -screen 0 1280x800x24 &
+          export DISPLAY=:99 QT_QPA_PLATFORM=xcb LIBGL_ALWAYS_SOFTWARE=1
+          sleep 2
+          ./build/dist-linux/viewer/app/met_viewer --grab /tmp/smoke.png
+          test -s /tmp/smoke.png
+
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Put MSVC (cl/link) on PATH so the Ninja-based preset can find the
+      # compiler without a Visual Studio developer shell.
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Enable vcpkg GitHub Actions binary cache
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Configure
+        run: cmake --preset dist-windows
+
+      - name: Build
+        run: cmake --build --preset dist-windows
+      # The build compiles the test targets too, so MSVC-specific errors in test
+      # code are still caught here. Executing the suite is left to the Linux job:
+      # the logic is platform-identical, and running the Qt test exes on Windows
+      # needs runtime Qt/plugin deployment that isn't worth maintaining in CI.
+      # Windows CI's job is to prove the code builds on MSVC and packages.

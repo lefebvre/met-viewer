@@ -5,6 +5,14 @@
 
 namespace met::core {
 
+// Register an additional directory to search for PROJ's data files (proj.db).
+// Used only when neither PROJ_DATA nor PROJ_LIB is set in the environment, and
+// it takes precedence over the compile-time MET_PROJ_DATA fallback. Intended to
+// be called once at startup with a path resolved relative to the executable, so
+// installed/bundled builds (AppImage, Windows installer) locate proj.db without
+// depending on the build-machine layout. Safe to call before any Crs is used.
+void setProjDataPath(std::string path);
+
 // Transforms between geographic coordinates (lon/lat in degrees, EPSG:4326) and
 // a projected coordinate system given by a proj4/PROJ string (e.g. a Lambert
 // conformal conic). Holds only the projection string by value; the underlying

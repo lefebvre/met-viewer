@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(met-viewer LANGUAGES CXX)
+project(met-viewer VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
@@ -24,3 +24,6 @@ if(MET_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# Install rules + CPack config (installers). Included last so all targets exist.
+include(cmake/Packaging.cmake)

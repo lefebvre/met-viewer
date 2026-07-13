@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Met Viewer
+GenericName=Meteorological Data Viewer
+Comment=View and analyze gridded meteorological data (GRIB, NetCDF, ARL)
+Exec=met_viewer %F
+Icon=met-viewer
+Terminal=false
+Categories=Science;Education;Geoscience;
+Keywords=meteorology;weather;GRIB;NetCDF;ARL;forecast;
+StartupWMClass=met-viewer

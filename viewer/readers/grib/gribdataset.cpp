@@ -27,6 +27,17 @@ using core::RegularLatLonGrid;
 using core::TimePoint;
 using core::VerticalLevel;
 
+// Portable 64-bit file seek. fseeko/off_t are POSIX; MSVC provides _fseeki64
+// instead. Both reach GRIB messages past 2 GB in a large file, which plain
+// fseek cannot on platforms where `long` is 32-bit (e.g. Windows).
+inline int seek64(std::FILE* f, long long offset, int origin) {
+#if defined(_WIN32)
+    return _fseeki64(f, offset, origin);
+#else
+    return ::fseeko(f, static_cast<off_t>(offset), origin);
+#endif
+}
+
 // RAII for a codes_handle.
 struct HandleGuard {
     codes_handle* h = nullptr;
@@ -267,9 +278,8 @@ Field2D GribDataset::readField(const FieldKey& key) {
     FileGuard fg;
     fg.f = std::fopen(path_.string().c_str(), "rb");
     if (!fg.f) throw ReadError("GRIB: cannot reopen " + path_.string());
-    // fseeko + 64-bit off_t so GRIB messages past 2 GB in a large file are
-    // reachable (plain fseek is limited to `long` offsets on some platforms).
-    if (::fseeko(fg.f, static_cast<off_t>(*handle), SEEK_SET) != 0)
+    // 64-bit seek so GRIB messages past 2 GB in a large file are reachable.
+    if (seek64(fg.f, static_cast<long long>(*handle), SEEK_SET) != 0)
         throw ReadError("GRIB: seek failed");
 
     int err = 0;

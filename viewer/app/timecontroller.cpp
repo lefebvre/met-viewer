@@ -8,6 +8,9 @@
 #include <QTimer>
 #include <QToolButton>
 
+#include "viewer/app/icons.h"
+#include "viewer/app/theme.h"
+
 namespace met::app {
 
 TimeController::TimeController(QWidget* parent) : QWidget(parent) {
@@ -43,6 +46,30 @@ TimeController::TimeController(QWidget* parent) : QWidget(parent) {
     connect(play_, &QToolButton::clicked, this, &TimeController::togglePlay);
 }
 
+void TimeController::setIcons(IconThemer* icons) {
+    icons_ = icons;
+    // Swap the unicode glyphs for themed icons; keep accessible text for
+    // tooltips / accessibility / tests.
+    for (auto* b : {prev_, play_, next_}) b->setText(QString());
+    prev_->setToolTip(tr("Previous step"));
+    prev_->setAccessibleName(tr("Previous step"));
+    next_->setToolTip(tr("Next step"));
+    next_->setAccessibleName(tr("Next step"));
+    play_->setToolTip(tr("Play / pause"));
+    play_->setAccessibleName(tr("Play/pause"));
+    icons_->applyButton(prev_, "anim-prev");
+    icons_->applyButton(next_, "anim-next");
+    updatePlayIcon();
+    // The play button's glyph depends on state, so refresh it on theme change
+    // ourselves rather than registering a fixed token.
+    connect(icons_->theme(), &ThemeManager::effectiveSchemeChanged, this,
+            [this](bool) { updatePlayIcon(); });
+}
+
+void TimeController::updatePlayIcon() {
+    if (icons_) play_->setIcon(icons_->iconFor(isPlaying() ? "anim-pause" : "anim-play"));
+}
+
 void TimeController::setFps(int fps) {
     fps_ = std::clamp(fps, 1, 60);
     if (timer_->isActive()) timer_->start(1000 / fps_);
@@ -53,11 +80,11 @@ bool TimeController::isPlaying() const { return timer_->isActive(); }
 void TimeController::setPlaying(bool playing) {
     if (playing && slider_->maximum() > 0) {
         timer_->start(1000 / fps_);
-        play_->setText("⏸");
     } else {
         timer_->stop();
-        play_->setText("▶");
     }
+    if (icons_) updatePlayIcon();
+    else play_->setText(isPlaying() ? "⏸" : "▶");  // glyph fallback without icons
 }
 
 void TimeController::togglePlay() { setPlaying(!timer_->isActive()); }

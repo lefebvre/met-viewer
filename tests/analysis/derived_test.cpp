@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <numbers>
 
 #include "viewer/analysis/derived.h"
 #include "viewer/analysis/wind.h"
@@ -141,7 +142,7 @@ TEST(Derived, SphericalMetricTermOnLatLonGrid) {
     w.v.values.assign(25, 0.0f);
 
     const double R = 6371229.0;
-    const double phi = 45.0 * M_PI / 180.0;
+    const double phi = 45.0 * std::numbers::pi / 180.0;
     const auto vo = analysis::relativeVorticityField(w);
     const auto dv = analysis::divergenceField(w);
     EXPECT_NEAR(vo.values[2 * 5 + 2], 10.0 * std::tan(phi) / R, 1e-12);  // interior at lat 45

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 
 #include "viewer/core/geo.h"
 
@@ -29,8 +30,8 @@ constexpr double kMaxLat = 85.05112877980659;
     return (lon + 180.0) / 360.0 * worldSize(zoom);
 }
 [[nodiscard]] inline double latToWorldY(double lat, int zoom) {
-    const double s = std::sin(clampLat(lat) * M_PI / 180.0);
-    const double y = 0.5 - std::log((1.0 + s) / (1.0 - s)) / (4.0 * M_PI);
+    const double s = std::sin(clampLat(lat) * std::numbers::pi / 180.0);
+    const double y = 0.5 - std::log((1.0 + s) / (1.0 - s)) / (4.0 * std::numbers::pi);
     return y * worldSize(zoom);
 }
 
@@ -39,8 +40,8 @@ constexpr double kMaxLat = 85.05112877980659;
     return x / worldSize(zoom) * 360.0 - 180.0;
 }
 [[nodiscard]] inline double worldYToLat(double y, int zoom) {
-    const double n = M_PI * (1.0 - 2.0 * y / worldSize(zoom));
-    return std::atan(std::sinh(n)) * 180.0 / M_PI;
+    const double n = std::numbers::pi * (1.0 - 2.0 * y / worldSize(zoom));
+    return std::atan(std::sinh(n)) * 180.0 / std::numbers::pi;
 }
 
 [[nodiscard]] inline core::LatLon worldToLonLat(double x, double y, int zoom) {

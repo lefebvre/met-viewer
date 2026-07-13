@@ -3,12 +3,17 @@
 
 #include <QApplication>
 #include <QCommandLineParser>
+#include <QDir>
+#include <QFileInfo>
+#include <QIcon>
 #include <QString>
 #include <QStringList>
 #include <QSurfaceFormat>
 #include <QtGlobal>
 
 #include "viewer/app/mainwindow.h"
+#include "viewer/app/theme.h"
+#include "viewer/core/crs.h"
 
 namespace {
 
@@ -36,6 +41,41 @@ void filterQtWarnings(QtMsgType type, const QMessageLogContext& ctx, const QStri
     if (type == QtFatalMsg) std::abort();
 }
 
+// Point PROJ at bundled data in installed/portable builds. The compile-time
+// MET_PROJ_DATA fallback covers the dev build tree, but that absolute path does
+// not exist on an end user's machine, so probe a few executable-relative layouts
+// (installed prefix, AppImage AppDir, Windows install root) for proj.db and, if
+// found, register it. If nothing matches we leave the compile-time fallback in
+// place. Must run after QApplication so applicationDirPath() is valid.
+void locateBundledProjData() {
+    const QString exeDir = QCoreApplication::applicationDirPath();
+    const QStringList candidates = {
+        exeDir + QStringLiteral("/../share/proj"),  // GNUInstallDirs / AppImage usr/bin
+        exeDir + QStringLiteral("/share/proj"),      // flat install with a share/ subdir
+        exeDir + QStringLiteral("/proj"),            // proj data staged next to the exe
+    };
+    for (const QString& c : candidates) {
+        if (QFileInfo::exists(c + QStringLiteral("/proj.db"))) {
+            met::core::setProjDataPath(QDir(c).absolutePath().toStdString());
+            return;
+        }
+    }
+}
+
+// Build the application/window icon from the embedded PNG set. Adding every
+// size lets Qt pick the sharpest source per surface (window frame, taskbar,
+// Alt-Tab) and device-pixel-ratio instead of scaling a single bitmap. The light
+// variant (line art on transparency) is used in the app's dark theme for
+// contrast on dark title bars.
+QIcon appWindowIcon(bool useLight) {
+    const QString suffix = useLight ? QStringLiteral("-light") : QString();
+    QIcon icon;
+    for (int px : {16, 24, 32, 48, 64, 128, 256}) {
+        icon.addFile(QStringLiteral(":/icons/app/met-viewer_%1%2.png").arg(px).arg(suffix));
+    }
+    return icon;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -58,8 +98,22 @@ int main(int argc, char** argv) {
     QApplication::setApplicationVersion("0.1.0");
     QApplication::setOrganizationName("met-viewer");
     QApplication::setOrganizationDomain("met-viewer.local");
+    QApplication::setWindowIcon(appWindowIcon(false));
+    // Ties the window to met-viewer.desktop so Wayland/GNOME (and other DEs that
+    // match by app-id rather than _NET_WM_ICON) show the app icon in the dock and
+    // task switcher. Requires met-viewer.desktop + the themed icon to be
+    // installed (the package/AppImage does this).
+    QApplication::setDesktopFileName(QStringLiteral("met-viewer"));
+
+    // Resolve PROJ data relative to the executable for installed/bundled builds.
+    locateBundledProjData();
 
     met::app::MainWindow window;
+    // Swap the window-icon variant with the app theme (light art on dark title
+    // bars). Set it now for the resolved startup theme, then track changes.
+    QApplication::setWindowIcon(appWindowIcon(window.theme()->isDark()));
+    QObject::connect(window.theme(), &met::app::ThemeManager::effectiveSchemeChanged, &app,
+                     [](bool dark) { QApplication::setWindowIcon(appWindowIcon(dark)); });
     window.show();
 
     QCommandLineParser parser;

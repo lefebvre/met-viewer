@@ -6,7 +6,13 @@
     {
       "name": "qtbase",
       "default-features": false,
-      "features": ["widgets", "gui", "network", "opengl", "egl", "png", "jpeg", "concurrent", "openssl", "xcb", "freetype", "fontconfig", "harfbuzz"]
+      "features": ["widgets", "gui", "network", "opengl", "png", "jpeg", "concurrent", "openssl", "freetype", "harfbuzz"]
+    },
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "platform": "linux",
+      "features": ["egl", "xcb", "fontconfig"]
     },
     "eccodes",
     "netcdf-c",
