@@ -27,6 +27,10 @@ struct Sounding {
 // Dewpoint (K) from temperature (K) and relative humidity (%), Magnus formula.
 [[nodiscard]] float dewpointFromRH(float tempK, float rhPercent);
 
+// Dewpoint (K) from specific humidity (kg/kg) and pressure (hPa). Used for native
+// model-level data (e.g. HRRR wrfnat) that carries `q` rather than `r`.
+[[nodiscard]] float dewpointFromSpecificHumidity(float qKgKg, double pressureHpa, float tempK);
+
 // Extract a sounding at `point`. tStack pairs pressure with a temperature field;
 // rhStack (optional, may be empty) pairs pressure with a relative-humidity field
 // used to derive dewpoint. uStack/vStack (optional) pair pressure with the wind
@@ -35,6 +39,19 @@ struct Sounding {
 [[nodiscard]] Sounding extractSounding(
     const std::vector<std::pair<double, core::Field2D>>& tStack,
     const std::vector<std::pair<double, core::Field2D>>& rhStack, core::LatLon point,
+    const std::vector<std::pair<double, core::Field2D>>& uStack = {},
+    const std::vector<std::pair<double, core::Field2D>>& vStack = {});
+
+// Extract a sounding at `point` from native model-level (hybrid/sigma) data. Each
+// stack is keyed by the model-level index (not pressure); the true pressure at the
+// point is read from `presStack` (the `pres` field on the same levels). Temperature
+// comes from `tStack`; dewpoint from `qStack` (specific humidity) when present.
+// uStack/vStack (optional) fill the earth-relative wind. Levels are returned sorted
+// top (low p) to bottom (high p).
+[[nodiscard]] Sounding extractSoundingModelLevels(
+    const std::vector<std::pair<double, core::Field2D>>& tStack,
+    const std::vector<std::pair<double, core::Field2D>>& presStack,
+    const std::vector<std::pair<double, core::Field2D>>& qStack, core::LatLon point,
     const std::vector<std::pair<double, core::Field2D>>& uStack = {},
     const std::vector<std::pair<double, core::Field2D>>& vStack = {});
 

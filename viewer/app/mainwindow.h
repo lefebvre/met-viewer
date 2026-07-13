@@ -22,6 +22,11 @@ class QMenu;
 class QSlider;
 class QThreadPool;
 
+namespace met::analysis {
+struct Sounding;
+struct CrossSection;
+}  // namespace met::analysis
+
 namespace met::app {
 
 class DatasetDock;
@@ -151,14 +156,29 @@ private:
     // mutable window state; readField is serialized inside the reader.
     static std::vector<std::pair<double, core::Field2D>> readLevelStack(
         readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member);
+    // Read all native model levels (hybrid/sigma) of `varName` at `time`, keyed by
+    // the model-level index (not pressure); pair with the `pres` field to place them.
+    static std::vector<std::pair<double, core::Field2D>> readModelLevelStack(
+        readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member);
     // Read all times of `varName` at `level` (time, field).
     static std::vector<std::pair<core::TimePoint, core::Field2D>> readTimeStack(
         readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member);
-    // Read the U/V wind pressure-level stacks at `time` into uStack/vStack (both left
-    // empty when the dataset has no recognizable wind pair).
+    // Read the U/V wind stacks at `time` into uStack/vStack (both left empty when the
+    // dataset has no recognizable wind pair). `modelLevels` reads native model levels
+    // instead of pressure levels.
     static void readWindStacks(readers::IDataset& ds, core::TimePoint time, int member,
                                std::vector<std::pair<double, core::Field2D>>& uStack,
-                               std::vector<std::pair<double, core::Field2D>>& vStack);
+                               std::vector<std::pair<double, core::Field2D>>& vStack,
+                               bool modelLevels = false);
+    // Extract a sounding / cross-section, choosing the pressure-level path when the
+    // variable has isobaric levels, else the native model-level path (via `pres`).
+    static analysis::Sounding computeSounding(readers::IDataset& ds, core::TimePoint time,
+                                              int member, core::LatLon point);
+    static analysis::CrossSection computeCrossSection(readers::IDataset& ds,
+                                                      const std::string& var, core::TimePoint time,
+                                                      int member,
+                                                      const std::vector<core::LatLon>& path,
+                                                      int nSamples);
 
     std::shared_ptr<readers::IDataset> dataset_;
     QString currentUnits_;
@@ -208,8 +228,10 @@ private:
     QCheckBox* plotContourCheck_ = nullptr;
     QComboBox* mapBasemapCombo_ = nullptr;
     QSlider* mapOpacitySlider_ = nullptr;
+    QCheckBox* mapViewRangeCheck_ = nullptr;
     QCheckBox* mapGraticuleCheck_ = nullptr;
     QCheckBox* mapCoastlineCheck_ = nullptr;
+    QCheckBox* mapContourCheck_ = nullptr;
     QCheckBox* mapGpuCheck_ = nullptr;
     QComboBox* plotWindCombo_ = nullptr;
     QComboBox* mapWindCombo_ = nullptr;

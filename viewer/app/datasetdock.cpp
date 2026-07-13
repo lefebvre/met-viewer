@@ -1,5 +1,6 @@
 #include "viewer/app/datasetdock.h"
 
+#include <QLineEdit>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -17,14 +18,20 @@ constexpr int kRoleIsLeaf = Qt::UserRole + 6;
 }  // namespace
 
 DatasetDock::DatasetDock(QWidget* parent) : QWidget(parent) {
+    filter_ = new QLineEdit(this);
+    filter_->setPlaceholderText(tr("Filter…"));
+    filter_->setClearButtonEnabled(true);
+
     tree_ = new QTreeWidget(this);
     tree_->setHeaderLabels({tr("Variable / Level")});
     tree_->setColumnCount(1);
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
+    layout->addWidget(filter_);
     layout->addWidget(tree_);
 
+    connect(filter_, &QLineEdit::textChanged, this, &DatasetDock::filterTree);
     connect(tree_, &QTreeWidget::itemActivated, this, &DatasetDock::onItemActivated);
     connect(tree_, &QTreeWidget::itemClicked, this, &DatasetDock::onItemActivated);
 }
@@ -58,7 +65,37 @@ void DatasetDock::setCatalog(const core::DatasetCatalog& catalog) {
             lvlItem->setData(0, kRoleMember, member);
         }
     }
-    tree_->expandAll();
+    // Load collapsed: top-level variables visible, their levels hidden until the
+    // user expands a variable (or a filter match auto-expands it).
+    tree_->collapseAll();
+    filterTree(filter_->text());
+}
+
+void DatasetDock::filterTree(const QString& text) {
+    const QString needle = text.trimmed();
+    for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* varItem = tree_->topLevelItem(i);
+        if (needle.isEmpty()) {
+            varItem->setHidden(false);
+            for (int j = 0; j < varItem->childCount(); ++j) varItem->child(j)->setHidden(false);
+            varItem->setExpanded(false);  // restore collapsed default
+            continue;
+        }
+        const bool varMatches =
+            varItem->text(0).contains(needle, Qt::CaseInsensitive);
+        bool anyLeafMatch = false;
+        for (int j = 0; j < varItem->childCount(); ++j) {
+            QTreeWidgetItem* leaf = varItem->child(j);
+            const bool leafMatch =
+                varMatches || leaf->text(0).contains(needle, Qt::CaseInsensitive) ||
+                leaf->data(0, kRoleVar).toString().contains(needle, Qt::CaseInsensitive);
+            leaf->setHidden(!leafMatch);
+            anyLeafMatch = anyLeafMatch || leafMatch;
+        }
+        const bool visible = varMatches || anyLeafMatch;
+        varItem->setHidden(!visible);
+        varItem->setExpanded(visible);  // reveal matching levels
+    }
 }
 
 void DatasetDock::selectField(const QString& varName, const core::VerticalLevel& level) {

@@ -1,5 +1,7 @@
 #include "viewer/app/colorbarwidget.h"
 
+#include <algorithm>
+
 #include <QFontMetrics>
 #include <QPainter>
 
@@ -28,11 +30,14 @@ void ColorbarWidget::paintEvent(QPaintEvent* /*event*/) {
     if (!cmap_) return;
 
     const int margin = 8;
-    const int labelW = 46;
+    const int labelW = 64;
     const int barW = 20;
     const int barX = margin;
     const int barTop = margin;
-    const int barH = height() - 2 * margin;
+    // Reserve a row at the bottom for the units label so it isn't clipped by the
+    // widget edge (the gradient bar stops short of the units line).
+    const int unitsH = units_.isEmpty() ? 0 : 18;
+    const int barH = height() - 2 * margin - unitsH;
     if (barH <= 0) return;
 
     // Gradient (top = max, bottom = min).
@@ -60,7 +65,8 @@ void ColorbarWidget::paintEvent(QPaintEvent* /*event*/) {
     label(0.0, lo);
 
     if (!units_.isEmpty()) {
-        p.drawText(QRect(barX, barTop + barH + 2, labelW + barW, 16),
+        const int unitsW = std::max(labelW + barW, width() - 2 * margin);
+        p.drawText(QRect(barX, height() - margin - unitsH, unitsW, unitsH),
                    Qt::AlignLeft | Qt::AlignVCenter, units_);
     }
 }

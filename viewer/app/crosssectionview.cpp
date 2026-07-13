@@ -10,21 +10,52 @@ namespace met::app {
 namespace {
 constexpr int kML = 56, kMR = 16, kMT = 12, kMB = 34;
 
-// Interpolate a value column at fractional sample index and level (in log-p).
-float sampleSection(const analysis::CrossSection& cs, double sampleF, double levelF) {
+// Value at integer column `s` and pressure `press` (hPa), interpolating in log-p
+// along that column's own (terrain-following) pressure profile. NaN if no
+// bracketing level in that column is finite.
+float valueAtColumn(const analysis::CrossSection& cs, int s, double press) {
     const int nl = static_cast<int>(cs.pressures.size());
+    const double logP = std::log(press);
+    for (int l = 0; l + 1 < nl; ++l) {
+        const double pa = cs.pressures[static_cast<std::size_t>(l)][static_cast<std::size_t>(s)];
+        const double pb = cs.pressures[static_cast<std::size_t>(l + 1)][static_cast<std::size_t>(s)];
+        if (std::isnan(pa) || std::isnan(pb) || pa <= 0.0 || pb <= 0.0) continue;
+        const double lo = std::min(pa, pb), hi = std::max(pa, pb);
+        if (press >= lo && press <= hi) {
+            const double denom = std::log(pb) - std::log(pa);
+            const double f = denom != 0.0 ? (logP - std::log(pa)) / denom : 0.0;
+            const float va = cs.values[static_cast<std::size_t>(l)][static_cast<std::size_t>(s)];
+            const float vb = cs.values[static_cast<std::size_t>(l + 1)][static_cast<std::size_t>(s)];
+            if (std::isnan(va) || std::isnan(vb)) return std::isnan(va) ? vb : va;
+            return static_cast<float>(va * (1 - f) + vb * f);
+        }
+    }
+    return std::numeric_limits<float>::quiet_NaN();  // outside this column's range
+}
+
+// Bilinear-ish sample at fractional column `sampleF` and pressure `press` (hPa).
+float sampleSection(const analysis::CrossSection& cs, double sampleF, double press) {
     const int ns = static_cast<int>(cs.distancesKm.size());
-    if (nl == 0 || ns == 0) return std::numeric_limits<float>::quiet_NaN();
+    if (cs.pressures.empty() || ns == 0) return std::numeric_limits<float>::quiet_NaN();
     const int s0 = std::clamp(static_cast<int>(std::floor(sampleF)), 0, ns - 1);
     const int s1 = std::min(s0 + 1, ns - 1);
-    const int l0 = std::clamp(static_cast<int>(std::floor(levelF)), 0, nl - 1);
-    const int l1 = std::min(l0 + 1, nl - 1);
-    const double fs = sampleF - s0, fl = levelF - l0;
-    auto v = [&](int l, int s) { return cs.values[static_cast<std::size_t>(l)][static_cast<std::size_t>(s)]; };
-    const float a = v(l0, s0), b = v(l0, s1), c = v(l1, s0), d = v(l1, s1);
-    if (std::isnan(a) || std::isnan(b) || std::isnan(c) || std::isnan(d))
-        return v(l0, s0);
-    return static_cast<float>((a * (1 - fs) + b * fs) * (1 - fl) + (c * (1 - fs) + d * fs) * fl);
+    const double fs = sampleF - s0;
+    const float a = valueAtColumn(cs, s0, press), b = valueAtColumn(cs, s1, press);
+    if (std::isnan(a)) return b;
+    if (std::isnan(b)) return a;
+    return static_cast<float>(a * (1 - fs) + b * fs);
+}
+
+// Global finite pressure extent across all columns/levels.
+void pressureExtent(const analysis::CrossSection& cs, double& pTop, double& pBot) {
+    pTop = std::numeric_limits<double>::infinity();
+    pBot = -std::numeric_limits<double>::infinity();
+    for (const auto& row : cs.pressures)
+        for (double p : row)
+            if (std::isfinite(p) && p > 0.0) {
+                pTop = std::min(pTop, p);
+                pBot = std::max(pBot, p);
+            }
 }
 }  // namespace
 
@@ -84,36 +115,25 @@ void CrossSectionView::paintEvent(QPaintEvent*) {
 
     const QRectF r(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
     const int ns = static_cast<int>(cs_.distancesKm.size());
-    const int nl = static_cast<int>(cs_.pressures.size());
-    const double pTop = *std::min_element(cs_.pressures.begin(), cs_.pressures.end());
-    const double pBot = *std::max_element(cs_.pressures.begin(), cs_.pressures.end());
+    double pTop = 0, pBot = 0;
+    pressureExtent(cs_, pTop, pBot);
+    if (!(pTop > 0.0) || !(pBot > pTop)) {
+        p.setPen(palette().color(QPalette::PlaceholderText));
+        p.drawText(rect(), Qt::AlignCenter, tr("Cross-section has no valid pressure data"));
+        return;
+    }
     const double logTop = std::log(pTop), logBot = std::log(pBot);
 
-    // Map a pressure to a fractional level index by searching the (sorted top->
-    // bottom) pressures array in log space.
-    auto levelIndexForPressure = [&](double press) {
-        for (int l = 0; l + 1 < nl; ++l) {
-            const double a = cs_.pressures[static_cast<std::size_t>(l)];
-            const double b = cs_.pressures[static_cast<std::size_t>(l + 1)];
-            const double lo = std::min(a, b), hi = std::max(a, b);
-            if (press >= lo && press <= hi) {
-                const double f = (std::log(press) - std::log(a)) / (std::log(b) - std::log(a));
-                return l + f;
-            }
-        }
-        return press <= pTop ? 0.0 : double(nl - 1);
-    };
-
-    // Colored field.
+    // Colored field: for each screen row map to a pressure, sample each column at
+    // that pressure through its own (terrain-following) profile.
     const double totalKm = cs_.distancesKm.back();
     QImage img(static_cast<int>(r.width()), static_cast<int>(r.height()), QImage::Format_ARGB32);
     for (int py = 0; py < img.height(); ++py) {
         const double press = std::exp(logTop + (double(py) / (img.height() - 1)) * (logBot - logTop));
-        const double levelF = levelIndexForPressure(press);
         auto* scan = reinterpret_cast<QRgb*>(img.scanLine(py));
         for (int px = 0; px < img.width(); ++px) {
             const double sampleF = (double(px) / (img.width() - 1)) * (ns - 1);
-            const float val = sampleSection(cs_, sampleF, levelF);
+            const float val = sampleSection(cs_, sampleF, press);
             const render::Rgba c = cmap_.map(val);
             scan[px] = qRgba(c.r, c.g, c.b, c.a);
         }
@@ -122,8 +142,12 @@ void CrossSectionView::paintEvent(QPaintEvent*) {
     p.setPen(palette().color(QPalette::Text));
     p.drawRect(r);
 
-    // Pressure axis (log).
-    for (double press : cs_.pressures) {
+    // Pressure axis (log): label "nice" standard levels that fall in range, since
+    // per-column pressures no longer map to a single tick per level.
+    static const double kStdLevels[] = {1000, 925, 850, 700, 500, 400, 300, 250,
+                                        200,  150, 100, 70,  50,  30,  20,  10};
+    for (double press : kStdLevels) {
+        if (press < pTop || press > pBot) continue;
         const double f = (std::log(press) - logTop) / (logBot - logTop);
         const double y = r.top() + f * r.height();
         p.drawLine(QPointF(r.left() - 4, y), QPointF(r.left(), y));

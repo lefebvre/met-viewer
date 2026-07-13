@@ -65,7 +65,7 @@ ViewFrame::ViewFrame(QWidget* canvas, ControlPanel* panel, QWidget* parent)
 
     splitter->setStretchFactor(0, 1);  // canvas grows
     splitter->setStretchFactor(1, 0);  // panel keeps its width
-    splitter->setSizes({640, 240});
+    splitter->setSizes({600, 300});
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

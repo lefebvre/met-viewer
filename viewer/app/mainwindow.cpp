@@ -594,6 +594,23 @@ std::vector<std::pair<double, core::Field2D>> MainWindow::readLevelStack(
     return stack;
 }
 
+std::vector<std::pair<double, core::Field2D>> MainWindow::readModelLevelStack(
+    readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member) {
+    std::vector<std::pair<double, core::Field2D>> stack;
+    const auto* entry = ds.catalog().find(varName);
+    if (!entry) return stack;
+    for (const auto& lvl : entry->levels) {
+        if (lvl.type != core::VerticalLevel::Type::Hybrid &&
+            lvl.type != core::VerticalLevel::Type::Sigma)
+            continue;
+        try {
+            stack.emplace_back(lvl.value, ds.readField(core::FieldKey{varName, lvl, time, member}));
+        } catch (const std::exception&) {
+        }
+    }
+    return stack;
+}
+
 std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack(
     readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member) {
     std::vector<std::pair<core::TimePoint, core::Field2D>> stack;
@@ -610,15 +627,53 @@ std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack
 
 void MainWindow::readWindStacks(readers::IDataset& ds, core::TimePoint time, int member,
                                 std::vector<std::pair<double, core::Field2D>>& uStack,
-                                std::vector<std::pair<double, core::Field2D>>& vStack) {
+                                std::vector<std::pair<double, core::Field2D>>& vStack,
+                                bool modelLevels) {
     uStack.clear();
     vStack.clear();
     std::vector<std::string> names;
     for (const auto& v : ds.catalog().variables()) names.push_back(v.varName);
     const auto pair = analysis::findWindPair(names);
     if (!pair) return;  // no U/V pair -> no wind profile
-    uStack = readLevelStack(ds, pair->uName, time, member);
-    vStack = readLevelStack(ds, pair->vName, time, member);
+    uStack = modelLevels ? readModelLevelStack(ds, pair->uName, time, member)
+                         : readLevelStack(ds, pair->uName, time, member);
+    vStack = modelLevels ? readModelLevelStack(ds, pair->vName, time, member)
+                         : readLevelStack(ds, pair->vName, time, member);
+}
+
+analysis::Sounding MainWindow::computeSounding(readers::IDataset& ds, core::TimePoint time,
+                                               int member, core::LatLon point) {
+    // Isobaric path: temperature required; relative humidity (dewpoint) and U/V
+    // (wind profile) optional.
+    const auto tStack = readLevelStack(ds, "t", time, member);
+    if (tStack.size() >= 2) {
+        const auto rhStack = readLevelStack(ds, "r", time, member);
+        std::vector<std::pair<double, core::Field2D>> uStack, vStack;
+        readWindStacks(ds, time, member, uStack, vStack);
+        return analysis::extractSounding(tStack, rhStack, point, uStack, vStack);
+    }
+    // Native model-level path: pressure comes from the `pres` field, dewpoint from
+    // specific humidity `q`.
+    const auto tModel = readModelLevelStack(ds, "t", time, member);
+    const auto presStack = readModelLevelStack(ds, "pres", time, member);
+    if (tModel.size() < 2 || presStack.size() < 2) return analysis::Sounding{};
+    const auto qStack = readModelLevelStack(ds, "q", time, member);
+    std::vector<std::pair<double, core::Field2D>> uStack, vStack;
+    readWindStacks(ds, time, member, uStack, vStack, /*modelLevels=*/true);
+    return analysis::extractSoundingModelLevels(tModel, presStack, qStack, point, uStack, vStack);
+}
+
+analysis::CrossSection MainWindow::computeCrossSection(readers::IDataset& ds, const std::string& var,
+                                                       core::TimePoint time, int member,
+                                                       const std::vector<core::LatLon>& path,
+                                                       int nSamples) {
+    const auto pres = readLevelStack(ds, var, time, member);
+    if (pres.size() >= 2) return analysis::extractCrossSection(pres, path, nSamples);
+    // Native model-level path with a terrain-following pressure axis.
+    const auto model = readModelLevelStack(ds, var, time, member);
+    const auto presStack = readModelLevelStack(ds, "pres", time, member);
+    if (model.size() < 2 || presStack.size() < 2) return analysis::CrossSection{};
+    return analysis::extractCrossSectionModelLevels(model, presStack, path, nSamples);
 }
 
 ViewFrame* MainWindow::buildPlotFrame() {
@@ -657,6 +712,12 @@ ViewFrame* MainWindow::buildPlotFrame() {
 ViewFrame* MainWindow::buildMapFrame() {
     auto* panel = new ControlPanel(tr("Map"));
     mapColormapCombo_ = addColormapControls(panel, mapView_, icons_);
+
+    mapViewRangeCheck_ = new QCheckBox(tr("Range to view"), panel);
+    mapViewRangeCheck_->setToolTip(
+        tr("When auto-ranging, rescale the color range to the data currently visible in the map."));
+    connect(mapViewRangeCheck_, &QCheckBox::toggled, mapView_, &MapView::setViewRange);
+    panel->addRow(mapViewRangeCheck_);
 
     mapBasemapCombo_ = new QComboBox(panel);
     // Map each basemap source name to a glyph token where one fits.
@@ -703,6 +764,22 @@ ViewFrame* MainWindow::buildMapFrame() {
     connect(mapCoastlineCheck_, &QCheckBox::toggled, mapView_, &MapView::setCoastlinesVisible);
     panel->addRow(mapCoastlineCheck_);
 
+    mapContourCheck_ = new QCheckBox(panel);
+    mapContourCheck_->setToolTip(tr("Overlay contour lines on the map."));
+    mapContourCheck_->setAccessibleName(tr("Contours"));
+    icons_->applyButton(mapContourCheck_, "render-contours");
+    connect(mapContourCheck_, &QCheckBox::toggled, mapView_, &MapView::setContoursEnabled);
+    panel->addRow(mapContourCheck_);
+
+    auto* mapInterval = new QDoubleSpinBox(panel);
+    mapInterval->setRange(0.0, 1e6);
+    mapInterval->setDecimals(3);
+    mapInterval->setSpecialValueText(tr("auto"));
+    mapInterval->setToolTip(tr("Spacing between contour lines (field units); \"auto\" picks a round value."));
+    connect(mapInterval, qOverload<double>(&QDoubleSpinBox::valueChanged), mapView_,
+            &MapView::setContourInterval);
+    panel->addRow(tr("Contour interval"), mapInterval);
+
     mapGpuCheck_ = new QCheckBox(tr("GPU render (experimental)"), panel);
     connect(mapGpuCheck_, &QCheckBox::toggled, mapView_, &MapView::setGpuEnabled);
     panel->addRow(mapGpuCheck_);
@@ -737,8 +814,7 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
     submitCompute<analysis::CrossSection>(
         *pool_, this,
         [ds, var, time, member, path] {
-            return analysis::extractCrossSection(MainWindow::readLevelStack(*ds, var, time, member),
-                                                 path, 200);
+            return MainWindow::computeCrossSection(*ds, var, time, member, path, 200);
         },
         [this, var, path](analysis::CrossSection cs) {
             if (cs.pressures.size() < 2) {
@@ -759,8 +835,7 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
                 submitCompute<analysis::CrossSection>(
                     *pool_, this,
                     [dset, var, t, mem, path] {
-                        return analysis::extractCrossSection(
-                            MainWindow::readLevelStack(*dset, var, t, mem), path, 200);
+                        return MainWindow::computeCrossSection(*dset, var, t, mem, path, 200);
                     },
                     [v](analysis::CrossSection ncs) {
                         if (v && ncs.pressures.size() >= 2) v->setSection(ncs);
@@ -777,16 +852,7 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
     statusBar()->showMessage(tr("Extracting sounding…"));
     submitCompute<analysis::Sounding>(
         *pool_, this,
-        [ds, time, member, point] {
-            // Temperature is required; relative humidity is optional (for dewpoint),
-            // and the U/V wind stacks are optional (for the wind profile).
-            const auto tStack = MainWindow::readLevelStack(*ds, "t", time, member);
-            if (tStack.size() < 2) return analysis::Sounding{};
-            const auto rhStack = MainWindow::readLevelStack(*ds, "r", time, member);
-            std::vector<std::pair<double, core::Field2D>> uStack, vStack;
-            MainWindow::readWindStacks(*ds, time, member, uStack, vStack);
-            return analysis::extractSounding(tStack, rhStack, point, uStack, vStack);
-        },
+        [ds, time, member, point] { return MainWindow::computeSounding(*ds, time, member, point); },
         [this, point](analysis::Sounding s) {
             if (s.levels.size() < 2) {
                 statusBar()->showMessage(tr("Sounding needs multi-level temperature (t)"), 4000);
@@ -805,12 +871,7 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
                 submitCompute<analysis::Sounding>(
                     *pool_, this,
                     [dset, t, mem, point] {
-                        const auto tStack = MainWindow::readLevelStack(*dset, "t", t, mem);
-                        if (tStack.size() < 2) return analysis::Sounding{};
-                        const auto rhStack = MainWindow::readLevelStack(*dset, "r", t, mem);
-                        std::vector<std::pair<double, core::Field2D>> uStack, vStack;
-                        MainWindow::readWindStacks(*dset, t, mem, uStack, vStack);
-                        return analysis::extractSounding(tStack, rhStack, point, uStack, vStack);
+                        return MainWindow::computeSounding(*dset, t, mem, point);
                     },
                     [v](analysis::Sounding ns) {
                         if (v && ns.levels.size() >= 2) v->setSounding(ns);
