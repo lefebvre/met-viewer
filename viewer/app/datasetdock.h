@@ -5,6 +5,7 @@
 #include "viewer/core/catalog.h"
 #include "viewer/core/field.h"
 
+class QLineEdit;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -30,8 +31,10 @@ signals:
 
 private slots:
     void onItemActivated(QTreeWidgetItem* item, int column);
+    void filterTree(const QString& text);
 
 private:
+    QLineEdit* filter_ = nullptr;
     QTreeWidget* tree_ = nullptr;
 };
 

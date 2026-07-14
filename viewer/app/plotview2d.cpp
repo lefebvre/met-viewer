@@ -106,11 +106,18 @@ void PlotView2D::setWindMode(int mode) {
 }
 
 QPointF PlotView2D::indexToScreen(double col, double row, const QRectF& r) const {
-    const core::LatLon ll = core::indexToLatLon(field_->grid, col, row);
-    const double lonSpan = bbox_.maxLon - bbox_.minLon;
-    const double latSpan = bbox_.maxLat - bbox_.minLat;
-    const double fx = lonSpan != 0.0 ? (ll.lon - bbox_.minLon) / lonSpan : 0.0;
-    const double fy = latSpan != 0.0 ? (bbox_.maxLat - ll.lat) / latSpan : 0.0;
+    // Flat index-space mapping matching render::fieldToImage, so contour lines
+    // (expressed in grid-index coordinates) stay aligned with the raster rather
+    // than being warped through the map projection. For a regular lat/lon grid
+    // this is algebraically identical to the old lat/lon routing.
+    const int w = core::gridWidth(field_->grid);
+    const int h = core::gridHeight(field_->grid);
+    bool flipRows = false, flipCols = false;
+    render::displayFlip(field_->grid, flipRows, flipCols);
+    double fx = w > 1 ? col / (w - 1) : 0.0;
+    double fy = h > 1 ? row / (h - 1) : 0.0;
+    if (flipCols) fx = 1.0 - fx;
+    if (flipRows) fy = 1.0 - fy;
     return {r.left() + fx * r.width(), r.top() + fy * r.height()};
 }
 

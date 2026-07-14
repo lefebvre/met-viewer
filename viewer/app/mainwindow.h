@@ -9,6 +9,7 @@
 
 #include "viewer/analysis/wind.h"
 #include "viewer/app/fieldcache.h"
+#include "viewer/app/jobs.h"
 #include "viewer/core/field.h"
 #include "viewer/core/geo.h"
 #include "viewer/readers/ireader.h"
@@ -19,8 +20,15 @@ class QDockWidget;
 class QDoubleSpinBox;
 class QLabel;
 class QMenu;
+class QProgressBar;
 class QSlider;
 class QThreadPool;
+class QTimer;
+
+namespace met::analysis {
+struct Sounding;
+struct CrossSection;
+}  // namespace met::analysis
 
 namespace met::app {
 
@@ -149,16 +157,50 @@ private:
     // Read all pressure levels of `varName` at `time` (pressure, field). Static +
     // dataset-by-reference so it can run off the GUI thread without touching
     // mutable window state; readField is serialized inside the reader.
+    // The read/compute helpers take an optional `onRead` callback invoked once per
+    // decoded slab (from the worker thread) so a background job can report progress.
     static std::vector<std::pair<double, core::Field2D>> readLevelStack(
-        readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member);
+        readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member,
+        const std::function<void()>& onRead = {});
+    // Read all native model levels (hybrid/sigma) of `varName` at `time`, keyed by
+    // the model-level index (not pressure); pair with the `pres` field to place them.
+    static std::vector<std::pair<double, core::Field2D>> readModelLevelStack(
+        readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member,
+        const std::function<void()>& onRead = {});
     // Read all times of `varName` at `level` (time, field).
     static std::vector<std::pair<core::TimePoint, core::Field2D>> readTimeStack(
-        readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member);
-    // Read the U/V wind pressure-level stacks at `time` into uStack/vStack (both left
-    // empty when the dataset has no recognizable wind pair).
+        readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member,
+        const std::function<void()>& onRead = {});
+    // Read the U/V wind stacks at `time` into uStack/vStack (both left empty when the
+    // dataset has no recognizable wind pair). `modelLevels` reads native model levels
+    // instead of pressure levels.
     static void readWindStacks(readers::IDataset& ds, core::TimePoint time, int member,
                                std::vector<std::pair<double, core::Field2D>>& uStack,
-                               std::vector<std::pair<double, core::Field2D>>& vStack);
+                               std::vector<std::pair<double, core::Field2D>>& vStack,
+                               bool modelLevels = false, const std::function<void()>& onRead = {});
+    // Extract a sounding / cross-section, choosing the pressure-level path when the
+    // variable has isobaric levels, else the native model-level path (via `pres`).
+    // When `progress` is set, each slab read bumps its counter, and `generating` is
+    // flipped once loading finishes and the (unmeasured) extraction begins.
+    static analysis::Sounding computeSounding(readers::IDataset& ds, core::TimePoint time,
+                                              int member, core::LatLon point,
+                                              std::shared_ptr<JobProgress> progress = {});
+    static analysis::CrossSection computeCrossSection(readers::IDataset& ds,
+                                                      const std::string& var, core::TimePoint time,
+                                                      int member,
+                                                      const std::vector<core::LatLon>& path,
+                                                      int nSamples,
+                                                      std::shared_ptr<JobProgress> progress = {});
+
+    // Number of slab reads a compute* will perform (catalog-only, no I/O), used to
+    // size the progress bar before the job starts.
+    static int estimateSoundingReads(readers::IDataset& ds);
+    static int estimateCrossSectionReads(readers::IDataset& ds, const std::string& var);
+
+    // Background-job progress: show/hide a shared status-bar bar as jobs come and go.
+    void beginJob(const QString& text, std::shared_ptr<JobProgress> progress);
+    void endJob(const std::shared_ptr<JobProgress>& progress);
+    void pollProgress();
 
     std::shared_ptr<readers::IDataset> dataset_;
     QString currentUnits_;
@@ -208,8 +250,10 @@ private:
     QCheckBox* plotContourCheck_ = nullptr;
     QComboBox* mapBasemapCombo_ = nullptr;
     QSlider* mapOpacitySlider_ = nullptr;
+    QCheckBox* mapViewRangeCheck_ = nullptr;
     QCheckBox* mapGraticuleCheck_ = nullptr;
     QCheckBox* mapCoastlineCheck_ = nullptr;
+    QCheckBox* mapContourCheck_ = nullptr;
     QCheckBox* mapGpuCheck_ = nullptr;
     QComboBox* plotWindCombo_ = nullptr;
     QComboBox* mapWindCombo_ = nullptr;
@@ -220,6 +264,11 @@ private:
     QLabel* probeLabel_ = nullptr;
     QMenu* recentMenu_ = nullptr;  // File > Open Recent
     QThreadPool* pool_ = nullptr;
+
+    // Background-job progress bar (status bar) and the jobs currently feeding it.
+    QProgressBar* progressBar_ = nullptr;
+    QTimer* progressTimer_ = nullptr;
+    std::vector<std::shared_ptr<JobProgress>> activeJobs_;
 };
 
 }  // namespace met::app

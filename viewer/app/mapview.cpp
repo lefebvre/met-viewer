@@ -20,6 +20,7 @@
 #include "viewer/analysis/sample.h"
 #include "viewer/analysis/wind.h"
 #include "viewer/app/tilelayer.h"
+#include "viewer/render/contour.h"
 #include "viewer/render/tilemath.h"
 #include "viewer/render/warp.h"
 #include "viewer/render/windbarb.h"
@@ -131,6 +132,14 @@ void MapView::setAutoRange(bool on) {
     }
 }
 
+void MapView::setViewRange(bool on) {
+    viewRange_ = on;
+    if (autoRange_ && field_) {
+        autorange();
+        update();
+    }
+}
+
 void MapView::setRange(double lo, double hi) {
     cmap_.setRange(lo, hi);
     update();
@@ -152,6 +161,8 @@ void MapView::setOpacity(double opacity) {
 
 void MapView::setGraticuleVisible(bool on) { graticule_ = on; update(); }
 void MapView::setCoastlinesVisible(bool on) { coastlinesVisible_ = on; update(); }
+void MapView::setContoursEnabled(bool on) { contoursEnabled_ = on; update(); }
+void MapView::setContourInterval(double interval) { contourInterval_ = interval; update(); }
 void MapView::setWind(std::shared_ptr<analysis::WindField> wind) {
     wind_ = std::move(wind);
     update();
@@ -166,13 +177,55 @@ void MapView::setCoastlines(std::shared_ptr<std::vector<GeoPolyline>> lines) {
 }
 void MapView::refreshSource() { update(); }
 
+bool MapView::visibleValueRange(double& lo, double& hi) const {
+    lo = std::numeric_limits<double>::infinity();
+    hi = -std::numeric_limits<double>::infinity();
+    const int w = core::gridWidth(field_->grid);
+    const int h = core::gridHeight(field_->grid);
+    if (w <= 0 || h <= 0) return false;
+
+    // Project the viewport border into grid-index space and scan the covering
+    // index rectangle — far cheaper than projecting every cell, and the small
+    // over-inclusion at the edges is harmless for a color-range heuristic.
+    int c0 = w, c1 = -1, r0 = h, r1 = -1;
+    auto acc = [&](QPointF screenPt) {
+        const core::GridIndex gi = core::latlonToIndex(field_->grid, screenToLonLat(screenPt));
+        const int c = std::clamp(static_cast<int>(std::lround(gi.x)), 0, w - 1);
+        const int r = std::clamp(static_cast<int>(std::lround(gi.y)), 0, h - 1);
+        c0 = std::min(c0, c); c1 = std::max(c1, c);
+        r0 = std::min(r0, r); r1 = std::max(r1, r);
+    };
+    const int steps = 24;
+    for (int k = 0; k <= steps; ++k) {
+        const double f = static_cast<double>(k) / steps;
+        acc({f * width(), 0.0}); acc({f * width(), double(height())});
+        acc({0.0, f * height()}); acc({double(width()), f * height()});
+    }
+    if (c1 < c0 || r1 < r0) return false;
+    c0 = std::max(0, c0 - 1); r0 = std::max(0, r0 - 1);
+    c1 = std::min(w - 1, c1 + 1); r1 = std::min(h - 1, r1 + 1);
+
+    for (int r = r0; r <= r1; ++r)
+        for (int c = c0; c <= c1; ++c) {
+            const float v = field_->at(c, r);
+            if (std::isnan(v)) continue;
+            lo = std::min(lo, static_cast<double>(v));
+            hi = std::max(hi, static_cast<double>(v));
+        }
+    return std::isfinite(lo) && std::isfinite(hi);
+}
+
 void MapView::autorange() {
     double lo = std::numeric_limits<double>::infinity();
     double hi = -std::numeric_limits<double>::infinity();
-    for (float v : field_->values) {
-        if (std::isnan(v)) continue;
-        lo = std::min(lo, static_cast<double>(v));
-        hi = std::max(hi, static_cast<double>(v));
+    if (!viewRange_ || !visibleValueRange(lo, hi)) {
+        lo = std::numeric_limits<double>::infinity();
+        hi = -std::numeric_limits<double>::infinity();
+        for (float v : field_->values) {
+            if (std::isnan(v)) continue;
+            lo = std::min(lo, static_cast<double>(v));
+            hi = std::max(hi, static_cast<double>(v));
+        }
     }
     if (!std::isfinite(lo) || !std::isfinite(hi) || lo == hi) { lo = 0; hi = 1; }
     // Diverging colormaps read best centered on zero.
@@ -204,6 +257,7 @@ void MapView::contextMenuEvent(QContextMenuEvent* event) {
     QAction* fit = menu.addAction(tr("Fit to data"));
     connect(fit, &QAction::triggered, this, [this] {
         fitToField();
+        if (autoRange_ && viewRange_ && field_) autorange();
         update();
     });
     menu.exec(event->globalPos());
@@ -358,6 +412,9 @@ void MapView::paintGL() {
         }
     }
 
+    // Contour overlay.
+    if (contoursEnabled_ && field_) drawContours(p);
+
     // Wind overlay.
     if (wind_ && windMode_ == 1) drawBarbs(p);
     else if (wind_ && windMode_ == 2) drawStreamlines(p);
@@ -497,6 +554,30 @@ void MapView::drawStreamlines(QPainter& p) {
     }
 }
 
+void MapView::drawContours(QPainter& p) {
+    double interval = contourInterval_;
+    if (!(interval > 0.0))
+        interval = render::niceContourInterval(cmap_.min(), cmap_.max(), 10);
+    if (!(interval > 0.0)) return;
+
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(QColor(20, 20, 20, 200));
+    pen.setWidthF(0.9);
+    p.setPen(pen);
+    // Contour segments live in grid-index space; project index -> lat/lon (which
+    // is exact for the map, unlike the flat 2D plot) -> screen.
+    for (const auto& lvl : render::contourLevels(*field_, interval)) {
+        for (const auto& s : lvl.segments) {
+            const core::LatLon a = core::indexToLatLon(field_->grid, s.x0, s.y0);
+            const core::LatLon b = core::indexToLatLon(field_->grid, s.x1, s.y1);
+            if (std::isnan(a.lat) || std::isnan(a.lon) || std::isnan(b.lat) || std::isnan(b.lon))
+                continue;
+            p.drawLine(lonLatToScreen(a), lonLatToScreen(b));
+        }
+    }
+    p.setRenderHint(QPainter::Antialiasing, false);
+}
+
 void MapView::setInteractionMode(Mode mode) {
     mode_ = mode;
     if (mode_ != Mode::CrossSection) pathVertices_.clear();
@@ -551,7 +632,15 @@ void MapView::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void MapView::mouseReleaseEvent(QMouseEvent* event) {
-    if (event->button() == Qt::LeftButton) dragging_ = false;
+    if (event->button() == Qt::LeftButton) {
+        const bool wasDragging = dragging_;
+        dragging_ = false;
+        // A pan changed the visible extent; refresh the range if it tracks the view.
+        if (wasDragging && autoRange_ && viewRange_ && field_) {
+            autorange();
+            update();
+        }
+    }
 }
 
 void MapView::wheelEvent(QWheelEvent* event) {
@@ -567,6 +656,8 @@ void MapView::wheelEvent(QWheelEvent* event) {
     const double cy = latToWorldY(anchor.lat, zoom_) - (cursor.y() - height() / 2.0);
     centerLon_ = worldXToLon(cx, zoom_);
     centerLat_ = std::clamp(worldYToLat(cy, zoom_), -render::tile::kMaxLat, render::tile::kMaxLat);
+    // Zoom changed the visible extent; refresh the range if it tracks the view.
+    if (autoRange_ && viewRange_ && field_) autorange();
     update();
 }
 

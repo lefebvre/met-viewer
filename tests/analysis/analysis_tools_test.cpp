@@ -67,9 +67,10 @@ TEST(CrossSection, SortsUnorderedLevelsByPressure) {
         {500.0, linearField(5.0)}, {1000.0, linearField(10.0)}, {250.0, linearField(2.0)}};
     const auto cs = analysis::extractCrossSection(stack, {{68, 4}, {58, 26}}, 16);
     ASSERT_EQ(cs.pressures.size(), 3u);
-    EXPECT_DOUBLE_EQ(cs.pressures[0], 250.0);
-    EXPECT_DOUBLE_EQ(cs.pressures[1], 500.0);
-    EXPECT_DOUBLE_EQ(cs.pressures[2], 1000.0);
+    // pressures is now per-column; an isobaric level broadcasts the same value.
+    EXPECT_DOUBLE_EQ(cs.pressures[0].front(), 250.0);
+    EXPECT_DOUBLE_EQ(cs.pressures[1].front(), 500.0);
+    EXPECT_DOUBLE_EQ(cs.pressures[2].front(), 1000.0);
     // Each row's values track its own level's bias (2 at 250, 10 at 1000).
     EXPECT_GT(cs.values[2].front(), cs.values[0].front());
 }

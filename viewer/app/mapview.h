@@ -36,10 +36,13 @@ public:
     void setField(std::shared_ptr<core::Field2D> field);
     void setColormapByName(const QString& name);
     void setAutoRange(bool on);
+    void setViewRange(bool on);  // auto-range over the visible extent only
     void setRange(double lo, double hi);
     void setOpacity(double opacity);          // 0..1
     void setGraticuleVisible(bool on);
     void setCoastlinesVisible(bool on);
+    void setContoursEnabled(bool on);
+    void setContourInterval(double interval);  // <=0 = auto
     void setCoastlines(std::shared_ptr<std::vector<GeoPolyline>> lines);
     void refreshSource();                     // basemap source changed
 
@@ -92,8 +95,11 @@ private:
     void fitToField();
     void ensureWarp();
     void autorange();
+    // Min/max of the field values whose cells fall within the current viewport.
+    bool visibleValueRange(double& lo, double& hi) const;
     void drawBarbs(QPainter& p);
     void drawStreamlines(QPainter& p);
+    void drawContours(QPainter& p);
     bool drawFieldGpu();  // returns true if the GPU path rendered the field
 
     TileLayer* tiles_ = nullptr;
@@ -101,6 +107,7 @@ private:
     render::Colormap cmap_ = render::Colormap::builtin("viridis");
     double opacity_ = 0.75;
     bool autoRange_ = true;
+    bool viewRange_ = false;  // when auto-ranging, use the visible extent only
     bool gpuEnabled_ = false;  // opt-in; CPU warp is the robust default
     GlFieldRenderer glField_;
     bool glReady_ = false;
@@ -109,6 +116,8 @@ private:
     double uploadedMin_ = 0, uploadedMax_ = 0;
     bool graticule_ = true;
     bool coastlinesVisible_ = true;
+    bool contoursEnabled_ = false;
+    double contourInterval_ = 0.0;  // <=0 = auto
     std::shared_ptr<std::vector<GeoPolyline>> coastlines_;
     std::shared_ptr<analysis::WindField> wind_;
     int windMode_ = 0;  // 0 off, 1 barbs, 2 streamlines

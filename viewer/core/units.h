@@ -12,6 +12,11 @@ namespace met::core {
 [[nodiscard]] std::optional<double> convert(double value, const std::string& from,
                                             const std::string& to);
 
+// Convert a pressure sample to hPa. Uses convert() when `units` is recognized,
+// otherwise falls back to a magnitude heuristic (values > ~2000 are assumed Pa).
+// Convenience for readers/analysis that receive pressure in Pa or hPa.
+[[nodiscard]] double toHpa(double value, const std::string& units);
+
 // A friendlier display alternative for a native unit, if one exists (e.g. "K"
 // -> "Cel"). Returns nullopt when the native unit is already the sensible one.
 [[nodiscard]] std::optional<std::string> preferredDisplayUnit(const std::string& units);

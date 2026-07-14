@@ -41,22 +41,27 @@ std::optional<double> convert(double value, const std::string& from, const std::
     if (f == "K" && t == "Cel") return value - 273.15;
     if (f == "Cel" && t == "K") return value + 273.15;
 
-    if (f == "Pa" && t == "hPa") return value / 100.0;
+    if (f == "Pa" && t == "hPa") return value * 1e-2;
     if (f == "hPa" && t == "Pa") return value * 100.0;
 
     if (f == "m/s" && t == "kt") return value * 1.9438444924406;
     if (f == "kt" && t == "m/s") return value / 1.9438444924406;
 
-    if (f == "gpm" && t == "dam") return value / 10.0;
+    if (f == "gpm" && t == "dam") return value * 1e-1;
     if (f == "dam" && t == "gpm") return value * 10.0;
 
     if (f == "kg/kg" && t == "g/kg") return value * 1000.0;
-    if (f == "g/kg" && t == "kg/kg") return value / 1000.0;
+    if (f == "g/kg" && t == "kg/kg") return value * 1e-3;
 
     if (f == "m" && t == "mm") return value * 1000.0;
-    if (f == "mm" && t == "m") return value / 1000.0;
+    if (f == "mm" && t == "m") return value * 1e-3;
 
     return std::nullopt;
+}
+
+double toHpa(double value, const std::string& units) {
+    if (const auto c = convert(value, units, "hPa")) return *c;
+    return value > 2000.0 ? value * 1e-2 : value;  // ~Pa vs hPa
 }
 
 std::optional<std::string> preferredDisplayUnit(const std::string& units) {
