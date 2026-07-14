@@ -1,7 +1,10 @@
 #include "viewer/app/controlpanel.h"
 
+#include <algorithm>
+
 #include <QFormLayout>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSplitter>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -59,13 +62,22 @@ ViewFrame::ViewFrame(QWidget* canvas, ControlPanel* panel, QWidget* parent)
     auto* scroll = new QScrollArea(splitter);
     scroll->setWidget(panel);
     scroll->setWidgetResizable(true);
-    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // A horizontal scrollbar is the last-resort fallback so controls are never
+    // clipped even on a very narrow window; normally the min width below prevents it.
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     scroll->setFrameShape(QFrame::NoFrame);
     splitter->addWidget(scroll);
 
-    splitter->setStretchFactor(0, 1);  // canvas grows
-    splitter->setStretchFactor(1, 0);  // panel keeps its width
-    splitter->setSizes({600, 300});
+    // Give the control section priority over the canvas for width: reserve the
+    // panel's natural (font-scaled) width plus room for a vertical scrollbar, so
+    // dropdowns and the colorbar legend get the space they need at any DPI/font.
+    const int sbw = scroll->verticalScrollBar()->sizeHint().width();
+    const int panelW = panel->sizeHint().width() + sbw + 2;
+    scroll->setMinimumWidth(panelW);
+
+    splitter->setStretchFactor(0, 1);  // canvas absorbs extra width on resize
+    splitter->setStretchFactor(1, 0);  // panel keeps its reserved width
+    splitter->setSizes({std::max(canvas->sizeHint().width(), 640), panelW});
 
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

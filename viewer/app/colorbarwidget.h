@@ -19,7 +19,7 @@ public:
     void setUnits(const QString& units);
     void clear();
 
-    [[nodiscard]] QSize sizeHint() const override { return {120, 260}; }
+    [[nodiscard]] QSize sizeHint() const override;
 
 protected:
     void paintEvent(QPaintEvent* event) override;
