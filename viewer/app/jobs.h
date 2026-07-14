@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -15,6 +16,19 @@
 #include "viewer/readers/ireader.h"
 
 namespace met::app {
+
+// Progress of a background job. The worker thread bumps `done` (one per slab read)
+// while the GUI thread polls both counters to drive a progress bar. `total == 0`
+// means the amount of work is unknown up front (e.g. a single opaque decode) and
+// the bar should show a busy/indeterminate animation instead of a percentage.
+// `generating` is set once the slabs are loaded and the (unmeasured) plot
+// extraction/rendering begins, so the bar can switch from a percentage to a busy
+// animation for that phase instead of sitting at 100% until the plot appears.
+struct JobProgress {
+    std::atomic<int> done{0};
+    std::atomic<int> total{0};
+    std::atomic<bool> generating{false};
+};
 
 // Result of a background decode. `field` is null when `error` is set. The
 // `generation` echoes the value passed to submitDecode so the receiver can drop

@@ -15,6 +15,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QProgressBar>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStatusBar>
@@ -325,6 +326,56 @@ void MainWindow::buildUi() {
 
     probeLabel_ = new QLabel(tr("Ready"), this);
     statusBar()->addWidget(probeLabel_);
+
+    // Background-job progress bar, parked on the right of the status bar and hidden
+    // until a job runs. A single shared bar aggregates all in-flight jobs.
+    progressBar_ = new QProgressBar(this);
+    progressBar_->setMaximumWidth(180);
+    progressBar_->setMaximumHeight(14);
+    progressBar_->setTextVisible(true);
+    progressBar_->hide();
+    statusBar()->addPermanentWidget(progressBar_);
+    progressTimer_ = new QTimer(this);
+    progressTimer_->setInterval(100);
+    connect(progressTimer_, &QTimer::timeout, this, &MainWindow::pollProgress);
+}
+
+void MainWindow::beginJob(const QString& text, std::shared_ptr<JobProgress> progress) {
+    activeJobs_.push_back(std::move(progress));
+    if (!text.isEmpty()) statusBar()->showMessage(text);
+    progressBar_->show();
+    if (!progressTimer_->isActive()) progressTimer_->start();
+    pollProgress();
+}
+
+void MainWindow::endJob(const std::shared_ptr<JobProgress>& progress) {
+    std::erase(activeJobs_, progress);
+    if (activeJobs_.empty()) {
+        progressTimer_->stop();
+        progressBar_->hide();
+        statusBar()->clearMessage();
+    } else {
+        pollProgress();
+    }
+}
+
+void MainWindow::pollProgress() {
+    if (activeJobs_.empty()) return;
+    long long done = 0, total = 0;
+    bool anyBusy = false;
+    for (const auto& j : activeJobs_) {
+        const int t = j->total.load(std::memory_order_relaxed);
+        // total 0 = opaque decode; generating = slabs loaded, now extracting/rendering.
+        if (t <= 0 || j->generating.load(std::memory_order_relaxed)) { anyBusy = true; continue; }
+        total += t;
+        done += std::min(j->done.load(std::memory_order_relaxed), t);
+    }
+    if (anyBusy || total <= 0) {
+        progressBar_->setRange(0, 0);  // indeterminate / busy
+    } else {
+        progressBar_->setRange(0, static_cast<int>(total));
+        progressBar_->setValue(static_cast<int>(done));
+    }
 }
 
 void MainWindow::scheduleGrabAndQuit(const QString& pngPath, int delayMs) {
@@ -454,7 +505,12 @@ void MainWindow::decodeCurrent() {
     }
 
     probeLabel_->setText(tr("Decoding…"));
-    submitDecode(*pool_, dataset_, key, gen, this, [this, gen, key](DecodeOutcome outcome) {
+    // A single opaque decode has no sub-steps: total 0 => the bar shows a busy
+    // animation (empty text keeps probeLabel_'s "Decoding…" as the message).
+    auto prog = std::make_shared<JobProgress>();
+    beginJob(QString(), prog);
+    submitDecode(*pool_, dataset_, key, gen, this, [this, gen, key, prog](DecodeOutcome outcome) {
+        endJob(prog);
         if (!outcome.field) {
             if (outcome.generation == generation_)
                 probeLabel_->setText(tr("Decode error: %1").arg(outcome.error));
@@ -579,8 +635,32 @@ void MainWindow::prefetchAhead() {
     }
 }
 
+namespace {
+// Count a variable's levels of the given kind (pressure vs native model), for
+// sizing the progress bar without any I/O.
+int countPressureLevels(const readers::IDataset& ds, const std::string& var) {
+    const auto* entry = ds.catalog().find(var);
+    if (!entry) return 0;
+    int n = 0;
+    for (const auto& lvl : entry->levels)
+        if (lvl.type == core::VerticalLevel::Type::PressureHPa) ++n;
+    return n;
+}
+int countModelLevels(const readers::IDataset& ds, const std::string& var) {
+    const auto* entry = ds.catalog().find(var);
+    if (!entry) return 0;
+    int n = 0;
+    for (const auto& lvl : entry->levels)
+        if (lvl.type == core::VerticalLevel::Type::Hybrid ||
+            lvl.type == core::VerticalLevel::Type::Sigma)
+            ++n;
+    return n;
+}
+}  // namespace
+
 std::vector<std::pair<double, core::Field2D>> MainWindow::readLevelStack(
-    readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member) {
+    readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member,
+    const std::function<void()>& onRead) {
     std::vector<std::pair<double, core::Field2D>> stack;
     const auto* entry = ds.catalog().find(varName);
     if (!entry) return stack;
@@ -590,12 +670,14 @@ std::vector<std::pair<double, core::Field2D>> MainWindow::readLevelStack(
             stack.emplace_back(lvl.value, ds.readField(core::FieldKey{varName, lvl, time, member}));
         } catch (const std::exception&) {
         }
+        if (onRead) onRead();
     }
     return stack;
 }
 
 std::vector<std::pair<double, core::Field2D>> MainWindow::readModelLevelStack(
-    readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member) {
+    readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member,
+    const std::function<void()>& onRead) {
     std::vector<std::pair<double, core::Field2D>> stack;
     const auto* entry = ds.catalog().find(varName);
     if (!entry) return stack;
@@ -607,12 +689,14 @@ std::vector<std::pair<double, core::Field2D>> MainWindow::readModelLevelStack(
             stack.emplace_back(lvl.value, ds.readField(core::FieldKey{varName, lvl, time, member}));
         } catch (const std::exception&) {
         }
+        if (onRead) onRead();
     }
     return stack;
 }
 
 std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack(
-    readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member) {
+    readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member,
+    const std::function<void()>& onRead) {
     std::vector<std::pair<core::TimePoint, core::Field2D>> stack;
     const auto* entry = ds.catalog().find(varName);
     if (!entry) return stack;
@@ -621,6 +705,7 @@ std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack
             stack.emplace_back(t, ds.readField(core::FieldKey{varName, level, t, member}));
         } catch (const std::exception&) {
         }
+        if (onRead) onRead();
     }
     return stack;
 }
@@ -628,52 +713,95 @@ std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack
 void MainWindow::readWindStacks(readers::IDataset& ds, core::TimePoint time, int member,
                                 std::vector<std::pair<double, core::Field2D>>& uStack,
                                 std::vector<std::pair<double, core::Field2D>>& vStack,
-                                bool modelLevels) {
+                                bool modelLevels, const std::function<void()>& onRead) {
     uStack.clear();
     vStack.clear();
     std::vector<std::string> names;
     for (const auto& v : ds.catalog().variables()) names.push_back(v.varName);
     const auto pair = analysis::findWindPair(names);
     if (!pair) return;  // no U/V pair -> no wind profile
-    uStack = modelLevels ? readModelLevelStack(ds, pair->uName, time, member)
-                         : readLevelStack(ds, pair->uName, time, member);
-    vStack = modelLevels ? readModelLevelStack(ds, pair->vName, time, member)
-                         : readLevelStack(ds, pair->vName, time, member);
+    uStack = modelLevels ? readModelLevelStack(ds, pair->uName, time, member, onRead)
+                         : readLevelStack(ds, pair->uName, time, member, onRead);
+    vStack = modelLevels ? readModelLevelStack(ds, pair->vName, time, member, onRead)
+                         : readLevelStack(ds, pair->vName, time, member, onRead);
 }
 
+namespace {
+// A per-slab tick bound to a job's counter (no-op when there is no job).
+std::function<void()> readTick(const std::shared_ptr<JobProgress>& p) {
+    if (!p) return {};
+    return [p] { p->done.fetch_add(1, std::memory_order_relaxed); };
+}
+// Mark the transition from loading slabs to extracting/rendering the plot, so the
+// bar shows a busy animation for that (unmeasured, worker-thread) phase.
+void markGenerating(const std::shared_ptr<JobProgress>& p) {
+    if (p) p->generating.store(true, std::memory_order_relaxed);
+}
+}  // namespace
+
 analysis::Sounding MainWindow::computeSounding(readers::IDataset& ds, core::TimePoint time,
-                                               int member, core::LatLon point) {
+                                               int member, core::LatLon point,
+                                               std::shared_ptr<JobProgress> progress) {
+    const auto onRead = readTick(progress);
     // Isobaric path: temperature required; relative humidity (dewpoint) and U/V
     // (wind profile) optional.
-    const auto tStack = readLevelStack(ds, "t", time, member);
+    const auto tStack = readLevelStack(ds, "t", time, member, onRead);
     if (tStack.size() >= 2) {
-        const auto rhStack = readLevelStack(ds, "r", time, member);
+        const auto rhStack = readLevelStack(ds, "r", time, member, onRead);
         std::vector<std::pair<double, core::Field2D>> uStack, vStack;
-        readWindStacks(ds, time, member, uStack, vStack);
+        readWindStacks(ds, time, member, uStack, vStack, /*modelLevels=*/false, onRead);
+        markGenerating(progress);
         return analysis::extractSounding(tStack, rhStack, point, uStack, vStack);
     }
     // Native model-level path: pressure comes from the `pres` field, dewpoint from
     // specific humidity `q`.
-    const auto tModel = readModelLevelStack(ds, "t", time, member);
-    const auto presStack = readModelLevelStack(ds, "pres", time, member);
+    const auto tModel = readModelLevelStack(ds, "t", time, member, onRead);
+    const auto presStack = readModelLevelStack(ds, "pres", time, member, onRead);
     if (tModel.size() < 2 || presStack.size() < 2) return analysis::Sounding{};
-    const auto qStack = readModelLevelStack(ds, "q", time, member);
+    const auto qStack = readModelLevelStack(ds, "q", time, member, onRead);
     std::vector<std::pair<double, core::Field2D>> uStack, vStack;
-    readWindStacks(ds, time, member, uStack, vStack, /*modelLevels=*/true);
+    readWindStacks(ds, time, member, uStack, vStack, /*modelLevels=*/true, onRead);
+    markGenerating(progress);
     return analysis::extractSoundingModelLevels(tModel, presStack, qStack, point, uStack, vStack);
 }
 
 analysis::CrossSection MainWindow::computeCrossSection(readers::IDataset& ds, const std::string& var,
                                                        core::TimePoint time, int member,
                                                        const std::vector<core::LatLon>& path,
-                                                       int nSamples) {
-    const auto pres = readLevelStack(ds, var, time, member);
-    if (pres.size() >= 2) return analysis::extractCrossSection(pres, path, nSamples);
+                                                       int nSamples,
+                                                       std::shared_ptr<JobProgress> progress) {
+    const auto onRead = readTick(progress);
+    const auto pres = readLevelStack(ds, var, time, member, onRead);
+    if (pres.size() >= 2) {
+        markGenerating(progress);
+        return analysis::extractCrossSection(pres, path, nSamples);
+    }
     // Native model-level path with a terrain-following pressure axis.
-    const auto model = readModelLevelStack(ds, var, time, member);
-    const auto presStack = readModelLevelStack(ds, "pres", time, member);
+    const auto model = readModelLevelStack(ds, var, time, member, onRead);
+    const auto presStack = readModelLevelStack(ds, "pres", time, member, onRead);
     if (model.size() < 2 || presStack.size() < 2) return analysis::CrossSection{};
+    markGenerating(progress);
     return analysis::extractCrossSectionModelLevels(model, presStack, path, nSamples);
+}
+
+int MainWindow::estimateSoundingReads(readers::IDataset& ds) {
+    std::vector<std::string> names;
+    for (const auto& v : ds.catalog().variables()) names.push_back(v.varName);
+    const auto wind = analysis::findWindPair(names);
+    const std::string uName = wind ? wind->uName : std::string{};
+    const std::string vName = wind ? wind->vName : std::string{};
+    if (countPressureLevels(ds, "t") >= 2) {  // isobaric path
+        return countPressureLevels(ds, "t") + countPressureLevels(ds, "r") +
+               countPressureLevels(ds, uName) + countPressureLevels(ds, vName);
+    }
+    return countModelLevels(ds, "t") + countModelLevels(ds, "pres") + countModelLevels(ds, "q") +
+           countModelLevels(ds, uName) + countModelLevels(ds, vName);
+}
+
+int MainWindow::estimateCrossSectionReads(readers::IDataset& ds, const std::string& var) {
+    const int pl = countPressureLevels(ds, var);
+    if (pl >= 2) return pl;
+    return countModelLevels(ds, var) + countModelLevels(ds, "pres");
 }
 
 ViewFrame* MainWindow::buildPlotFrame() {
@@ -810,13 +938,16 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
     const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
     const int member = currentMember_;
     auto ds = dataset_;
-    statusBar()->showMessage(tr("Extracting cross-section…"));
+    auto prog = std::make_shared<JobProgress>();
+    prog->total = estimateCrossSectionReads(*ds, var);
+    beginJob(tr("Extracting cross-section…"), prog);
     submitCompute<analysis::CrossSection>(
         *pool_, this,
-        [ds, var, time, member, path] {
-            return MainWindow::computeCrossSection(*ds, var, time, member, path, 200);
+        [ds, var, time, member, path, prog] {
+            return MainWindow::computeCrossSection(*ds, var, time, member, path, 200, prog);
         },
-        [this, var, path](analysis::CrossSection cs) {
+        [this, var, path, prog](analysis::CrossSection cs) {
+            endJob(prog);
             if (cs.pressures.size() < 2) {
                 statusBar()->showMessage(tr("Cross-section needs a multi-level variable"), 4000);
                 return;
@@ -832,12 +963,16 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
                 const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
                 const int mem = currentMember_;
                 auto dset = dataset_;
+                auto p = std::make_shared<JobProgress>();
+                p->total = estimateCrossSectionReads(*dset, var);
+                beginJob(tr("Updating cross-section…"), p);
                 submitCompute<analysis::CrossSection>(
                     *pool_, this,
-                    [dset, var, t, mem, path] {
-                        return MainWindow::computeCrossSection(*dset, var, t, mem, path, 200);
+                    [dset, var, t, mem, path, p] {
+                        return MainWindow::computeCrossSection(*dset, var, t, mem, path, 200, p);
                     },
-                    [v](analysis::CrossSection ncs) {
+                    [this, v, p](analysis::CrossSection ncs) {
+                        endJob(p);
                         if (v && ncs.pressures.size() >= 2) v->setSection(ncs);
                     });
             }});
@@ -849,11 +984,16 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
     const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
     const int member = currentMember_;
     auto ds = dataset_;
-    statusBar()->showMessage(tr("Extracting sounding…"));
+    auto prog = std::make_shared<JobProgress>();
+    prog->total = estimateSoundingReads(*ds);
+    beginJob(tr("Extracting sounding…"), prog);
     submitCompute<analysis::Sounding>(
         *pool_, this,
-        [ds, time, member, point] { return MainWindow::computeSounding(*ds, time, member, point); },
-        [this, point](analysis::Sounding s) {
+        [ds, time, member, point, prog] {
+            return MainWindow::computeSounding(*ds, time, member, point, prog);
+        },
+        [this, point, prog](analysis::Sounding s) {
+            endJob(prog);
             if (s.levels.size() < 2) {
                 statusBar()->showMessage(tr("Sounding needs multi-level temperature (t)"), 4000);
                 return;
@@ -868,12 +1008,16 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
                 const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
                 const int mem = currentMember_;
                 auto dset = dataset_;
+                auto p = std::make_shared<JobProgress>();
+                p->total = estimateSoundingReads(*dset);
+                beginJob(tr("Updating sounding…"), p);
                 submitCompute<analysis::Sounding>(
                     *pool_, this,
-                    [dset, t, mem, point] {
-                        return MainWindow::computeSounding(*dset, t, mem, point);
+                    [dset, t, mem, point, p] {
+                        return MainWindow::computeSounding(*dset, t, mem, point, p);
                     },
-                    [v](analysis::Sounding ns) {
+                    [this, v, p](analysis::Sounding ns) {
+                        endJob(p);
                         if (v && ns.levels.size() >= 2) v->setSounding(ns);
                     });
             }});
@@ -886,14 +1030,18 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
     const core::VerticalLevel level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
     const int member = currentMember_;
     auto ds = dataset_;
-    statusBar()->showMessage(tr("Extracting time series…"));
+    auto prog = std::make_shared<JobProgress>();
+    if (const auto* entry = ds->catalog().find(var)) prog->total = static_cast<int>(entry->times.size());
+    beginJob(tr("Extracting time series…"), prog);
+    auto tick = [prog] { prog->done.fetch_add(1, std::memory_order_relaxed); };
     submitCompute<analysis::TimeSeries>(
         *pool_, this,
-        [ds, var, level, member, point] {
-            return analysis::extractTimeSeries(MainWindow::readTimeStack(*ds, var, level, member),
-                                               point);
+        [ds, var, level, member, tick, point] {
+            return analysis::extractTimeSeries(
+                MainWindow::readTimeStack(*ds, var, level, member, tick), point);
         },
-        [this, var](analysis::TimeSeries ts) {
+        [this, var, prog](analysis::TimeSeries ts) {
+            endJob(prog);
             if (ts.values.size() < 2) {
                 statusBar()->showMessage(tr("Time series needs multiple time steps"), 4000);
                 return;
