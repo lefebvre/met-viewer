@@ -25,13 +25,6 @@ const core::Field2D* fieldAtKey(
         if (std::abs(k - key) < 1e-6) return &f;
     return nullptr;
 }
-
-// A pressure sample (in the field's native units) converted to hPa. Falls back to
-// a Pa/hPa magnitude heuristic when the units string is missing or unrecognized.
-double toHpa(double p, const std::string& units) {
-    if (const auto c = core::convert(p, units, "hPa")) return *c;
-    return p > 2000.0 ? p / 100.0 : p;  // ~Pa vs hPa
-}
 }  // namespace
 
 float dewpointFromRH(float tempK, float rhPercent) {
@@ -91,7 +84,7 @@ Sounding extractSounding(const std::vector<std::pair<double, core::Field2D>>& tS
             lvl.windU = uv.u;
             lvl.windV = uv.v;
         }
-        s.levels.push_back(lvl);
+        s.levels.push_back(std::move(lvl));
     }
     // Sort top (low pressure) to bottom (high pressure).
     std::sort(s.levels.begin(), s.levels.end(),
@@ -113,7 +106,7 @@ Sounding extractSoundingModelLevels(
         const float rawP = sampleBilinear(*pfield, point);
         if (std::isnan(rawP)) continue;
         SoundingLevel lvl;
-        lvl.pressure = toHpa(rawP, pfield->meta.units);
+        lvl.pressure = core::toHpa(rawP, pfield->meta.units);
         lvl.tempK = sampleBilinear(tfield, point);
         lvl.dewpointK = std::numeric_limits<float>::quiet_NaN();
         if (const core::Field2D* qf = fieldAtKey(qStack, levelKey)) {

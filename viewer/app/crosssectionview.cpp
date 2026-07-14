@@ -13,21 +13,21 @@ constexpr int kML = 56, kMR = 16, kMT = 12, kMB = 34;
 // Value at integer column `s` and pressure `press` (hPa), interpolating in log-p
 // along that column's own (terrain-following) pressure profile. NaN if no
 // bracketing level in that column is finite.
-float valueAtColumn(const analysis::CrossSection& cs, int s, double press) {
-    const int nl = static_cast<int>(cs.pressures.size());
+float valueAtColumn(const analysis::CrossSection& cs, std::size_t s, double press) {
+    const std::size_t nl = cs.pressures.size();
     const double logP = std::log(press);
-    for (int l = 0; l + 1 < nl; ++l) {
-        const double pa = cs.pressures[static_cast<std::size_t>(l)][static_cast<std::size_t>(s)];
-        const double pb = cs.pressures[static_cast<std::size_t>(l + 1)][static_cast<std::size_t>(s)];
+    for (std::size_t l = 0; l + 1 < nl; ++l) {
+        const double pa = cs.pressures[l][s];
+        const double pb = cs.pressures[l + 1][s];
         if (std::isnan(pa) || std::isnan(pb) || pa <= 0.0 || pb <= 0.0) continue;
         const double lo = std::min(pa, pb), hi = std::max(pa, pb);
         if (press >= lo && press <= hi) {
             const double denom = std::log(pb) - std::log(pa);
             const double f = denom != 0.0 ? (logP - std::log(pa)) / denom : 0.0;
-            const float va = cs.values[static_cast<std::size_t>(l)][static_cast<std::size_t>(s)];
-            const float vb = cs.values[static_cast<std::size_t>(l + 1)][static_cast<std::size_t>(s)];
+            const float va = cs.values[l][s];
+            const float vb = cs.values[l + 1][s];
             if (std::isnan(va) || std::isnan(vb)) return std::isnan(va) ? vb : va;
-            return static_cast<float>(va * (1 - f) + vb * f);
+            return static_cast<float>(std::lerp(va, vb, f));
         }
     }
     return std::numeric_limits<float>::quiet_NaN();  // outside this column's range
@@ -35,15 +35,17 @@ float valueAtColumn(const analysis::CrossSection& cs, int s, double press) {
 
 // Bilinear-ish sample at fractional column `sampleF` and pressure `press` (hPa).
 float sampleSection(const analysis::CrossSection& cs, double sampleF, double press) {
-    const int ns = static_cast<int>(cs.distancesKm.size());
+    const std::size_t ns = cs.distancesKm.size();
     if (cs.pressures.empty() || ns == 0) return std::numeric_limits<float>::quiet_NaN();
-    const int s0 = std::clamp(static_cast<int>(std::floor(sampleF)), 0, ns - 1);
-    const int s1 = std::min(s0 + 1, ns - 1);
-    const double fs = sampleF - s0;
+    const std::size_t last = ns - 1;
+    const double sf = std::floor(sampleF);
+    const std::size_t s0 = sf <= 0.0 ? 0 : std::min(last, static_cast<std::size_t>(sf));
+    const std::size_t s1 = std::min(s0 + 1, last);
+    const double fs = sampleF - static_cast<double>(s0);
     const float a = valueAtColumn(cs, s0, press), b = valueAtColumn(cs, s1, press);
     if (std::isnan(a)) return b;
     if (std::isnan(b)) return a;
-    return static_cast<float>(a * (1 - fs) + b * fs);
+    return static_cast<float>(std::lerp(a, b, fs));
 }
 
 // Global finite pressure extent across all columns/levels.

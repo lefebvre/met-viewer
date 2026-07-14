@@ -13,13 +13,6 @@
 namespace met::analysis {
 namespace {
 
-// A pressure sample (field's native units) converted to hPa, with a Pa/hPa
-// magnitude fallback when the units string is missing or unrecognized.
-double toHpa(double p, const std::string& units) {
-    if (const auto c = core::convert(p, units, "hPa")) return *c;
-    return p > 2000.0 ? p / 100.0 : p;
-}
-
 // Mean of the finite entries, or +inf if none (sorts such a level to the bottom).
 double finiteMean(const std::vector<double>& v) {
     double sum = 0.0;
@@ -101,7 +94,7 @@ CrossSection extractCrossSectionModelLevels(
             const float rawP = sampleBilinear(*pfield, p);
             row.pressures.push_back(std::isnan(rawP)
                                         ? std::numeric_limits<double>::quiet_NaN()
-                                        : toHpa(rawP, pfield->meta.units));
+                                        : core::toHpa(rawP, pfield->meta.units));
         }
         row.meanP = finiteMean(row.pressures);
         rows.push_back(std::move(row));
