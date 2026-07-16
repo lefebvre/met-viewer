@@ -30,6 +30,9 @@ TimeController::TimeController(QWidget* parent) : QWidget(parent) {
     label_->setMinimumWidth(160);
 
     timer_ = new QTimer(this);
+    // Single-shot: each frame arms exactly one advance, and the next is only armed
+    // once the current frame reports ready (frameReady()) — closed-loop playback.
+    timer_->setSingleShot(true);
     connect(timer_, &QTimer::timeout, this, &TimeController::advanceFrame);
 
     auto* layout = new QHBoxLayout(this);
@@ -75,26 +78,37 @@ void TimeController::setFps(int fps) {
     if (timer_->isActive()) timer_->start(1000 / fps_);
 }
 
-bool TimeController::isPlaying() const { return timer_->isActive(); }
+// A single-shot timer is idle *between* frames (while a decode is in flight), so
+// "playing" is tracked explicitly rather than inferred from the timer.
+bool TimeController::isPlaying() const { return playing_; }
 
 void TimeController::setPlaying(bool playing) {
-    if (playing && slider_->maximum() > 0) {
-        timer_->start(1000 / fps_);
+    playing_ = playing && slider_->maximum() > 0;
+    if (playing_) {
+        timer_->start(1000 / fps_);  // arm the first advance
     } else {
         timer_->stop();
     }
     if (icons_) updatePlayIcon();
-    else play_->setText(isPlaying() ? "⏸" : "▶");  // glyph fallback without icons
+    else play_->setText(playing_ ? "⏸" : "▶");  // glyph fallback without icons
 }
 
-void TimeController::togglePlay() { setPlaying(!timer_->isActive()); }
+void TimeController::togglePlay() { setPlaying(!playing_); }
 
 void TimeController::play() { setPlaying(true); }
+void TimeController::pause() { setPlaying(false); }
 
 void TimeController::advanceFrame() {
+    if (!playing_) return;
     if (slider_->maximum() <= 0) { setPlaying(false); return; }
     const int next = (slider_->value() + 1) % (slider_->maximum() + 1);  // loop
+    // Moves the slider (emits indexChanged → decode). The timer is NOT re-armed here;
+    // the owner calls frameReady() once this frame's field is ready, arming the next.
     slider_->setValue(next);
+}
+
+void TimeController::frameReady() {
+    if (playing_) timer_->start(1000 / fps_);  // schedule the next advance
 }
 
 void TimeController::setSteps(const QStringList& labels, int current) {

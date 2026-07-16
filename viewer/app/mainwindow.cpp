@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <map>
 #include <set>
 #include <utility>
 
@@ -518,6 +520,7 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
         loadedPaths_.clear();
         loadedSources_.clear();
         fieldCache_.clear();  // a fresh set invalidates cached fields
+        ++datasetEpoch_;      // and invalidates the per-tab analysis caches
     }
     for (auto& [path, ds] : batch.opened) {
         loadedPaths_.push_back(path);
@@ -622,8 +625,10 @@ void MainWindow::onLevelChanged(int index) {
 void MainWindow::onTimeChanged(int index) {
     if (index < 0 || index >= static_cast<int>(currentTimes_.size())) return;
     timeIdx_ = index;
-    decodeCurrent();
+    // Kick off the analyses first so their in-flight state is set before the field's
+    // (possibly synchronous, cache-hit) settle check decides whether to advance.
     refreshAnalyses();  // sections/soundings re-extract; time-series marker moves
+    decodeCurrent();
 }
 
 void MainWindow::refreshAnalyses() {
@@ -639,7 +644,19 @@ void MainWindow::refreshAnalyses() {
 }
 
 void MainWindow::decodeCurrent() {
-    if (!dataset_ || currentVar_.empty() || currentLevels_.empty() || currentTimes_.empty()) return;
+    fieldReadyForStep_ = false;  // a (re)decode: the field is not ready until it settles
+    if (!dataset_ || currentVar_.empty() || currentLevels_.empty() || currentTimes_.empty()) {
+        // Nothing to decode. Keep playback alive across a transient empty var/level,
+        // but stop it outright if there is genuinely no data to animate (else the
+        // closed loop would spin at the frame rate doing nothing).
+        if (!dataset_ || currentTimes_.empty()) {
+            if (timeController_) timeController_->pause();
+        } else {
+            fieldReadyForStep_ = true;
+            maybeAdvancePlayback();
+        }
+        return;
+    }
 
     core::FieldKey key;
     key.varName = currentVar_;
@@ -655,6 +672,8 @@ void MainWindow::decodeCurrent() {
         currentRaw_ = cached;
         presentField();
         prefetchAhead();
+        fieldReadyForStep_ = true;
+        maybeAdvancePlayback();  // field ready → advance if analyses are ready too
         return;
     }
 
@@ -666,8 +685,11 @@ void MainWindow::decodeCurrent() {
     submitDecode(*pool_, dataset_, key, gen, this, [this, gen, key, prog](DecodeOutcome outcome) {
         endJob(prog);
         if (!outcome.field) {
-            if (outcome.generation == generation_)
+            if (outcome.generation == generation_) {
                 probeLabel_->setText(tr("Decode error: %1").arg(outcome.error));
+                fieldReadyForStep_ = true;  // treat a bad frame as "settled" so playback continues
+                maybeAdvancePlayback();
+            }
             return;
         }
         fieldCache_.put(key, outcome.field);
@@ -675,7 +697,21 @@ void MainWindow::decodeCurrent() {
         currentRaw_ = outcome.field;
         presentField();
         prefetchAhead();
+        fieldReadyForStep_ = true;
+        maybeAdvancePlayback();  // field ready → advance if analyses are ready too
     });
+}
+
+void MainWindow::maybeAdvancePlayback() {
+    // Closed-loop gate: advance only while playing, once the field has settled AND no
+    // open analysis (cross-section/skew-T) is still extracting. Whichever load
+    // finishes last fires the advance. A no-op when not playing, so it is safe on
+    // every decodeCurrent / analysis-completion path.
+    if (!timeController_ || !timeController_->isPlaying()) return;
+    if (!fieldReadyForStep_) return;
+    for (const auto& a : analyses_)
+        if (a.frame && a.loading && a.loading()) return;  // an analysis is still loading
+    timeController_->frameReady();
 }
 
 void MainWindow::presentField() {
@@ -1086,6 +1122,111 @@ ViewFrame* MainWindow::wrapCrossSection(CrossSectionView* view) {
     return new ViewFrame(view, panel);
 }
 
+// Per-tab state backing a time-following cross-section / skew-T: an inFlight/pending
+// pair that coalesces refreshes to one extraction at a time, plus a per-(validTime,
+// member) cache of the extracted result so a looping Play recomputes nothing after the
+// first pass. `epoch` records the datasetEpoch_ the cache was built against.
+struct MainWindow::CrossSectionTab {
+    bool inFlight = false;
+    bool pending = false;
+    quint64 epoch = 0;
+    std::map<std::pair<std::int64_t, int>, analysis::CrossSection> cache;
+};
+
+struct MainWindow::SoundingTab {
+    bool inFlight = false;
+    bool pending = false;
+    quint64 epoch = 0;
+    std::map<std::pair<std::int64_t, int>, analysis::Sounding> cache;
+};
+
+void MainWindow::refreshCrossSectionTab(QPointer<CrossSectionView> view, std::string var,
+                                        std::vector<core::LatLon> path,
+                                        std::shared_ptr<CrossSectionTab> tab) {
+    if (!view || !dataset_ || currentTimes_.empty()) return;
+    if (tab->epoch != datasetEpoch_) {  // a dataset replace invalidated the cache
+        tab->cache.clear();
+        tab->epoch = datasetEpoch_;
+    }
+    const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    const int mem = currentMember_;
+    const auto key = std::make_pair(static_cast<std::int64_t>(t.epochSeconds), mem);
+
+    if (auto it = tab->cache.find(key); it != tab->cache.end()) {
+        view->setSection(it->second);  // instant cache hit — no extraction thread
+        return;
+    }
+    if (tab->inFlight) {  // an extraction is running; chase the latest time when it lands
+        tab->pending = true;
+        return;
+    }
+    tab->inFlight = true;
+    auto dset = dataset_;
+    auto p = std::make_shared<JobProgress>();
+    p->total = estimateCrossSectionReads(*dset, var);
+    beginJob(tr("Updating cross-section…"), p);
+    submitCompute<analysis::CrossSection>(
+        *pool_, this,
+        [dset, var, t, mem, path, p] {
+            return MainWindow::computeCrossSection(*dset, var, t, mem, path, 200, p);
+        },
+        [this, view, var, path, tab, key, p](analysis::CrossSection ncs) {
+            endJob(p);
+            tab->inFlight = false;
+            if (ncs.pressures.size() >= 2) {
+                tab->cache[key] = ncs;             // cache the result for this (time, member)
+                if (view) view->setSection(ncs);   // always apply (coalescing keeps these in order)
+            }
+            if (tab->pending) {  // newer time requested while this ran → re-chase the current one
+                tab->pending = false;
+                refreshCrossSectionTab(view, var, path, tab);
+            }
+            maybeAdvancePlayback();  // this tab's load settled → maybe advance
+        });
+}
+
+void MainWindow::refreshSoundingTab(QPointer<SkewTView> view, core::LatLon point,
+                                    std::shared_ptr<SoundingTab> tab) {
+    if (!view || !dataset_ || currentTimes_.empty()) return;
+    if (tab->epoch != datasetEpoch_) {
+        tab->cache.clear();
+        tab->epoch = datasetEpoch_;
+    }
+    const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    const int mem = currentMember_;
+    const auto key = std::make_pair(static_cast<std::int64_t>(t.epochSeconds), mem);
+
+    if (auto it = tab->cache.find(key); it != tab->cache.end()) {
+        view->setSounding(it->second);
+        return;
+    }
+    if (tab->inFlight) {
+        tab->pending = true;
+        return;
+    }
+    tab->inFlight = true;
+    auto dset = dataset_;
+    auto p = std::make_shared<JobProgress>();
+    p->total = estimateSoundingReads(*dset);
+    beginJob(tr("Updating sounding…"), p);
+    submitCompute<analysis::Sounding>(
+        *pool_, this,
+        [dset, t, mem, point, p] { return MainWindow::computeSounding(*dset, t, mem, point, p); },
+        [this, view, point, tab, key, p](analysis::Sounding ns) {
+            endJob(p);
+            tab->inFlight = false;
+            if (ns.levels.size() >= 2) {
+                tab->cache[key] = ns;
+                if (view) view->setSounding(ns);
+            }
+            if (tab->pending) {
+                tab->pending = false;
+                refreshSoundingTab(view, point, tab);
+            }
+            maybeAdvancePlayback();  // this tab's load settled → maybe advance
+        });
+}
+
 void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) {
     if (currentVar_.empty() || !dataset_ || currentTimes_.empty()) return;
     const std::string var = currentVar_;
@@ -1100,7 +1241,7 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
         [ds, var, time, member, path, prog] {
             return MainWindow::computeCrossSection(*ds, var, time, member, path, 200, prog);
         },
-        [this, var, path, prog](analysis::CrossSection cs) {
+        [this, var, path, time, member, prog](analysis::CrossSection cs) {
             endJob(prog);
             if (cs.pressures.size() < 2) {
                 statusBar()->showMessage(tr("Cross-section needs a multi-level variable"), 4000);
@@ -1111,25 +1252,17 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
             view->setSection(cs);                  // emits rangeChanged -> fills the legend
             addAnalysisDock(frame, tr("Section: %1").arg(QString::fromStdString(var)));
             statusBar()->clearMessage();
-            // Follow the time slider: re-extract this section at the current time.
-            analyses_.push_back({frame, [this, v = QPointer<CrossSectionView>(view), var, path]() {
-                if (!v || !dataset_ || currentTimes_.empty()) return;
-                const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
-                const int mem = currentMember_;
-                auto dset = dataset_;
-                auto p = std::make_shared<JobProgress>();
-                p->total = estimateCrossSectionReads(*dset, var);
-                beginJob(tr("Updating cross-section…"), p);
-                submitCompute<analysis::CrossSection>(
-                    *pool_, this,
-                    [dset, var, t, mem, path, p] {
-                        return MainWindow::computeCrossSection(*dset, var, t, mem, path, 200, p);
-                    },
-                    [this, v, p](analysis::CrossSection ncs) {
-                        endJob(p);
-                        if (v && ncs.pressures.size() >= 2) v->setSection(ncs);
-                    });
-            }});
+            // Follow the time slider via a coalesced + cached re-extraction. Seed the
+            // cache with this initial section so revisiting this time is instant.
+            auto tab = std::make_shared<CrossSectionTab>();
+            tab->epoch = datasetEpoch_;
+            tab->cache[std::make_pair(static_cast<std::int64_t>(time.epochSeconds), member)] = cs;
+            analyses_.push_back(
+                {frame,
+                 [this, v = QPointer<CrossSectionView>(view), var, path, tab]() {
+                     refreshCrossSectionTab(v, var, path, tab);
+                 },
+                 [tab]() { return tab->inFlight; }});
         });
 }
 
@@ -1146,7 +1279,7 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
         [ds, time, member, point, prog] {
             return MainWindow::computeSounding(*ds, time, member, point, prog);
         },
-        [this, point, prog](analysis::Sounding s) {
+        [this, point, time, member, prog](analysis::Sounding s) {
             endJob(prog);
             if (s.levels.size() < 2) {
                 statusBar()->showMessage(tr("Sounding needs multi-level temperature (t)"), 4000);
@@ -1156,25 +1289,16 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
             view->setSounding(s);
             addAnalysisDock(view, tr("Skew-T"));
             statusBar()->clearMessage();
-            // Follow the time slider: re-extract this sounding at the current time.
-            analyses_.push_back({view, [this, v = QPointer<SkewTView>(view), point]() {
-                if (!v || !dataset_ || currentTimes_.empty()) return;
-                const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
-                const int mem = currentMember_;
-                auto dset = dataset_;
-                auto p = std::make_shared<JobProgress>();
-                p->total = estimateSoundingReads(*dset);
-                beginJob(tr("Updating sounding…"), p);
-                submitCompute<analysis::Sounding>(
-                    *pool_, this,
-                    [dset, t, mem, point, p] {
-                        return MainWindow::computeSounding(*dset, t, mem, point, p);
-                    },
-                    [this, v, p](analysis::Sounding ns) {
-                        endJob(p);
-                        if (v && ns.levels.size() >= 2) v->setSounding(ns);
-                    });
-            }});
+            // Follow the time slider via a coalesced + cached re-extraction. Seed the
+            // cache with this initial sounding so revisiting this time is instant.
+            auto tab = std::make_shared<SoundingTab>();
+            tab->epoch = datasetEpoch_;
+            tab->cache[std::make_pair(static_cast<std::int64_t>(time.epochSeconds), member)] = s;
+            analyses_.push_back({view,
+                                 [this, v = QPointer<SkewTView>(view), point, tab]() {
+                                     refreshSoundingTab(v, point, tab);
+                                 },
+                                 [tab]() { return tab->inFlight; }});
         });
 }
 
@@ -1206,9 +1330,11 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
             addAnalysisDock(view, tr("Series: %1").arg(QString::fromStdString(var)));
             statusBar()->clearMessage();
             // The series spans all times; just move its marker with the slider.
-            analyses_.push_back({view, [this, v = QPointer<TimeSeriesView>(view)]() {
-                if (v) v->setCurrentIndex(timeIdx_);
-            }});
+            analyses_.push_back({view,
+                                 [this, v = QPointer<TimeSeriesView>(view)]() {
+                                     if (v) v->setCurrentIndex(timeIdx_);
+                                 },
+                                 []() { return false; }});  // marker move only; never "loading"
         });
 }
 

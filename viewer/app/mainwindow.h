@@ -44,6 +44,7 @@ class TimeController;
 class ThemeManager;
 class IconThemer;
 class CrossSectionView;
+class SkewTView;
 class ViewFrame;
 
 class MainWindow : public QMainWindow {
@@ -151,17 +152,37 @@ private:
     // soundings follow the time slider and the time-series marker tracks it.
     void refreshAnalyses();
 
-    // One open analysis tab: its tab widget (for close cleanup) and a closure that
-    // re-extracts/updates it at the current time.
+    // One open analysis tab: its tab widget (for close cleanup), a closure that
+    // re-extracts/updates it at the current time, and a predicate reporting whether
+    // an extraction is currently in flight (so playback can wait for it).
     struct OpenAnalysis {
         QPointer<QWidget> frame;
         std::function<void()> refresh;
+        std::function<bool()> loading;  // true while this tab is extracting
     };
     std::vector<OpenAnalysis> analyses_;
+
+    // Per-tab state for a cross-section / skew-T that follows the time slider:
+    // coalesces refreshes to one extraction in flight and caches the extracted
+    // result per (validTime, member) so a looping Play recomputes nothing after the
+    // first pass. Defined in the .cpp (they hold analysis result structs).
+    struct CrossSectionTab;
+    struct SoundingTab;
+    void refreshCrossSectionTab(QPointer<CrossSectionView> view, std::string var,
+                                std::vector<core::LatLon> path,
+                                std::shared_ptr<CrossSectionTab> tab);
+    void refreshSoundingTab(QPointer<SkewTView> view, core::LatLon point,
+                            std::shared_ptr<SoundingTab> tab);
+
     void decodeCurrent();  // decode the field for the current var/level/time
     void displayField(std::shared_ptr<core::Field2D> field);  // show a decoded field
     void presentField();   // show the current raw field or a derived quantity
     void prefetchAhead();  // decode upcoming time steps into the cache
+    // Closed-loop playback: advance to the next frame only once the current one is
+    // fully loaded — the field decode AND every open analysis (cross-section/skew-T)
+    // extraction. Called at each of those settle points; fires TimeController::
+    // frameReady() when nothing is left outstanding.
+    void maybeAdvancePlayback();
     void updateWind();     // (re)build the wind overlay for the current level/time
     // Build the earth-relative wind field for the current level/time, or null.
     std::shared_ptr<analysis::WindField> buildWindField();
@@ -245,6 +266,8 @@ private:
     quint64 openGeneration_ = 0;  // supersede an in-flight async open when a newer one starts
     QString currentUnits_;
     quint64 generation_ = 0;
+    quint64 datasetEpoch_ = 0;  // bumped on dataset *replace*; invalidates per-tab analysis caches
+    bool fieldReadyForStep_ = false;  // current frame's field has settled (for playback gating)
     FieldCache fieldCache_{1024ull * 1024 * 1024};  // 1 GB default
     int cacheBudgetMB_ = 1024;
     int animationFps_ = 6;
