@@ -1,11 +1,14 @@
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <QMainWindow>
 #include <QPointer>
+#include <QStringList>
 
 #include "viewer/analysis/wind.h"
 #include "viewer/app/fieldcache.h"
@@ -52,8 +55,20 @@ public:
     // window icon variant when the effective scheme changes.
     [[nodiscard]] ThemeManager* theme() const { return theme_; }
 
-    // Open a file directly (used by the File menu and by command-line args).
+    // Open a single file directly (File > Open Recent). Thin wrapper over
+    // openFiles({path}, replace=true).
     void openFile(const QString& path);
+
+    // Open a set of files as one merged dataset whose time axis is the union of
+    // the inputs (e.g. HRRR's one-file-per-hour). `replace` starts a fresh set;
+    // when false the files are added to the current set. Asynchronous: files are
+    // scanned on a background thread with a progress bar so the UI stays
+    // responsive (a full HRRR day is ~23 files, ~0.6 s each to scan).
+    void openFiles(const QStringList& paths, bool replace);
+
+    // Synchronous variant for headless/CLI use: the event loop isn't running yet
+    // and follow-on flags (--var/--time/--grab) must act on a ready dataset.
+    void openFilesBlocking(const QStringList& paths);
 
     // Developer/testing aid: after `delayMs`, grab the plot to `pngPath` and
     // quit the application. Used for headless visual verification.
@@ -108,6 +123,8 @@ protected:
 
 private slots:
     void onOpenTriggered();
+    void onOpenFolderTriggered();
+    void onAddFilesTriggered();
     void onFieldChosen(const core::FieldKey& key);
     void onLevelChanged(int index);
     void onTimeChanged(int index);
@@ -153,6 +170,23 @@ private:
     void openPreferences();
     void addRecentFile(const QString& path);  // record a successfully opened file
     void updateRecentMenu();                   // rebuild the "Open Recent" submenu
+
+    // A batch of opened files: the successfully opened (path, dataset) pairs in
+    // order, plus paths that failed to open (skipped, not fatal).
+    struct OpenBatch {
+        std::vector<std::pair<std::filesystem::path, std::shared_ptr<readers::IDataset>>> opened;
+        QStringList skipped;
+    };
+    // Open each path, catching per-file failures; bumps progress->done per file if
+    // given. Static + touches no window state so it can run on a worker thread.
+    static OpenBatch openBatch(const std::vector<std::filesystem::path>& paths,
+                               JobProgress* progress);
+    // Install an opened batch on the GUI thread: merge it into the current set (or
+    // replace the set), rebuild the catalog view, and show or preserve the field.
+    void installBatch(OpenBatch batch, bool replace);
+    // The paths a request should actually open: for an add, drops any already in
+    // the current set and de-dupes; sorted for deterministic order.
+    std::vector<std::filesystem::path> pathsToOpen(const QStringList& paths, bool replace) const;
 
     // Read all pressure levels of `varName` at `time` (pressure, field). Static +
     // dataset-by-reference so it can run off the GUI thread without touching
@@ -203,6 +237,12 @@ private:
     void pollProgress();
 
     std::shared_ptr<readers::IDataset> dataset_;
+    // The currently loaded set: the leaf datasets (kept so "Add files" only scans
+    // the new files) and their paths, parallel and in load order. `dataset_` is the
+    // sole leaf when one file is loaded, else a MultiDataset wrapping all of them.
+    std::vector<std::filesystem::path> loadedPaths_;
+    std::vector<std::shared_ptr<readers::IDataset>> loadedSources_;
+    quint64 openGeneration_ = 0;  // supersede an in-flight async open when a newer one starts
     QString currentUnits_;
     quint64 generation_ = 0;
     FieldCache fieldCache_{1024ull * 1024 * 1024};  // 1 GB default

@@ -3,10 +3,12 @@
 #include <array>
 #include <cstddef>
 #include <fstream>
+#include <memory>
 #include <vector>
 
 #include "viewer/readers/arl/arlreader.h"
 #include "viewer/readers/grib/gribreader.h"
+#include "viewer/readers/multidataset.h"
 #include "viewer/readers/netcdf/cfreader.h"
 
 namespace met::readers {
@@ -53,6 +55,30 @@ std::unique_ptr<IDataset> openDataset(const std::filesystem::path& path) {
 
     if (!best) throw ReadError("no reader recognizes file: " + path.string());
     return best->open(path);
+}
+
+OpenResult openDatasets(const std::vector<std::filesystem::path>& paths) {
+    if (paths.empty()) throw ReadError("no files to open");
+
+    OpenResult result;
+    std::vector<std::shared_ptr<IDataset>> sources;
+    sources.reserve(paths.size());
+    for (const auto& path : paths) {
+        try {
+            sources.push_back(std::shared_ptr<IDataset>(openDataset(path)));
+        } catch (const std::exception&) {
+            result.skipped.push_back(path);
+        }
+    }
+
+    if (sources.empty()) throw ReadError("none of the selected files could be opened");
+
+    // A single file needs no wrapping — return it directly so single-file behavior
+    // (including formatName) is byte-for-byte what it was before.
+    result.dataset = sources.size() == 1
+                         ? std::move(sources.front())
+                         : std::make_shared<MultiDataset>(std::move(sources));
+    return result;
 }
 
 }  // namespace met::readers

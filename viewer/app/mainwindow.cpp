@@ -1,10 +1,15 @@
 #include "viewer/app/mainwindow.h"
 
+#include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <set>
+#include <utility>
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -55,6 +60,7 @@
 #include "viewer/core/timeaxis.h"
 #include "viewer/core/units.h"
 #include "viewer/readers/detect.h"
+#include "viewer/readers/multidataset.h"
 
 namespace met::app {
 namespace {
@@ -233,10 +239,15 @@ void MainWindow::buildUi() {
 
     // Menu.
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
-    QAction* openAct = fileMenu->addAction(tr("&Open…"));
+    QAction* openAct = fileMenu->addAction(tr("&Open Files…"));
     openAct->setShortcut(QKeySequence::Open);
     icons_->applyAction(openAct, "file-open");
     connect(openAct, &QAction::triggered, this, &MainWindow::onOpenTriggered);
+    QAction* openFolderAct = fileMenu->addAction(tr("Open &Folder…"));
+    icons_->applyAction(openFolderAct, "file-open");
+    connect(openFolderAct, &QAction::triggered, this, &MainWindow::onOpenFolderTriggered);
+    QAction* addFilesAct = fileMenu->addAction(tr("&Add Files…"));
+    connect(addFilesAct, &QAction::triggered, this, &MainWindow::onAddFilesTriggered);
     recentMenu_ = fileMenu->addMenu(tr("Open &Recent"));
     recentMenu_->setToolTipsVisible(true);  // show full paths on hover
     updateRecentMenu();
@@ -385,30 +396,173 @@ void MainWindow::scheduleGrabAndQuit(const QString& pngPath, int delayMs) {
     });
 }
 
-void MainWindow::onOpenTriggered() {
-    const QString path = QFileDialog::getOpenFileName(
-        this, tr("Open meteorological file"), {},
-        tr("Meteorological data (*.grib *.grib2 *.grb *.grb2 *.grib1 *.nc *.nc4);;All files (*)"));
-    if (!path.isEmpty()) openFile(path);
+// The Open/Add file-dialog filter (GRIB editions, NetCDF).
+static QString dataFileFilter() {
+    return QObject::tr(
+        "Meteorological data (*.grib *.grib2 *.grb *.grb2 *.grib1 *.nc *.nc4);;All files (*)");
 }
 
-void MainWindow::openFile(const QString& path) {
-    try {
-        std::unique_ptr<readers::IDataset> ds =
-            readers::openDataset(std::filesystem::path(path.toStdString()));
-        dataset_ = std::shared_ptr<readers::IDataset>(std::move(ds));
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Open failed"), QString::fromUtf8(e.what()));
+void MainWindow::onOpenTriggered() {
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, tr("Open meteorological files"), {}, dataFileFilter());
+    if (!paths.isEmpty()) openFiles(paths, /*replace=*/true);
+}
+
+void MainWindow::onAddFilesTriggered() {
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, tr("Add meteorological files to the current set"), {}, dataFileFilter());
+    if (!paths.isEmpty()) openFiles(paths, /*replace=*/false);
+}
+
+void MainWindow::onOpenFolderTriggered() {
+    const QString folder =
+        QFileDialog::getExistingDirectory(this, tr("Open a folder of meteorological files"));
+    if (folder.isEmpty()) return;
+    // Pick recognized data files by extension (ARL has no standard extension, so it
+    // isn't matched here — use Open Files for those).
+    static const QStringList kNameFilters = {"*.grib", "*.grib2", "*.grb", "*.grb2",
+                                             "*.grib1", "*.nc", "*.nc4"};
+    QDir dir(folder);
+    QStringList paths;
+    for (const QString& name : dir.entryList(kNameFilters, QDir::Files, QDir::Name))
+        paths << dir.filePath(name);
+    if (paths.isEmpty()) {
+        QMessageBox::information(
+            this, tr("No data files"),
+            tr("No recognized data files (*.grib2, *.nc, …) were found in:\n%1").arg(folder));
         return;
     }
-    fieldCache_.clear();  // a new file invalidates cached fields
-    datasetDock_->setCatalog(dataset_->catalog());
-    plot_->clearField();
-    statusBar()->showMessage(
-        tr("Opened %1 (%2)").arg(path).arg(QString::fromStdString(dataset_->formatName())), 4000);
-    addRecentFile(path);
+    openFiles(paths, /*replace=*/true);
+}
 
-    // Auto-display the first available field.
+void MainWindow::openFile(const QString& path) { openFiles({path}, /*replace=*/true); }
+
+std::vector<std::filesystem::path> MainWindow::pathsToOpen(const QStringList& paths,
+                                                           bool replace) const {
+    // For an add, skip files already in the set. De-dupe the request and sort so the
+    // load order is deterministic (HRRR hourly names sort chronologically).
+    std::set<std::filesystem::path> existing;
+    if (!replace)
+        for (const auto& p : loadedPaths_) existing.insert(p);
+
+    std::set<std::filesystem::path> seen;
+    std::vector<std::filesystem::path> out;
+    for (const QString& p : paths) {
+        if (p.isEmpty()) continue;
+        std::filesystem::path fp(p.toStdString());
+        if (existing.count(fp) || !seen.insert(fp).second) continue;
+        out.push_back(std::move(fp));
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+MainWindow::OpenBatch MainWindow::openBatch(const std::vector<std::filesystem::path>& paths,
+                                            JobProgress* progress) {
+    OpenBatch batch;
+    for (const auto& path : paths) {
+        try {
+            batch.opened.emplace_back(
+                path, std::shared_ptr<readers::IDataset>(readers::openDataset(path)));
+        } catch (const std::exception& e) {
+            // Keep the reason (e.g. "no reader recognizes file") so the skipped list
+            // tells the user why, not just which.
+            batch.skipped << (QString::fromStdString(path.filename().string()) + ": " +
+                              QString::fromUtf8(e.what()));
+        }
+        if (progress) progress->done.fetch_add(1, std::memory_order_relaxed);
+    }
+    return batch;
+}
+
+void MainWindow::openFiles(const QStringList& paths, bool replace) {
+    const std::vector<std::filesystem::path> newPaths = pathsToOpen(paths, replace);
+    if (newPaths.empty()) return;
+
+    // Scan the files on the thread pool with a determinate progress bar so a
+    // multi-file open (a full HRRR day is ~23 × ~0.6 s) never freezes the UI.
+    const quint64 gen = ++openGeneration_;
+    auto progress = std::make_shared<JobProgress>();
+    progress->total.store(static_cast<int>(newPaths.size()), std::memory_order_relaxed);
+    beginJob(tr("Opening %n file(s)…", nullptr, static_cast<int>(newPaths.size())), progress);
+
+    submitCompute<OpenBatch>(
+        *pool_, this,
+        [newPaths, progress]() { return openBatch(newPaths, progress.get()); },
+        [this, gen, replace, progress](OpenBatch batch) {
+            endJob(progress);
+            if (gen != openGeneration_) return;  // a newer open superseded this one
+            installBatch(std::move(batch), replace);
+        });
+}
+
+void MainWindow::openFilesBlocking(const QStringList& paths) {
+    const std::vector<std::filesystem::path> newPaths = pathsToOpen(paths, /*replace=*/true);
+    if (newPaths.empty()) return;
+    ++openGeneration_;  // supersede any in-flight async open
+    installBatch(openBatch(newPaths, nullptr), /*replace=*/true);
+}
+
+void MainWindow::installBatch(OpenBatch batch, bool replace) {
+    if (batch.opened.empty()) {
+        // Nothing opened (all failed / none selected): keep any existing dataset and
+        // loaded set intact and just report the failures. A failed "replace" must not
+        // clobber the data already on screen.
+        if (!batch.skipped.isEmpty())
+            QMessageBox::warning(this, tr("Open failed"),
+                                 tr("Could not open:\n%1").arg(batch.skipped.join(QChar('\n'))));
+        return;
+    }
+
+    if (replace) {
+        loadedPaths_.clear();
+        loadedSources_.clear();
+        fieldCache_.clear();  // a fresh set invalidates cached fields
+    }
+    for (auto& [path, ds] : batch.opened) {
+        loadedPaths_.push_back(path);
+        loadedSources_.push_back(std::move(ds));
+    }
+
+    // Remember the current field so an "add" keeps showing it after the (now larger)
+    // time axis merges in. Captured before onFieldChosen() overwrites the state.
+    core::FieldKey keep;
+    const bool keepSelection =
+        !replace && !currentVar_.empty() && levelIdx_ >= 0 &&
+        levelIdx_ < static_cast<int>(currentLevels_.size()) && timeIdx_ >= 0 &&
+        timeIdx_ < static_cast<int>(currentTimes_.size());
+    if (keepSelection) {
+        keep.varName = currentVar_;
+        keep.level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
+        keep.validTime = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+        keep.member = currentMember_;
+    }
+
+    dataset_ = loadedSources_.size() == 1
+                   ? loadedSources_.front()
+                   : std::make_shared<readers::MultiDataset>(loadedSources_);
+    datasetDock_->setCatalog(dataset_->catalog());
+    if (replace) plot_->clearField();
+
+    statusBar()->showMessage(
+        tr("Opened %n file(s) (%1)", nullptr, static_cast<int>(loadedSources_.size()))
+            .arg(QString::fromStdString(dataset_->formatName())),
+        4000);
+
+    if (!batch.skipped.isEmpty())
+        QMessageBox::warning(this, tr("Some files skipped"),
+                             tr("Could not open:\n%1").arg(batch.skipped.join(QChar('\n'))));
+
+    // Recent files stays a pool of individually re-openable files; only record when a
+    // single file was opened so a folder/multi-open doesn't flood the 10-entry list.
+    if (batch.opened.size() == 1)
+        addRecentFile(QString::fromStdString(batch.opened.front().first.string()));
+
+    // Restore the prior field (add) or show the first available one (replace/no prior).
+    if (keepSelection && dataset_->catalog().find(keep.varName)) {
+        onFieldChosen(keep);
+        return;
+    }
     const auto& vars = dataset_->catalog().variables();
     if (!vars.empty() && !vars.front().levels.empty()) {
         const auto& v = vars.front();
