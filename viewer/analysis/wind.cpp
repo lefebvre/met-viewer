@@ -5,6 +5,7 @@
 #include <cctype>
 #include <cmath>
 #include <numbers>
+#include <variant>
 
 #include "viewer/analysis/sample.h"
 
@@ -61,6 +62,23 @@ UV sampleWindLatLon(const WindField& w, core::LatLon at) {
     const core::GridIndex gi = core::latlonToIndex(w.u.grid, at);
     if (!gi.inDomain) return {std::nanf(""), std::nanf("")};
     return sampleWind(w, gi.x, gi.y);
+}
+
+UV earthRelativeWindAt(const core::Field2D& uGrid, const core::Field2D& vGrid, core::LatLon at) {
+    const core::GridIndex gi = core::latlonToIndex(uGrid.grid, at);
+    if (!gi.inDomain) return {std::nanf(""), std::nanf("")};
+    const float ug = sampleBilinearIndex(uGrid, gi.x, gi.y);
+    const float vg = sampleBilinearIndex(vGrid, gi.x, gi.y);
+    // Already earth-relative (regular lat/lon, or non-grid-relative components):
+    // no rotation needed. Also short-circuits when either sample is NaN.
+    if (std::isnan(ug) || std::isnan(vg) || !uGrid.meta.gridRelativeWind ||
+        std::holds_alternative<core::RegularLatLonGrid>(uGrid.grid))
+        return {ug, vg};
+    // Rotate just this vector by the meridian convergence at the sample point —
+    // identical math to rotateToEarthRelative(), evaluated once instead of per cell.
+    const double theta = gridNorthAngle(uGrid.grid, gi.x, gi.y);
+    const double c = std::cos(theta), s = std::sin(theta);
+    return {static_cast<float>(ug * c + vg * s), static_cast<float>(-ug * s + vg * c)};
 }
 
 float windSpeed(const WindField& w, double x, double y) {

@@ -70,17 +70,12 @@ Sounding extractSounding(const std::vector<std::pair<double, core::Field2D>>& tS
             const float rh = sampleBilinear(*rfield, point);
             lvl.dewpointK = dewpointFromRH(lvl.tempK, rh);
         }
-        // Earth-relative wind from the matching U/V pair at this pressure. Building a
-        // WindField lets rotateToEarthRelative fix up grid-relative components on a
-        // projected grid (a no-op for regular lat/lon grids).
+        // Earth-relative wind from the matching U/V pair at this pressure. Rotating
+        // only the sampled vector (not the whole grid) keeps this O(1) per level.
         const core::Field2D* ufield = fieldAtPressure(uStack, pressure);
         const core::Field2D* vfield = fieldAtPressure(vStack, pressure);
         if (ufield && vfield) {
-            WindField w;
-            w.u = *ufield;
-            w.v = *vfield;
-            rotateToEarthRelative(w);
-            const UV uv = sampleWindLatLon(w, point);
+            const UV uv = earthRelativeWindAt(*ufield, *vfield, point);
             lvl.windU = uv.u;
             lvl.windV = uv.v;
         }
@@ -116,11 +111,7 @@ Sounding extractSoundingModelLevels(
         const core::Field2D* ufield = fieldAtKey(uStack, levelKey);
         const core::Field2D* vfield = fieldAtKey(vStack, levelKey);
         if (ufield && vfield) {
-            WindField w;
-            w.u = *ufield;
-            w.v = *vfield;
-            rotateToEarthRelative(w);
-            const UV uv = sampleWindLatLon(w, point);
+            const UV uv = earthRelativeWindAt(*ufield, *vfield, point);
             lvl.windU = uv.u;
             lvl.windV = uv.v;
         }

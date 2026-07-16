@@ -39,6 +39,16 @@ struct UV {
 [[nodiscard]] UV sampleWind(const WindField& w, double x, double y);
 [[nodiscard]] UV sampleWindLatLon(const WindField& w, core::LatLon at);
 
+// Earth-relative wind sampled at a single geographic point, rotating only the one
+// sampled vector rather than the whole grid. `uGrid`/`vGrid` are the (possibly
+// grid-relative) components sharing a grid; when they are grid-relative on a
+// projected grid the sampled vector is rotated by the local meridian convergence.
+// Use this instead of copying + rotateToEarthRelative() when only a single point
+// is needed (e.g. a sounding level) — it is O(1) rather than O(grid). Returns NaN
+// off-domain.
+[[nodiscard]] UV earthRelativeWindAt(const core::Field2D& uGrid, const core::Field2D& vGrid,
+                                     core::LatLon at);
+
 // Wind speed (magnitude) at a fractional index.
 [[nodiscard]] float windSpeed(const WindField& w, double x, double y);
 

@@ -13,6 +13,14 @@
 namespace met::analysis {
 namespace {
 
+// Sample a field at a precomputed grid index (NaN when the point is off-domain).
+// Lets the caller project the path once and reuse it across every level, since all
+// levels of a variable share one grid.
+float sampleAt(const core::Field2D& field, const core::GridIndex& gi) {
+    return gi.inDomain ? sampleBilinearIndex(field, gi.x, gi.y)
+                       : std::numeric_limits<float>::quiet_NaN();
+}
+
 // Mean of the finite entries, or +inf if none (sorts such a level to the bottom).
 double finiteMean(const std::vector<double>& v) {
     double sum = 0.0;
@@ -44,6 +52,12 @@ CrossSection extractCrossSection(
     std::sort(order.begin(), order.end(),
               [&](std::size_t a, std::size_t b) { return levelStack[a].first < levelStack[b].first; });
 
+    // Project the path to grid indices once — every level shares the same grid.
+    std::vector<core::GridIndex> pathIdx;
+    pathIdx.reserve(cs.points.size());
+    for (const core::LatLon& p : cs.points)
+        pathIdx.push_back(core::latlonToIndex(levelStack.front().second.grid, p));
+
     cs.pressures.reserve(levelStack.size());
     cs.values.reserve(levelStack.size());
     for (std::size_t idx : order) {
@@ -51,7 +65,7 @@ CrossSection extractCrossSection(
         const core::Field2D& field = levelStack[idx].second;
         std::vector<float> row;
         row.reserve(cs.points.size());
-        for (const core::LatLon& p : cs.points) row.push_back(sampleBilinear(field, p));
+        for (const core::GridIndex& gi : pathIdx) row.push_back(sampleAt(field, gi));
         cs.values.push_back(std::move(row));
         cs.pressures.emplace_back(cs.points.size(), pressure);  // broadcast isobaric level
     }
@@ -78,6 +92,12 @@ CrossSection extractCrossSectionModelLevels(
         std::vector<double> pressures;
         double meanP;
     };
+    // Project the path to grid indices once — every level shares the same grid.
+    std::vector<core::GridIndex> pathIdx;
+    pathIdx.reserve(cs.points.size());
+    for (const core::LatLon& p : cs.points)
+        pathIdx.push_back(core::latlonToIndex(levelStack.front().second.grid, p));
+
     std::vector<Row> rows;
     rows.reserve(levelStack.size());
     for (const auto& [levelKey, vfield] : levelStack) {
@@ -89,9 +109,9 @@ CrossSection extractCrossSectionModelLevels(
         Row row;
         row.values.reserve(cs.points.size());
         row.pressures.reserve(cs.points.size());
-        for (const core::LatLon& p : cs.points) {
-            row.values.push_back(sampleBilinear(vfield, p));
-            const float rawP = sampleBilinear(*pfield, p);
+        for (const core::GridIndex& gi : pathIdx) {
+            row.values.push_back(sampleAt(vfield, gi));
+            const float rawP = sampleAt(*pfield, gi);
             row.pressures.push_back(std::isnan(rawP)
                                         ? std::numeric_limits<double>::quiet_NaN()
                                         : core::toHpa(rawP, pfield->meta.units));
