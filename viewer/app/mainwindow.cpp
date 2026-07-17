@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <set>
 #include <utility>
 
@@ -23,6 +24,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProgressBar>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStatusBar>
@@ -59,6 +61,7 @@
 #include "viewer/app/theme.h"
 #include "viewer/app/timecontroller.h"
 #include "viewer/app/timeseriesview.h"
+#include "viewer/core/grid.h"
 #include "viewer/core/timeaxis.h"
 #include "viewer/core/units.h"
 #include "viewer/readers/detect.h"
@@ -66,6 +69,35 @@
 
 namespace met::app {
 namespace {
+
+// A FieldKey for the first available record of a catalog (first variable, first
+// level/time/member), or nullopt if the catalog is empty. Used to fetch one
+// representative field cheaply.
+std::optional<core::FieldKey> firstFieldKey(const core::DatasetCatalog& cat) {
+    const auto& vars = cat.variables();
+    if (vars.empty() || vars.front().levels.empty()) return std::nullopt;
+    const auto& v = vars.front();
+    core::FieldKey k;
+    k.varName = v.varName;
+    k.level = v.levels.front();
+    k.validTime = v.times.empty() ? core::TimePoint{} : v.times.front();
+    k.member = v.members.empty() ? -1 : v.members.front();
+    return k;
+}
+
+// The grid of a dataset's first field, or nullopt if it has no readable field.
+// Datasets don't expose a grid directly (a GRIB file may even hold several), so
+// we read one representative field and take its grid. Best-effort: a decode error
+// yields nullopt and the caller treats compatibility as unknown.
+std::optional<core::GridDef> representativeGrid(readers::IDataset& ds) {
+    const auto key = firstFieldKey(ds.catalog());
+    if (!key) return std::nullopt;
+    try {
+        return ds.readField(*key).grid;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
 
 // Size a combo to its widest item so its reported sizeHint reflects the width the
 // control actually needs. The control panel is then given that width (see
@@ -514,6 +546,39 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
             QMessageBox::warning(this, tr("Open failed"),
                                  tr("Could not open:\n%1").arg(batch.skipped.join(QChar('\n'))));
         return;
+    }
+
+    // Grid-compatibility guard for an Add: a merged dataset must be one coherent
+    // grid/time-series. If a newly added file's grid differs from what's loaded, it
+    // can't be merged — offer to open the new file(s) as a fresh dataset instead.
+    // (Format is irrelevant here: a GRIB file on the same grid as loaded ARL data
+    // still merges; an ARL file on a different domain does not.)
+    if (!replace && dataset_) {
+        const auto existing = representativeGrid(*dataset_);
+        bool mismatch = false;
+        if (existing) {
+            for (const auto& [path, ds] : batch.opened) {
+                const auto g = representativeGrid(*ds);
+                if (g && !core::sameGrid(*existing, *g)) {
+                    mismatch = true;
+                    break;
+                }
+            }
+        }
+        if (mismatch) {
+            QMessageBox box(this);
+            box.setIcon(QMessageBox::Question);
+            box.setWindowTitle(tr("Different grid"));
+            box.setText(tr("The selected file(s) use a different grid or projection than the "
+                           "loaded data and can't be added to the same time series.\n\n"
+                           "Open them as a new dataset instead?"));
+            QPushButton* replaceBtn = box.addButton(tr("Replace"), QMessageBox::AcceptRole);
+            box.addButton(QMessageBox::Cancel);
+            box.setDefaultButton(replaceBtn);
+            box.exec();
+            if (box.clickedButton() != replaceBtn) return;  // Cancel: keep current dataset
+            replace = true;  // fall through and install the new batch as a fresh dataset
+        }
     }
 
     if (replace) {

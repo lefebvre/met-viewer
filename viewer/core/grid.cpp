@@ -51,6 +51,29 @@ GridIndex latlonToIndexProj(const ProjectedGrid& grid, LatLon ll) {
 
 }  // namespace
 
+namespace {
+// Relative tolerance so grids that are identical up to representational noise
+// (e.g. the same domain re-derived by two files) still compare equal, while a
+// genuinely different resolution/origin does not.
+bool near(double a, double b) {
+    const double scale = std::max({1.0, std::abs(a), std::abs(b)});
+    return std::abs(a - b) <= 1e-6 * scale;
+}
+}  // namespace
+
+bool sameGrid(const GridDef& a, const GridDef& b) {
+    if (a.index() != b.index()) return false;
+    if (const auto* ra = std::get_if<RegularLatLonGrid>(&a)) {
+        const auto& rb = std::get<RegularLatLonGrid>(b);
+        return ra->nlon == rb.nlon && ra->nlat == rb.nlat && near(ra->lat0, rb.lat0) &&
+               near(ra->lon0, rb.lon0) && near(ra->dlat, rb.dlat) && near(ra->dlon, rb.dlon);
+    }
+    const auto& pa = std::get<ProjectedGrid>(a);
+    const auto& pb = std::get<ProjectedGrid>(b);
+    return pa.nx == pb.nx && pa.ny == pb.ny && near(pa.x0, pb.x0) && near(pa.y0, pb.y0) &&
+           near(pa.dx, pb.dx) && near(pa.dy, pb.dy) && pa.crs.proj() == pb.crs.proj();
+}
+
 int gridWidth(const GridDef& g) {
     return std::visit(
         [](const auto& grid) {
