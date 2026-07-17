@@ -1,10 +1,15 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstddef>
+#include <cstring>
 #include <filesystem>
+#include <span>
 #include <variant>
 
 #include "viewer/core/grid.h"
+#include "viewer/readers/arl/arldataset.h"
+#include "viewer/readers/arl/arlreader.h"
 #include "viewer/readers/detect.h"
 
 using namespace met;
@@ -14,6 +19,26 @@ std::filesystem::path fixture(const char* n) {
     return std::filesystem::path(MET_FIXTURE_DIR) / n;
 }
 }  // namespace
+
+TEST(Arl, ProbeAcceptsAlphaGridId) {
+    // Real HRRR ARL files carry a 2-char alphanumeric grid ID (e.g. "AA") in the
+    // label's grid field (bytes 12-13), not digits. The probe must accept it.
+    readers::arl::ArlReader reader;
+    const char* label = "26 714 0 1 0AAINDX";  // 18 bytes: time/level fields, grid "AA", INDX
+    const auto* bytes = reinterpret_cast<const std::byte*>(label);
+    EXPECT_GT(reader.probe(std::span<const std::byte>(bytes, std::strlen(label)), "x_hrrr"), 0);
+}
+
+TEST(Arl, DecodesExtendedGridDimensions) {
+    // Grid IDs below 64 (digits, '@') add nothing; the I3 header value stands.
+    EXPECT_EQ(readers::arl::decodeGridDim(59, static_cast<unsigned char>('0')), 59);
+    EXPECT_EQ(readers::arl::decodeGridDim(100, static_cast<unsigned char>('@')), 100);
+    // HRRR: grid "AA" ('A' == 65) lifts 799 -> 1799 and 59 -> 1059.
+    EXPECT_EQ(readers::arl::decodeGridDim(799, static_cast<unsigned char>('A')), 1799);
+    EXPECT_EQ(readers::arl::decodeGridDim(59, static_cast<unsigned char>('A')), 1059);
+    // Each step above 'A' adds another 1000 (e.g. 'C' -> +3000).
+    EXPECT_EQ(readers::arl::decodeGridDim(200, static_cast<unsigned char>('C')), 3200);
+}
 
 TEST(Arl, DetectsAndCatalogs) {
     auto ds = readers::openDataset(fixture("small_latlon.arl"));

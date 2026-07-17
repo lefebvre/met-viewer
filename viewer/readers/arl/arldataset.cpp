@@ -126,18 +126,21 @@ GridDef buildGrid(const std::array<double, 12>& g, int nx, int ny) {
         return r;
     }
 
-    // Conformal projection. R = 6371200 m (ARL sphere).
+    // Conformal projection. R = 6371200 m (ARL sphere). The central meridian is
+    // REF_LON (the reference longitude, e.g. 262.5 = -97.5 for HRRR), NOT ORIENT
+    // — ORIENT is the grid's rotation angle relative to the projection (0 for
+    // every standard ARL grid and not expressible in these proj strings anyway).
     constexpr double R = 6371200.0;
     std::string proj;
     if (std::abs(tang_lat) >= 89.9) {
         proj = fmt::format("+proj=stere +lat_0={} +lat_ts={} +lon_0={} +R={} +units=m +no_defs",
-                           tang_lat > 0 ? 90.0 : -90.0, tang_lat, orient, R);
+                           tang_lat > 0 ? 90.0 : -90.0, tang_lat, ref_lon, R);
     } else if (std::abs(tang_lat) < 0.1) {
         proj = fmt::format("+proj=merc +lat_ts={} +lon_0={} +R={} +units=m +no_defs", ref_lat,
-                           orient, R);
+                           ref_lon, R);
     } else {
         proj = fmt::format("+proj=lcc +lat_1={} +lat_2={} +lat_0={} +lon_0={} +R={} +units=m +no_defs",
-                           tang_lat, tang_lat, tang_lat, orient, R);
+                           tang_lat, tang_lat, tang_lat, ref_lon, R);
     }
 
     ProjectedGrid p;
@@ -179,6 +182,10 @@ std::vector<float> unpack(const unsigned char* cpack, int nx, int ny, int nexp, 
 
 }  // namespace
 
+int decodeGridDim(int headerValue, unsigned char gridIdChar) {
+    return gridIdChar >= 64 ? headerValue + (gridIdChar - 64) * 1000 : headerValue;
+}
+
 ArlDataset::ArlDataset(std::filesystem::path path) : path_(std::move(path)) { scan(); }
 
 void ArlDataset::scan() {
@@ -205,6 +212,12 @@ void ArlDataset::scan() {
     nx_ = static_cast<int>(fInt(p, 93, 3));
     ny_ = static_cast<int>(fInt(p, 96, 3));
     const int nz = static_cast<int>(fInt(p, 99, 3));
+    // Grids larger than 999 in either dimension (e.g. HRRR at 1799x1059) store
+    // only the low three digits in the I3 header field; the two grid-ID chars in
+    // the label carry the thousands. Without this the record length is wrong and
+    // every post-INDX record is read from a misaligned offset -> all-garbage data.
+    nx_ = decodeGridDim(nx_, static_cast<unsigned char>(label[12]));
+    ny_ = decodeGridDim(ny_, static_cast<unsigned char>(label[13]));
     // Validate the critical dimensions rather than trusting silently-zeroed
     // parses: a bad header would otherwise yield a degenerate grid / record size.
     if (nx_ <= 0 || ny_ <= 0 || nz <= 0) throw ReadError("ARL: invalid INDX grid dimensions");
