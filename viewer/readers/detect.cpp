@@ -65,7 +65,7 @@ OpenResult openDatasets(const std::vector<std::filesystem::path>& paths) {
     sources.reserve(paths.size());
     for (const auto& path : paths) {
         try {
-            sources.push_back(std::shared_ptr<IDataset>(openDataset(path)));
+            sources.emplace_back(std::shared_ptr<IDataset>(openDataset(path)));
         } catch (const std::exception&) {
             result.skipped.push_back(path);
         }
