@@ -34,7 +34,15 @@ public:
 
     void setFps(int fps);
     [[nodiscard]] bool isPlaying() const;
-    void play();  // start playback programmatically
+    void play();   // start playback programmatically
+    void pause();  // stop playback
+
+    // Completion handshake: playback is closed-loop. advanceFrame() moves one step
+    // and then WAITS; the owner calls frameReady() once that step's field has
+    // finished loading, which schedules the next advance. This keeps at most one
+    // decode in flight per frame instead of firing on a fixed timer regardless of
+    // whether the previous frame loaded. A no-op when not playing.
+    void frameReady();
 
 signals:
     void indexChanged(int index);
@@ -59,6 +67,7 @@ private:
     QToolButton* play_ = nullptr;
     QTimer* timer_ = nullptr;
     int fps_ = 6;
+    bool playing_ = false;  // "playing" state; the single-shot timer is idle between frames
     QStringList labels_;
 };
 

@@ -121,8 +121,8 @@ int main(int argc, char** argv) {
         "met-viewer — view and analyze gridded meteorological data (GRIB, NetCDF, ARL).");
     parser.addHelpOption();
     parser.addVersionOption();
-    parser.addPositionalArgument("file", "Data file(s) to open; the last one is shown.",
-                                 "[file...]");
+    parser.addPositionalArgument(
+        "file", "Data file(s) to open, loaded together as one time-stepped dataset.", "[file...]");
     parser.addOptions({
         {"map", "Start on the GIS Map tab."},
         {"contours", "Enable the 2D-plot contour overlay."},
@@ -149,8 +149,9 @@ int main(int argc, char** argv) {
         if (wh.size() == 2) window.resize(wh.at(0).toInt(), wh.at(1).toInt());
     }
 
-    // Positional args open files; the last one ends up shown.
-    for (const QString& file : parser.positionalArguments()) window.openFile(file);
+    // Positional args open together as one merged, time-stepped dataset. Blocking
+    // so the follow-on flags below (--var/--time/--grab) act on a ready dataset.
+    window.openFilesBlocking(parser.positionalArguments());
 
     // Field selection first, so map/contours/wind/demo act on the intended field.
     if (parser.isSet("var")) window.selectVariable(parser.value("var"));

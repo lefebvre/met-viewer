@@ -12,6 +12,13 @@
 
 namespace met::readers::arl {
 
+// Decode an ARL grid dimension. Dimensions above 999 don't fit the I3 field in
+// the INDX header, so the two grid-ID characters in each record's label (bytes
+// 12-13) carry the overflow: a grid-ID char >= 64 adds (char - 64) * 1000 to the
+// corresponding dimension. HRRR's grid ID "AA" turns header 799/59 into
+// 1799/1059. (See NOAA hysplitdata metdata.py.)
+[[nodiscard]] int decodeGridDim(int headerValue, unsigned char gridIdChar);
+
 // A NOAA ARL packed dataset (HYSPLIT meteorology). The file is a sequence of
 // fixed-length records (NX*NY + 50). The first record of each time period is an
 // "INDX" record whose ASCII data section defines the grid and the per-level

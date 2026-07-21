@@ -1,11 +1,22 @@
 #include <gtest/gtest.h>
 
+#include <QEventLoop>
 #include <QObject>
 #include <QStringList>
+#include <QTimer>
 
 #include "viewer/app/timecontroller.h"
 
 using namespace met::app;
+
+namespace {
+// Spin the event loop for `ms` so queued QTimer timeouts (playback advances) fire.
+void spin(int ms) {
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+}  // namespace
 
 TEST(TimeController, SetStepsClampsCurrentIndex) {
     TimeController tc;
@@ -39,4 +50,46 @@ TEST(TimeController, SetStepsDoesNotEmitIndexChanged) {
     tc.setSteps({"a", "b", "c", "d", "e"}, 3);  // reconfigure is signal-blocked
     EXPECT_EQ(count, 0);
     EXPECT_EQ(tc.currentIndex(), 3);
+}
+
+// The core of the fix: playback is closed-loop. advanceFrame() moves ONE step and
+// then waits; without a frameReady() ack it must not advance again (no fixed-timer
+// "hail" of frames the owner can't keep up with).
+TEST(TimeController, PlaybackWaitsForFrameReady) {
+    TimeController tc;
+    tc.setSteps({"a", "b", "c", "d"}, 0);
+    tc.setFps(60);  // ~16 ms per shot
+    tc.play();
+    ASSERT_TRUE(tc.isPlaying());
+
+    spin(60);
+    EXPECT_EQ(tc.currentIndex(), 1);  // exactly one advance, then it waits
+
+    spin(80);
+    EXPECT_EQ(tc.currentIndex(), 1);  // no frameReady() -> does NOT advance again
+    EXPECT_TRUE(tc.isPlaying());      // still "playing" though the single-shot timer is idle
+
+    tc.frameReady();
+    spin(60);
+    EXPECT_EQ(tc.currentIndex(), 2);  // the ack schedules exactly the next advance
+
+    tc.setSteps({"x"}, 0);  // stop the timer before teardown
+}
+
+// With each frame acked (simulating instant cache hits), playback advances
+// repeatedly and wraps past the end — the loop keeps running.
+TEST(TimeController, FrameReadyDrivesContinuousPlayback) {
+    TimeController tc;
+    tc.setSteps({"a", "b", "c", "d"}, 0);
+    tc.setFps(60);
+    int advances = 0;
+    QObject::connect(&tc, &TimeController::indexChanged, [&](int) {
+        ++advances;
+        tc.frameReady();  // ack immediately
+    });
+    tc.play();
+    spin(200);
+    tc.pause();
+    EXPECT_GE(advances, 3);        // advanced several steps (handshake keeps re-arming)
+    EXPECT_FALSE(tc.isPlaying());  // pause() stops it
 }

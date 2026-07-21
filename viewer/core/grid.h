@@ -41,6 +41,13 @@ struct ProjectedGrid {
 // alternatives; everything above (warp, sampling, contours) only speaks GridDef.
 using GridDef = std::variant<RegularLatLonGrid, ProjectedGrid>;
 
+// True when two grids describe the same geometry (same alternative, dimensions,
+// origin, spacing, and — for projected grids — projection string), within a small
+// tolerance on the floating-point fields. Used to decide whether datasets can be
+// merged into one coherent time-stepped dataset: slices of the same source grid
+// compare equal; a different projection/resolution/domain does not.
+[[nodiscard]] bool sameGrid(const GridDef& a, const GridDef& b);
+
 // Number of columns / rows, and total cells.
 [[nodiscard]] int gridWidth(const GridDef& g);
 [[nodiscard]] int gridHeight(const GridDef& g);

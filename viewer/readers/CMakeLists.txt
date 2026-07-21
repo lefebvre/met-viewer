@@ -20,6 +20,7 @@ find_package(fmt CONFIG REQUIRED)
 
 add_library(met_readers STATIC
     detect.cpp
+    multidataset.cpp
     grib/gribreader.cpp
     grib/gribdataset.cpp
     netcdf/cfreader.cpp

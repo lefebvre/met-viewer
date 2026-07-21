@@ -1,10 +1,18 @@
 #include "viewer/app/mainwindow.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <map>
+#include <optional>
+#include <set>
+#include <utility>
 
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDir>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -16,6 +24,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QProgressBar>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStatusBar>
@@ -52,12 +61,43 @@
 #include "viewer/app/theme.h"
 #include "viewer/app/timecontroller.h"
 #include "viewer/app/timeseriesview.h"
+#include "viewer/core/grid.h"
 #include "viewer/core/timeaxis.h"
 #include "viewer/core/units.h"
 #include "viewer/readers/detect.h"
+#include "viewer/readers/multidataset.h"
 
 namespace met::app {
 namespace {
+
+// A FieldKey for the first available record of a catalog (first variable, first
+// level/time/member), or nullopt if the catalog is empty. Used to fetch one
+// representative field cheaply.
+std::optional<core::FieldKey> firstFieldKey(const core::DatasetCatalog& cat) {
+    const auto& vars = cat.variables();
+    if (vars.empty() || vars.front().levels.empty()) return std::nullopt;
+    const auto& v = vars.front();
+    core::FieldKey k;
+    k.varName = v.varName;
+    k.level = v.levels.front();
+    k.validTime = v.times.empty() ? core::TimePoint{} : v.times.front();
+    k.member = v.members.empty() ? -1 : v.members.front();
+    return k;
+}
+
+// The grid of a dataset's first field, or nullopt if it has no readable field.
+// Datasets don't expose a grid directly (a GRIB file may even hold several), so
+// we read one representative field and take its grid. Best-effort: a decode error
+// yields nullopt and the caller treats compatibility as unknown.
+std::optional<core::GridDef> representativeGrid(readers::IDataset& ds) {
+    const auto key = firstFieldKey(ds.catalog());
+    if (!key) return std::nullopt;
+    try {
+        return ds.readField(*key).grid;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
 
 // Size a combo to its widest item so its reported sizeHint reflects the width the
 // control actually needs. The control panel is then given that width (see
@@ -233,10 +273,15 @@ void MainWindow::buildUi() {
 
     // Menu.
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
-    QAction* openAct = fileMenu->addAction(tr("&Open…"));
+    QAction* openAct = fileMenu->addAction(tr("&Open Files…"));
     openAct->setShortcut(QKeySequence::Open);
     icons_->applyAction(openAct, "file-open");
     connect(openAct, &QAction::triggered, this, &MainWindow::onOpenTriggered);
+    QAction* openFolderAct = fileMenu->addAction(tr("Open &Folder…"));
+    icons_->applyAction(openFolderAct, "file-open");
+    connect(openFolderAct, &QAction::triggered, this, &MainWindow::onOpenFolderTriggered);
+    QAction* addFilesAct = fileMenu->addAction(tr("&Add Files…"));
+    connect(addFilesAct, &QAction::triggered, this, &MainWindow::onAddFilesTriggered);
     recentMenu_ = fileMenu->addMenu(tr("Open &Recent"));
     recentMenu_->setToolTipsVisible(true);  // show full paths on hover
     updateRecentMenu();
@@ -385,30 +430,207 @@ void MainWindow::scheduleGrabAndQuit(const QString& pngPath, int delayMs) {
     });
 }
 
-void MainWindow::onOpenTriggered() {
-    const QString path = QFileDialog::getOpenFileName(
-        this, tr("Open meteorological file"), {},
-        tr("Meteorological data (*.grib *.grib2 *.grb *.grb2 *.grib1 *.nc *.nc4);;All files (*)"));
-    if (!path.isEmpty()) openFile(path);
+// The Open/Add file-dialog filter (GRIB editions, NetCDF).
+static QString dataFileFilter() {
+    return QObject::tr(
+        "Meteorological data (*.grib *.grib2 *.grb *.grb2 *.grib1 *.nc *.nc4);;All files (*)");
 }
 
-void MainWindow::openFile(const QString& path) {
-    try {
-        std::unique_ptr<readers::IDataset> ds =
-            readers::openDataset(std::filesystem::path(path.toStdString()));
-        dataset_ = std::shared_ptr<readers::IDataset>(std::move(ds));
-    } catch (const std::exception& e) {
-        QMessageBox::warning(this, tr("Open failed"), QString::fromUtf8(e.what()));
+void MainWindow::onOpenTriggered() {
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, tr("Open meteorological files"), {}, dataFileFilter());
+    if (!paths.isEmpty()) openFiles(paths, /*replace=*/true);
+}
+
+void MainWindow::onAddFilesTriggered() {
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, tr("Add meteorological files to the current set"), {}, dataFileFilter());
+    if (!paths.isEmpty()) openFiles(paths, /*replace=*/false);
+}
+
+void MainWindow::onOpenFolderTriggered() {
+    const QString folder =
+        QFileDialog::getExistingDirectory(this, tr("Open a folder of meteorological files"));
+    if (folder.isEmpty()) return;
+    // Pick recognized data files by extension (ARL has no standard extension, so it
+    // isn't matched here — use Open Files for those).
+    static const QStringList kNameFilters = {"*.grib", "*.grib2", "*.grb", "*.grb2",
+                                             "*.grib1", "*.nc", "*.nc4"};
+    QDir dir(folder);
+    QStringList paths;
+    for (const QString& name : dir.entryList(kNameFilters, QDir::Files, QDir::Name))
+        paths << dir.filePath(name);
+    if (paths.isEmpty()) {
+        QMessageBox::information(
+            this, tr("No data files"),
+            tr("No recognized data files (*.grib2, *.nc, …) were found in:\n%1").arg(folder));
         return;
     }
-    fieldCache_.clear();  // a new file invalidates cached fields
-    datasetDock_->setCatalog(dataset_->catalog());
-    plot_->clearField();
-    statusBar()->showMessage(
-        tr("Opened %1 (%2)").arg(path).arg(QString::fromStdString(dataset_->formatName())), 4000);
-    addRecentFile(path);
+    openFiles(paths, /*replace=*/true);
+}
 
-    // Auto-display the first available field.
+void MainWindow::openFile(const QString& path) { openFiles({path}, /*replace=*/true); }
+
+std::vector<std::filesystem::path> MainWindow::pathsToOpen(const QStringList& paths,
+                                                           bool replace) const {
+    // For an add, skip files already in the set. De-dupe the request and sort so the
+    // load order is deterministic (HRRR hourly names sort chronologically).
+    std::set<std::filesystem::path> existing;
+    if (!replace)
+        for (const auto& p : loadedPaths_) existing.insert(p);
+
+    std::set<std::filesystem::path> seen;
+    std::vector<std::filesystem::path> out;
+    for (const QString& p : paths) {
+        if (p.isEmpty()) continue;
+        std::filesystem::path fp(p.toStdString());
+        if (existing.count(fp) || !seen.insert(fp).second) continue;
+        out.push_back(std::move(fp));
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+MainWindow::OpenBatch MainWindow::openBatch(const std::vector<std::filesystem::path>& paths,
+                                            JobProgress* progress) {
+    OpenBatch batch;
+    for (const auto& path : paths) {
+        try {
+            batch.opened.emplace_back(
+                path, std::shared_ptr<readers::IDataset>(readers::openDataset(path)));
+        } catch (const std::exception& e) {
+            // Keep the reason (e.g. "no reader recognizes file") so the skipped list
+            // tells the user why, not just which.
+            batch.skipped << (QString::fromStdString(path.filename().string()) + ": " +
+                              QString::fromUtf8(e.what()));
+        }
+        if (progress) progress->done.fetch_add(1, std::memory_order_relaxed);
+    }
+    return batch;
+}
+
+void MainWindow::openFiles(const QStringList& paths, bool replace) {
+    const std::vector<std::filesystem::path> newPaths = pathsToOpen(paths, replace);
+    if (newPaths.empty()) return;
+
+    // Scan the files on the thread pool with a determinate progress bar so a
+    // multi-file open (a full HRRR day is ~23 × ~0.6 s) never freezes the UI.
+    const quint64 gen = ++openGeneration_;
+    auto progress = std::make_shared<JobProgress>();
+    progress->total.store(static_cast<int>(newPaths.size()), std::memory_order_relaxed);
+    beginJob(tr("Opening %n file(s)…", nullptr, static_cast<int>(newPaths.size())), progress);
+
+    submitCompute<OpenBatch>(
+        *pool_, this,
+        [newPaths, progress]() { return openBatch(newPaths, progress.get()); },
+        [this, gen, replace, progress](OpenBatch batch) {
+            endJob(progress);
+            if (gen != openGeneration_) return;  // a newer open superseded this one
+            installBatch(std::move(batch), replace);
+        });
+}
+
+void MainWindow::openFilesBlocking(const QStringList& paths) {
+    const std::vector<std::filesystem::path> newPaths = pathsToOpen(paths, /*replace=*/true);
+    if (newPaths.empty()) return;
+    ++openGeneration_;  // supersede any in-flight async open
+    installBatch(openBatch(newPaths, nullptr), /*replace=*/true);
+}
+
+void MainWindow::installBatch(OpenBatch batch, bool replace) {
+    if (batch.opened.empty()) {
+        // Nothing opened (all failed / none selected): keep any existing dataset and
+        // loaded set intact and just report the failures. A failed "replace" must not
+        // clobber the data already on screen.
+        if (!batch.skipped.isEmpty())
+            QMessageBox::warning(this, tr("Open failed"),
+                                 tr("Could not open:\n%1").arg(batch.skipped.join(QChar('\n'))));
+        return;
+    }
+
+    // Grid-compatibility guard for an Add: a merged dataset must be one coherent
+    // grid/time-series. If a newly added file's grid differs from what's loaded, it
+    // can't be merged — offer to open the new file(s) as a fresh dataset instead.
+    // (Format is irrelevant here: a GRIB file on the same grid as loaded ARL data
+    // still merges; an ARL file on a different domain does not.)
+    if (!replace && dataset_) {
+        const auto existing = representativeGrid(*dataset_);
+        bool mismatch = false;
+        if (existing) {
+            for (const auto& [path, ds] : batch.opened) {
+                const auto g = representativeGrid(*ds);
+                if (g && !core::sameGrid(*existing, *g)) {
+                    mismatch = true;
+                    break;
+                }
+            }
+        }
+        if (mismatch) {
+            QMessageBox box(this);
+            box.setIcon(QMessageBox::Question);
+            box.setWindowTitle(tr("Different grid"));
+            box.setText(tr("The selected file(s) use a different grid or projection than the "
+                           "loaded data and can't be added to the same time series.\n\n"
+                           "Open them as a new dataset instead?"));
+            QPushButton* replaceBtn = box.addButton(tr("Replace"), QMessageBox::AcceptRole);
+            box.addButton(QMessageBox::Cancel);
+            box.setDefaultButton(replaceBtn);
+            box.exec();
+            if (box.clickedButton() != replaceBtn) return;  // Cancel: keep current dataset
+            replace = true;  // fall through and install the new batch as a fresh dataset
+        }
+    }
+
+    if (replace) {
+        loadedPaths_.clear();
+        loadedSources_.clear();
+        fieldCache_.clear();  // a fresh set invalidates cached fields
+        ++datasetEpoch_;      // and invalidates the per-tab analysis caches
+    }
+    for (auto& [path, ds] : batch.opened) {
+        loadedPaths_.push_back(path);
+        loadedSources_.push_back(std::move(ds));
+    }
+
+    // Remember the current field so an "add" keeps showing it after the (now larger)
+    // time axis merges in. Captured before onFieldChosen() overwrites the state.
+    core::FieldKey keep;
+    const bool keepSelection =
+        !replace && !currentVar_.empty() && levelIdx_ >= 0 &&
+        levelIdx_ < static_cast<int>(currentLevels_.size()) && timeIdx_ >= 0 &&
+        timeIdx_ < static_cast<int>(currentTimes_.size());
+    if (keepSelection) {
+        keep.varName = currentVar_;
+        keep.level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
+        keep.validTime = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+        keep.member = currentMember_;
+    }
+
+    dataset_ = loadedSources_.size() == 1
+                   ? loadedSources_.front()
+                   : std::make_shared<readers::MultiDataset>(loadedSources_);
+    datasetDock_->setCatalog(dataset_->catalog());
+    if (replace) plot_->clearField();
+
+    statusBar()->showMessage(
+        tr("Opened %n file(s) (%1)", nullptr, static_cast<int>(loadedSources_.size()))
+            .arg(QString::fromStdString(dataset_->formatName())),
+        4000);
+
+    if (!batch.skipped.isEmpty())
+        QMessageBox::warning(this, tr("Some files skipped"),
+                             tr("Could not open:\n%1").arg(batch.skipped.join(QChar('\n'))));
+
+    // Recent files stays a pool of individually re-openable files; only record when a
+    // single file was opened so a folder/multi-open doesn't flood the 10-entry list.
+    if (batch.opened.size() == 1)
+        addRecentFile(QString::fromStdString(batch.opened.front().first.string()));
+
+    // Restore the prior field (add) or show the first available one (replace/no prior).
+    if (keepSelection && dataset_->catalog().find(keep.varName)) {
+        onFieldChosen(keep);
+        return;
+    }
     const auto& vars = dataset_->catalog().variables();
     if (!vars.empty() && !vars.front().levels.empty()) {
         const auto& v = vars.front();
@@ -468,8 +690,10 @@ void MainWindow::onLevelChanged(int index) {
 void MainWindow::onTimeChanged(int index) {
     if (index < 0 || index >= static_cast<int>(currentTimes_.size())) return;
     timeIdx_ = index;
-    decodeCurrent();
+    // Kick off the analyses first so their in-flight state is set before the field's
+    // (possibly synchronous, cache-hit) settle check decides whether to advance.
     refreshAnalyses();  // sections/soundings re-extract; time-series marker moves
+    decodeCurrent();
 }
 
 void MainWindow::refreshAnalyses() {
@@ -485,7 +709,19 @@ void MainWindow::refreshAnalyses() {
 }
 
 void MainWindow::decodeCurrent() {
-    if (!dataset_ || currentVar_.empty() || currentLevels_.empty() || currentTimes_.empty()) return;
+    fieldReadyForStep_ = false;  // a (re)decode: the field is not ready until it settles
+    if (!dataset_ || currentVar_.empty() || currentLevels_.empty() || currentTimes_.empty()) {
+        // Nothing to decode. Keep playback alive across a transient empty var/level,
+        // but stop it outright if there is genuinely no data to animate (else the
+        // closed loop would spin at the frame rate doing nothing).
+        if (!dataset_ || currentTimes_.empty()) {
+            if (timeController_) timeController_->pause();
+        } else {
+            fieldReadyForStep_ = true;
+            maybeAdvancePlayback();
+        }
+        return;
+    }
 
     core::FieldKey key;
     key.varName = currentVar_;
@@ -501,6 +737,8 @@ void MainWindow::decodeCurrent() {
         currentRaw_ = cached;
         presentField();
         prefetchAhead();
+        fieldReadyForStep_ = true;
+        maybeAdvancePlayback();  // field ready → advance if analyses are ready too
         return;
     }
 
@@ -512,8 +750,11 @@ void MainWindow::decodeCurrent() {
     submitDecode(*pool_, dataset_, key, gen, this, [this, gen, key, prog](DecodeOutcome outcome) {
         endJob(prog);
         if (!outcome.field) {
-            if (outcome.generation == generation_)
+            if (outcome.generation == generation_) {
                 probeLabel_->setText(tr("Decode error: %1").arg(outcome.error));
+                fieldReadyForStep_ = true;  // treat a bad frame as "settled" so playback continues
+                maybeAdvancePlayback();
+            }
             return;
         }
         fieldCache_.put(key, outcome.field);
@@ -521,7 +762,21 @@ void MainWindow::decodeCurrent() {
         currentRaw_ = outcome.field;
         presentField();
         prefetchAhead();
+        fieldReadyForStep_ = true;
+        maybeAdvancePlayback();  // field ready → advance if analyses are ready too
     });
+}
+
+void MainWindow::maybeAdvancePlayback() {
+    // Closed-loop gate: advance only while playing, once the field has settled AND no
+    // open analysis (cross-section/skew-T) is still extracting. Whichever load
+    // finishes last fires the advance. A no-op when not playing, so it is safe on
+    // every decodeCurrent / analysis-completion path.
+    if (!timeController_ || !timeController_->isPlaying()) return;
+    if (!fieldReadyForStep_) return;
+    for (const auto& a : analyses_)
+        if (a.frame && a.loading && a.loading()) return;  // an analysis is still loading
+    timeController_->frameReady();
 }
 
 void MainWindow::presentField() {
@@ -932,6 +1187,111 @@ ViewFrame* MainWindow::wrapCrossSection(CrossSectionView* view) {
     return new ViewFrame(view, panel);
 }
 
+// Per-tab state backing a time-following cross-section / skew-T: an inFlight/pending
+// pair that coalesces refreshes to one extraction at a time, plus a per-(validTime,
+// member) cache of the extracted result so a looping Play recomputes nothing after the
+// first pass. `epoch` records the datasetEpoch_ the cache was built against.
+struct MainWindow::CrossSectionTab {
+    bool inFlight = false;
+    bool pending = false;
+    quint64 epoch = 0;
+    std::map<std::pair<std::int64_t, int>, analysis::CrossSection> cache;
+};
+
+struct MainWindow::SoundingTab {
+    bool inFlight = false;
+    bool pending = false;
+    quint64 epoch = 0;
+    std::map<std::pair<std::int64_t, int>, analysis::Sounding> cache;
+};
+
+void MainWindow::refreshCrossSectionTab(QPointer<CrossSectionView> view, std::string var,
+                                        std::vector<core::LatLon> path,
+                                        std::shared_ptr<CrossSectionTab> tab) {
+    if (!view || !dataset_ || currentTimes_.empty()) return;
+    if (tab->epoch != datasetEpoch_) {  // a dataset replace invalidated the cache
+        tab->cache.clear();
+        tab->epoch = datasetEpoch_;
+    }
+    const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    const int mem = currentMember_;
+    const auto key = std::make_pair(static_cast<std::int64_t>(t.epochSeconds), mem);
+
+    if (auto it = tab->cache.find(key); it != tab->cache.end()) {
+        view->setSection(it->second);  // instant cache hit — no extraction thread
+        return;
+    }
+    if (tab->inFlight) {  // an extraction is running; chase the latest time when it lands
+        tab->pending = true;
+        return;
+    }
+    tab->inFlight = true;
+    auto dset = dataset_;
+    auto p = std::make_shared<JobProgress>();
+    p->total = estimateCrossSectionReads(*dset, var);
+    beginJob(tr("Updating cross-section…"), p);
+    submitCompute<analysis::CrossSection>(
+        *pool_, this,
+        [dset, var, t, mem, path, p] {
+            return MainWindow::computeCrossSection(*dset, var, t, mem, path, 200, p);
+        },
+        [this, view, var, path, tab, key, p](analysis::CrossSection ncs) {
+            endJob(p);
+            tab->inFlight = false;
+            if (ncs.pressures.size() >= 2) {
+                tab->cache[key] = ncs;             // cache the result for this (time, member)
+                if (view) view->setSection(ncs);   // always apply (coalescing keeps these in order)
+            }
+            if (tab->pending) {  // newer time requested while this ran → re-chase the current one
+                tab->pending = false;
+                refreshCrossSectionTab(view, var, path, tab);
+            }
+            maybeAdvancePlayback();  // this tab's load settled → maybe advance
+        });
+}
+
+void MainWindow::refreshSoundingTab(QPointer<SkewTView> view, core::LatLon point,
+                                    std::shared_ptr<SoundingTab> tab) {
+    if (!view || !dataset_ || currentTimes_.empty()) return;
+    if (tab->epoch != datasetEpoch_) {
+        tab->cache.clear();
+        tab->epoch = datasetEpoch_;
+    }
+    const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    const int mem = currentMember_;
+    const auto key = std::make_pair(static_cast<std::int64_t>(t.epochSeconds), mem);
+
+    if (auto it = tab->cache.find(key); it != tab->cache.end()) {
+        view->setSounding(it->second);
+        return;
+    }
+    if (tab->inFlight) {
+        tab->pending = true;
+        return;
+    }
+    tab->inFlight = true;
+    auto dset = dataset_;
+    auto p = std::make_shared<JobProgress>();
+    p->total = estimateSoundingReads(*dset);
+    beginJob(tr("Updating sounding…"), p);
+    submitCompute<analysis::Sounding>(
+        *pool_, this,
+        [dset, t, mem, point, p] { return MainWindow::computeSounding(*dset, t, mem, point, p); },
+        [this, view, point, tab, key, p](analysis::Sounding ns) {
+            endJob(p);
+            tab->inFlight = false;
+            if (ns.levels.size() >= 2) {
+                tab->cache[key] = ns;
+                if (view) view->setSounding(ns);
+            }
+            if (tab->pending) {
+                tab->pending = false;
+                refreshSoundingTab(view, point, tab);
+            }
+            maybeAdvancePlayback();  // this tab's load settled → maybe advance
+        });
+}
+
 void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) {
     if (currentVar_.empty() || !dataset_ || currentTimes_.empty()) return;
     const std::string var = currentVar_;
@@ -946,7 +1306,7 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
         [ds, var, time, member, path, prog] {
             return MainWindow::computeCrossSection(*ds, var, time, member, path, 200, prog);
         },
-        [this, var, path, prog](analysis::CrossSection cs) {
+        [this, var, path, time, member, prog](analysis::CrossSection cs) {
             endJob(prog);
             if (cs.pressures.size() < 2) {
                 statusBar()->showMessage(tr("Cross-section needs a multi-level variable"), 4000);
@@ -957,25 +1317,17 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
             view->setSection(cs);                  // emits rangeChanged -> fills the legend
             addAnalysisDock(frame, tr("Section: %1").arg(QString::fromStdString(var)));
             statusBar()->clearMessage();
-            // Follow the time slider: re-extract this section at the current time.
-            analyses_.push_back({frame, [this, v = QPointer<CrossSectionView>(view), var, path]() {
-                if (!v || !dataset_ || currentTimes_.empty()) return;
-                const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
-                const int mem = currentMember_;
-                auto dset = dataset_;
-                auto p = std::make_shared<JobProgress>();
-                p->total = estimateCrossSectionReads(*dset, var);
-                beginJob(tr("Updating cross-section…"), p);
-                submitCompute<analysis::CrossSection>(
-                    *pool_, this,
-                    [dset, var, t, mem, path, p] {
-                        return MainWindow::computeCrossSection(*dset, var, t, mem, path, 200, p);
-                    },
-                    [this, v, p](analysis::CrossSection ncs) {
-                        endJob(p);
-                        if (v && ncs.pressures.size() >= 2) v->setSection(ncs);
-                    });
-            }});
+            // Follow the time slider via a coalesced + cached re-extraction. Seed the
+            // cache with this initial section so revisiting this time is instant.
+            auto tab = std::make_shared<CrossSectionTab>();
+            tab->epoch = datasetEpoch_;
+            tab->cache[std::make_pair(static_cast<std::int64_t>(time.epochSeconds), member)] = cs;
+            analyses_.push_back(
+                {frame,
+                 [this, v = QPointer<CrossSectionView>(view), var, path, tab]() {
+                     refreshCrossSectionTab(v, var, path, tab);
+                 },
+                 [tab]() { return tab->inFlight; }});
         });
 }
 
@@ -992,7 +1344,7 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
         [ds, time, member, point, prog] {
             return MainWindow::computeSounding(*ds, time, member, point, prog);
         },
-        [this, point, prog](analysis::Sounding s) {
+        [this, point, time, member, prog](analysis::Sounding s) {
             endJob(prog);
             if (s.levels.size() < 2) {
                 statusBar()->showMessage(tr("Sounding needs multi-level temperature (t)"), 4000);
@@ -1002,25 +1354,16 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
             view->setSounding(s);
             addAnalysisDock(view, tr("Skew-T"));
             statusBar()->clearMessage();
-            // Follow the time slider: re-extract this sounding at the current time.
-            analyses_.push_back({view, [this, v = QPointer<SkewTView>(view), point]() {
-                if (!v || !dataset_ || currentTimes_.empty()) return;
-                const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
-                const int mem = currentMember_;
-                auto dset = dataset_;
-                auto p = std::make_shared<JobProgress>();
-                p->total = estimateSoundingReads(*dset);
-                beginJob(tr("Updating sounding…"), p);
-                submitCompute<analysis::Sounding>(
-                    *pool_, this,
-                    [dset, t, mem, point, p] {
-                        return MainWindow::computeSounding(*dset, t, mem, point, p);
-                    },
-                    [this, v, p](analysis::Sounding ns) {
-                        endJob(p);
-                        if (v && ns.levels.size() >= 2) v->setSounding(ns);
-                    });
-            }});
+            // Follow the time slider via a coalesced + cached re-extraction. Seed the
+            // cache with this initial sounding so revisiting this time is instant.
+            auto tab = std::make_shared<SoundingTab>();
+            tab->epoch = datasetEpoch_;
+            tab->cache[std::make_pair(static_cast<std::int64_t>(time.epochSeconds), member)] = s;
+            analyses_.push_back({view,
+                                 [this, v = QPointer<SkewTView>(view), point, tab]() {
+                                     refreshSoundingTab(v, point, tab);
+                                 },
+                                 [tab]() { return tab->inFlight; }});
         });
 }
 
@@ -1052,9 +1395,11 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
             addAnalysisDock(view, tr("Series: %1").arg(QString::fromStdString(var)));
             statusBar()->clearMessage();
             // The series spans all times; just move its marker with the slider.
-            analyses_.push_back({view, [this, v = QPointer<TimeSeriesView>(view)]() {
-                if (v) v->setCurrentIndex(timeIdx_);
-            }});
+            analyses_.push_back({view,
+                                 [this, v = QPointer<TimeSeriesView>(view)]() {
+                                     if (v) v->setCurrentIndex(timeIdx_);
+                                 },
+                                 []() { return false; }});  // marker move only; never "loading"
         });
 }
 

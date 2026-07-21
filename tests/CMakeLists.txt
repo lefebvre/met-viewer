@@ -19,6 +19,7 @@ add_executable(met_tests
     readers/grib_reader_test.cpp
     readers/grib1_test.cpp
     readers/netcdf_reader_test.cpp
+    readers/multidataset_test.cpp
     readers/lambert_test.cpp
     readers/arl_test.cpp
 )

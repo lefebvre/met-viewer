@@ -1,11 +1,14 @@
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <QMainWindow>
 #include <QPointer>
+#include <QStringList>
 
 #include "viewer/analysis/wind.h"
 #include "viewer/app/fieldcache.h"
@@ -41,6 +44,7 @@ class TimeController;
 class ThemeManager;
 class IconThemer;
 class CrossSectionView;
+class SkewTView;
 class ViewFrame;
 
 class MainWindow : public QMainWindow {
@@ -52,8 +56,20 @@ public:
     // window icon variant when the effective scheme changes.
     [[nodiscard]] ThemeManager* theme() const { return theme_; }
 
-    // Open a file directly (used by the File menu and by command-line args).
+    // Open a single file directly (File > Open Recent). Thin wrapper over
+    // openFiles({path}, replace=true).
     void openFile(const QString& path);
+
+    // Open a set of files as one merged dataset whose time axis is the union of
+    // the inputs (e.g. HRRR's one-file-per-hour). `replace` starts a fresh set;
+    // when false the files are added to the current set. Asynchronous: files are
+    // scanned on a background thread with a progress bar so the UI stays
+    // responsive (a full HRRR day is ~23 files, ~0.6 s each to scan).
+    void openFiles(const QStringList& paths, bool replace);
+
+    // Synchronous variant for headless/CLI use: the event loop isn't running yet
+    // and follow-on flags (--var/--time/--grab) must act on a ready dataset.
+    void openFilesBlocking(const QStringList& paths);
 
     // Developer/testing aid: after `delayMs`, grab the plot to `pngPath` and
     // quit the application. Used for headless visual verification.
@@ -108,6 +124,8 @@ protected:
 
 private slots:
     void onOpenTriggered();
+    void onOpenFolderTriggered();
+    void onAddFilesTriggered();
     void onFieldChosen(const core::FieldKey& key);
     void onLevelChanged(int index);
     void onTimeChanged(int index);
@@ -134,17 +152,37 @@ private:
     // soundings follow the time slider and the time-series marker tracks it.
     void refreshAnalyses();
 
-    // One open analysis tab: its tab widget (for close cleanup) and a closure that
-    // re-extracts/updates it at the current time.
+    // One open analysis tab: its tab widget (for close cleanup), a closure that
+    // re-extracts/updates it at the current time, and a predicate reporting whether
+    // an extraction is currently in flight (so playback can wait for it).
     struct OpenAnalysis {
         QPointer<QWidget> frame;
         std::function<void()> refresh;
+        std::function<bool()> loading;  // true while this tab is extracting
     };
     std::vector<OpenAnalysis> analyses_;
+
+    // Per-tab state for a cross-section / skew-T that follows the time slider:
+    // coalesces refreshes to one extraction in flight and caches the extracted
+    // result per (validTime, member) so a looping Play recomputes nothing after the
+    // first pass. Defined in the .cpp (they hold analysis result structs).
+    struct CrossSectionTab;
+    struct SoundingTab;
+    void refreshCrossSectionTab(QPointer<CrossSectionView> view, std::string var,
+                                std::vector<core::LatLon> path,
+                                std::shared_ptr<CrossSectionTab> tab);
+    void refreshSoundingTab(QPointer<SkewTView> view, core::LatLon point,
+                            std::shared_ptr<SoundingTab> tab);
+
     void decodeCurrent();  // decode the field for the current var/level/time
     void displayField(std::shared_ptr<core::Field2D> field);  // show a decoded field
     void presentField();   // show the current raw field or a derived quantity
     void prefetchAhead();  // decode upcoming time steps into the cache
+    // Closed-loop playback: advance to the next frame only once the current one is
+    // fully loaded — the field decode AND every open analysis (cross-section/skew-T)
+    // extraction. Called at each of those settle points; fires TimeController::
+    // frameReady() when nothing is left outstanding.
+    void maybeAdvancePlayback();
     void updateWind();     // (re)build the wind overlay for the current level/time
     // Build the earth-relative wind field for the current level/time, or null.
     std::shared_ptr<analysis::WindField> buildWindField();
@@ -153,6 +191,23 @@ private:
     void openPreferences();
     void addRecentFile(const QString& path);  // record a successfully opened file
     void updateRecentMenu();                   // rebuild the "Open Recent" submenu
+
+    // A batch of opened files: the successfully opened (path, dataset) pairs in
+    // order, plus paths that failed to open (skipped, not fatal).
+    struct OpenBatch {
+        std::vector<std::pair<std::filesystem::path, std::shared_ptr<readers::IDataset>>> opened;
+        QStringList skipped;
+    };
+    // Open each path, catching per-file failures; bumps progress->done per file if
+    // given. Static + touches no window state so it can run on a worker thread.
+    static OpenBatch openBatch(const std::vector<std::filesystem::path>& paths,
+                               JobProgress* progress);
+    // Install an opened batch on the GUI thread: merge it into the current set (or
+    // replace the set), rebuild the catalog view, and show or preserve the field.
+    void installBatch(OpenBatch batch, bool replace);
+    // The paths a request should actually open: for an add, drops any already in
+    // the current set and de-dupes; sorted for deterministic order.
+    std::vector<std::filesystem::path> pathsToOpen(const QStringList& paths, bool replace) const;
 
     // Read all pressure levels of `varName` at `time` (pressure, field). Static +
     // dataset-by-reference so it can run off the GUI thread without touching
@@ -203,8 +258,16 @@ private:
     void pollProgress();
 
     std::shared_ptr<readers::IDataset> dataset_;
+    // The currently loaded set: the leaf datasets (kept so "Add files" only scans
+    // the new files) and their paths, parallel and in load order. `dataset_` is the
+    // sole leaf when one file is loaded, else a MultiDataset wrapping all of them.
+    std::vector<std::filesystem::path> loadedPaths_;
+    std::vector<std::shared_ptr<readers::IDataset>> loadedSources_;
+    quint64 openGeneration_ = 0;  // supersede an in-flight async open when a newer one starts
     QString currentUnits_;
     quint64 generation_ = 0;
+    quint64 datasetEpoch_ = 0;  // bumped on dataset *replace*; invalidates per-tab analysis caches
+    bool fieldReadyForStep_ = false;  // current frame's field has settled (for playback gating)
     FieldCache fieldCache_{1024ull * 1024 * 1024};  // 1 GB default
     int cacheBudgetMB_ = 1024;
     int animationFps_ = 6;
