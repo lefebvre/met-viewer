@@ -19,6 +19,7 @@
 
 #include "viewer/analysis/sample.h"
 #include "viewer/analysis/wind.h"
+#include "viewer/app/hoverreadout.h"
 #include "viewer/app/tilelayer.h"
 #include "viewer/render/contour.h"
 #include "viewer/render/tilemath.h"
@@ -75,6 +76,11 @@ MapView::MapView(TileLayer* tiles, QWidget* parent) : QOpenGLWidget(parent), til
     setMouseTracking(true);
     setMinimumSize(320, 240);
     if (tiles_) connect(tiles_, &TileLayer::tileReady, this, &MapView::onTileReady);
+    connect(&HoverOptions::instance(), &HoverOptions::changed, this, [this](HoverView v) {
+        if (v != HoverView::Map) return;
+        hoverActive_ = false;  // drop a badge left over from before the toggle
+        update();
+    });
 }
 
 MapView::~MapView() {
@@ -448,6 +454,9 @@ void MapView::paintGL() {
         p.setPen(QColor(60, 60, 60));
         p.drawText(rect(), Qt::AlignCenter, tr("Open a file to drape a field over the map"));
     }
+
+    // Cursor readout, last so it sits above every overlay.
+    if (hoverActive_) paintHoverReadout(p, QRectF(rect()), hoverPos_, hoverLines_, palette());
 }
 
 void MapView::drawBarbs(QPainter& p) {
@@ -483,10 +492,33 @@ void MapView::drawBarbs(QPainter& p) {
 }
 
 void MapView::drawStreamlines(QPainter& p) {
+    ensureStreamlines();
     p.setRenderHint(QPainter::Antialiasing, true);
     QPen pen(QColor(25, 25, 35, 205));
     pen.setWidthF(1.2);
     p.setPen(pen);
+    for (const QPolygonF& line : streamlines_) p.drawPolyline(line);
+}
+
+// Integrate the streamline polylines for the current viewport, reusing the last
+// result when nothing that shapes them has changed. The integration is by far the
+// most expensive thing in paintGL, and the cursor readout repaints on every
+// mouse-move — which changes none of these keys.
+void MapView::ensureStreamlines() {
+    if (!wind_) {
+        streamlines_.clear();
+        return;
+    }
+    if (wind_.get() == streamWind_ && zoom_ == streamZoom_ && centerLon_ == streamCenterLon_ &&
+        centerLat_ == streamCenterLat_ && width() == streamW_ && height() == streamH_)
+        return;
+    streamWind_ = wind_.get();
+    streamZoom_ = zoom_;
+    streamCenterLon_ = centerLon_;
+    streamCenterLat_ = centerLat_;
+    streamW_ = width();
+    streamH_ = height();
+    streamlines_.clear();
 
     // Evenly-spaced streamlines (simplified Jobard-Lefer): seed on a coarse
     // lattice, integrate with RK4, and enforce separation via an occupancy grid.
@@ -548,7 +580,7 @@ void MapView::drawStreamlines(QPainter& p) {
                     owner[idx] = lineId;
                     line << cur;
                 }
-                if (line.size() > 2) p.drawPolyline(line);
+                if (line.size() > 2) streamlines_.push_back(std::move(line));
             }
         }
     }
@@ -566,7 +598,7 @@ void MapView::drawContours(QPainter& p) {
     p.setPen(pen);
     // Contour segments live in grid-index space; project index -> lat/lon (which
     // is exact for the map, unlike the flat 2D plot) -> screen.
-    for (const auto& lvl : render::contourLevels(*field_, interval)) {
+    for (const auto& lvl : contours_.levels(*field_, interval)) {
         for (const auto& s : lvl.segments) {
             const core::LatLon a = core::indexToLatLon(field_->grid, s.x0, s.y0);
             const core::LatLon b = core::indexToLatLon(field_->grid, s.x1, s.y1);
@@ -621,14 +653,47 @@ void MapView::mouseMoveEvent(QMouseEvent* event) {
         const double cy = worldCenterY() - delta.y();
         centerLon_ = worldXToLon(cx, zoom_);
         centerLat_ = std::clamp(worldYToLat(cy, zoom_), -render::tile::kMaxLat, render::tile::kMaxLat);
+        hoverActive_ = false;  // a readout pinned to a moving map reads as lag
         update();
         return;
     }
     // Probe.
-    if (!field_) { emit probeLeft(); return; }
+    const bool wasActive = hoverActive_;
+    hoverActive_ = false;
+    if (!field_) {
+        emit probeLeft();
+        if (wasActive) update();
+        return;
+    }
     const core::LatLon ll = screenToLonLat(event->position());
     const float v = analysis::sampleBilinear(*field_, ll);
     emit probeMoved(ll.lat, ll.lon, static_cast<double>(v), !std::isnan(v));
+
+    if (!HoverOptions::instance().enabled(HoverView::Map)) {
+        if (wasActive) update();
+        return;
+    }
+    hoverActive_ = true;
+    hoverPos_ = event->position();
+    hoverLines_ = hoverTextAt(ll, v);
+    update();
+}
+
+QStringList MapView::hoverTextAt(core::LatLon ll, float value) const {
+    QStringList lines;
+    lines << QStringLiteral("lat %1°  lon %2°")
+                 .arg(ll.lat, 0, 'f', 2)
+                 .arg(core::wrapLon180(ll.lon), 0, 'f', 2);
+    lines << (std::isnan(value) ? tr("(no data)")
+                                : formatValueWithUnits(static_cast<double>(value), units()));
+    if (field_) {
+        const core::GridIndex gi = core::latlonToIndex(field_->grid, ll);
+        if (gi.inDomain)
+            lines << QStringLiteral("i %1  j %2")
+                         .arg(static_cast<int>(std::lround(gi.x)))
+                         .arg(static_cast<int>(std::lround(gi.y)));
+    }
+    return lines;
 }
 
 void MapView::mouseReleaseEvent(QMouseEvent* event) {
@@ -661,6 +726,12 @@ void MapView::wheelEvent(QWheelEvent* event) {
     update();
 }
 
-void MapView::leaveEvent(QEvent*) { emit probeLeft(); }
+void MapView::leaveEvent(QEvent*) {
+    emit probeLeft();
+    if (hoverActive_) {
+        hoverActive_ = false;
+        update();
+    }
+}
 
 }  // namespace met::app

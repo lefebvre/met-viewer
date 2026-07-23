@@ -52,6 +52,7 @@
 #include "viewer/app/controlpanel.h"
 #include "viewer/app/crosssectionview.h"
 #include "viewer/app/datasetdock.h"
+#include "viewer/app/hoverreadout.h"
 #include "viewer/app/icons.h"
 #include "viewer/app/jobs.h"
 #include "viewer/app/mapview.h"
@@ -350,6 +351,27 @@ void MainWindow::buildUi() {
     viewMenu->addAction(timeToggle);
     viewMenu->addSeparator();
     viewMenu->addAction(toolbar->toggleViewAction());
+
+    // Cursor readout: the in-view badge is per view type, since a busy map may want
+    // it off while a skew-T wants it on. HoverOptions persists the flags itself and
+    // the views subscribe, so analysis docks opened later pick up the current state.
+    viewMenu->addSeparator();
+    auto* hoverMenu = viewMenu->addMenu(tr("&Cursor Readout"));
+    const struct { const char* label; HoverView view; } hovers[] = {
+        {QT_TR_NOOP("&2D Plot"), HoverView::Plot},
+        {QT_TR_NOOP("&Map"), HoverView::Map},
+        {QT_TR_NOOP("&Cross-section"), HoverView::CrossSection},
+        {QT_TR_NOOP("&Time series"), HoverView::TimeSeries},
+        {QT_TR_NOOP("&Skew-T"), HoverView::SkewT},
+    };
+    for (const auto& h : hovers) {
+        QAction* act = hoverMenu->addAction(tr(h.label));
+        act->setCheckable(true);
+        act->setChecked(HoverOptions::instance().enabled(h.view));
+        const HoverView view = h.view;
+        connect(act, &QAction::toggled, this,
+                [view](bool on) { HoverOptions::instance().setEnabled(view, on); });
+    }
 
     // Theme: System (follow OS light/dark) / Light / Dark, persisted by ThemeManager.
     viewMenu->addSeparator();
@@ -1583,19 +1605,8 @@ void MainWindow::updateWind() {
 
 void MainWindow::onProbeMoved(double lat, double lon, double value, bool hasValue) {
     QString s = QStringLiteral("lat %1°  lon %2°").arg(lat, 0, 'f', 2).arg(lon, 0, 'f', 2);
-    if (hasValue) {
-        s += QStringLiteral("   %1 %2").arg(value, 0, 'f', 2).arg(currentUnits_);
-        const auto alt = met::core::preferredDisplayUnit(currentUnits_.toStdString());
-        if (alt) {
-            const auto converted = met::core::convert(value, currentUnits_.toStdString(), *alt);
-            if (converted)
-                s += QStringLiteral(" (%1 %2)")
-                         .arg(*converted, 0, 'f', 2)
-                         .arg(QString::fromStdString(met::core::unitLabel(*alt)));
-        }
-    } else {
-        s += QStringLiteral("   (no data)");
-    }
+    s += QStringLiteral("   ") +
+         (hasValue ? formatValueWithUnits(value, currentUnits_) : tr("(no data)"));
     probeLabel_->setText(s);
 }
 
