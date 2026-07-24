@@ -23,6 +23,8 @@ add_library(met_app STATIC
     icons.h
     colorbarwidget.cpp
     colorbarwidget.h
+    hoverreadout.cpp
+    hoverreadout.h
     crosssectionview.cpp
     crosssectionview.h
     skewtview.cpp

@@ -175,6 +175,10 @@ private:
                             std::shared_ptr<SoundingTab> tab);
 
     void decodeCurrent();  // decode the field for the current var/level/time
+    // Lat/lon decimals for the analysis views' readouts, from the current dataset's
+    // grid spacing (app::coordPrecision). The analysis result structs carry no grid,
+    // so the views are told at creation.
+    [[nodiscard]] int currentCoordPrecision() const;
     void displayField(std::shared_ptr<core::Field2D> field);  // show a decoded field
     void presentField();   // show the current raw field or a derived quantity
     void prefetchAhead();  // decode upcoming time steps into the cache

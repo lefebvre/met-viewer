@@ -4,7 +4,11 @@
 #include <cmath>
 #include <limits>
 
+#include <QMouseEvent>
 #include <QPainter>
+
+#include "viewer/app/hoverreadout.h"
+#include "viewer/core/geo.h"
 
 namespace met::app {
 namespace {
@@ -63,6 +67,12 @@ void pressureExtent(const analysis::CrossSection& cs, double& pTop, double& pBot
 
 CrossSectionView::CrossSectionView(QWidget* parent) : QWidget(parent) {
     setMinimumSize(420, 280);
+    setMouseTracking(true);
+    connect(&HoverOptions::instance(), &HoverOptions::changed, this, [this](HoverView v) {
+        if (v != HoverView::CrossSection) return;
+        hoverActive_ = false;  // drop a badge left over from before the toggle
+        update();
+    });
 }
 
 void CrossSectionView::applyAutoRange() {
@@ -78,6 +88,7 @@ void CrossSectionView::applyAutoRange() {
 
 void CrossSectionView::setSection(const analysis::CrossSection& cs) {
     cs_ = cs;
+    ++sectionSeq_;  // invalidates img_
     if (autoRange_) applyAutoRange();
     emit rangeChanged(min_, max_);
     update();
@@ -106,6 +117,46 @@ void CrossSectionView::setRange(double lo, double hi) {
     update();
 }
 
+CrossSectionView::Layout CrossSectionView::layout() const {
+    Layout lay;
+    lay.rect = QRectF(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
+    if (cs_.pressures.size() < 2 || cs_.distancesKm.size() < 2) return lay;
+    pressureExtent(cs_, lay.pTop, lay.pBot);
+    lay.valid = lay.pTop > 0.0 && lay.pBot > lay.pTop && lay.rect.width() >= 2 &&
+                lay.rect.height() >= 2;
+    return lay;
+}
+
+void CrossSectionView::rebuildImage(const Layout& lay) {
+    const QSize size(static_cast<int>(lay.rect.width()), static_cast<int>(lay.rect.height()));
+    if (!img_.isNull() && imgSize_ == size && imgSection_ == sectionSeq_ &&
+        imgCmap_ == QString::fromStdString(cmap_.name()) && imgMin_ == cmap_.min() &&
+        imgMax_ == cmap_.max())
+        return;
+
+    // For each screen row map to a pressure, then sample each column at that
+    // pressure through its own (terrain-following) profile.
+    const int ns = static_cast<int>(cs_.distancesKm.size());
+    const double logTop = std::log(lay.pTop), logBot = std::log(lay.pBot);
+    img_ = QImage(size, QImage::Format_ARGB32);
+    for (int py = 0; py < img_.height(); ++py) {
+        const double press =
+            std::exp(logTop + (double(py) / (img_.height() - 1)) * (logBot - logTop));
+        auto* scan = reinterpret_cast<QRgb*>(img_.scanLine(py));
+        for (int px = 0; px < img_.width(); ++px) {
+            const double sampleF = (double(px) / (img_.width() - 1)) * (ns - 1);
+            const float val = sampleSection(cs_, sampleF, press);
+            const render::Rgba c = cmap_.map(val);
+            scan[px] = qRgba(c.r, c.g, c.b, c.a);
+        }
+    }
+    imgSize_ = size;
+    imgSection_ = sectionSeq_;
+    imgCmap_ = QString::fromStdString(cmap_.name());
+    imgMin_ = cmap_.min();
+    imgMax_ = cmap_.max();
+}
+
 void CrossSectionView::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), palette().base());
@@ -115,32 +166,19 @@ void CrossSectionView::paintEvent(QPaintEvent*) {
         return;
     }
 
-    const QRectF r(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
-    const int ns = static_cast<int>(cs_.distancesKm.size());
-    double pTop = 0, pBot = 0;
-    pressureExtent(cs_, pTop, pBot);
-    if (!(pTop > 0.0) || !(pBot > pTop)) {
+    const Layout lay = layout();
+    const QRectF r = lay.rect;
+    if (!lay.valid) {
         p.setPen(palette().color(QPalette::PlaceholderText));
         p.drawText(rect(), Qt::AlignCenter, tr("Cross-section has no valid pressure data"));
         return;
     }
+    const double pTop = lay.pTop, pBot = lay.pBot;
     const double logTop = std::log(pTop), logBot = std::log(pBot);
-
-    // Colored field: for each screen row map to a pressure, sample each column at
-    // that pressure through its own (terrain-following) profile.
     const double totalKm = cs_.distancesKm.back();
-    QImage img(static_cast<int>(r.width()), static_cast<int>(r.height()), QImage::Format_ARGB32);
-    for (int py = 0; py < img.height(); ++py) {
-        const double press = std::exp(logTop + (double(py) / (img.height() - 1)) * (logBot - logTop));
-        auto* scan = reinterpret_cast<QRgb*>(img.scanLine(py));
-        for (int px = 0; px < img.width(); ++px) {
-            const double sampleF = (double(px) / (img.width() - 1)) * (ns - 1);
-            const float val = sampleSection(cs_, sampleF, press);
-            const render::Rgba c = cmap_.map(val);
-            scan[px] = qRgba(c.r, c.g, c.b, c.a);
-        }
-    }
-    p.drawImage(r.topLeft(), img);
+
+    rebuildImage(lay);
+    p.drawImage(r.topLeft(), img_);
     p.setPen(palette().color(QPalette::Text));
     p.drawRect(r);
 
@@ -166,6 +204,62 @@ void CrossSectionView::paintEvent(QPaintEvent*) {
     }
     p.drawText(QRectF(0, 0, width(), kMT), Qt::AlignCenter,
                tr("Cross-section (%1)").arg(QString::fromStdString(cs_.units)));
+
+    if (hoverActive_) paintHoverReadout(p, r, hoverPos_, hoverLines_, palette());
+}
+
+void CrossSectionView::mouseMoveEvent(QMouseEvent* event) {
+    const bool wasActive = hoverActive_;
+    hoverActive_ = false;
+    const Layout lay = layout();
+    const QPointF pos = event->position();
+    if (!lay.valid || !lay.rect.contains(pos) ||
+        !HoverOptions::instance().enabled(HoverView::CrossSection)) {
+        if (wasActive) update();
+        return;
+    }
+
+    // Invert the paint mapping: x -> fractional column along the path, y -> pressure
+    // on the log axis. Both must match layout()/rebuildImage() exactly.
+    const QRectF& r = lay.rect;
+    const int ns = static_cast<int>(cs_.distancesKm.size());
+    const double sampleF = (pos.x() - r.left()) / r.width() * (ns - 1);
+    const double logTop = std::log(lay.pTop), logBot = std::log(lay.pBot);
+    const double press = std::exp(logTop + (pos.y() - r.top()) / r.height() * (logBot - logTop));
+
+    // Distance and position at this column, interpolated between path samples.
+    const std::size_t s0 = static_cast<std::size_t>(
+        std::clamp(std::floor(sampleF), 0.0, static_cast<double>(ns - 1)));
+    const std::size_t s1 = std::min(s0 + 1, static_cast<std::size_t>(ns - 1));
+    const double f = sampleF - static_cast<double>(s0);
+    const double km = std::lerp(cs_.distancesKm[s0], cs_.distancesKm[s1], f);
+
+    QStringList lines;
+    if (s0 < cs_.points.size() && s1 < cs_.points.size()) {
+        const core::LatLon a = cs_.points[s0], b = cs_.points[s1];
+        lines << QStringLiteral("%1 km  (%2°, %3°)")
+                     .arg(km, 0, 'f', 1)
+                     .arg(std::lerp(a.lat, b.lat, f), 0, 'f', coordPrec_)
+                     .arg(core::wrapLon180(std::lerp(a.lon, b.lon, f)), 0, 'f', coordPrec_);
+    } else {
+        lines << QStringLiteral("%1 km").arg(km, 0, 'f', 1);
+    }
+    lines << QStringLiteral("%1 hPa").arg(press, 0, 'f', 1);
+    const float v = sampleSection(cs_, sampleF, press);
+    lines << (std::isnan(v) ? tr("(no data)")
+                            : formatValueWithUnits(static_cast<double>(v),
+                                                   QString::fromStdString(cs_.units)));
+
+    hoverActive_ = true;
+    hoverPos_ = pos;
+    hoverLines_ = lines;
+    update();
+}
+
+void CrossSectionView::leaveEvent(QEvent*) {
+    if (!hoverActive_) return;
+    hoverActive_ = false;
+    update();
 }
 
 }  // namespace met::app

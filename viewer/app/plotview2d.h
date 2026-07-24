@@ -3,11 +3,14 @@
 #include <memory>
 
 #include <QImage>
+#include <QPointF>
+#include <QStringList>
 #include <QWidget>
 
 #include "viewer/analysis/wind.h"
 #include "viewer/core/field.h"
 #include "viewer/render/colormap.h"
+#include "viewer/render/contour.h"
 
 namespace met::app {
 
@@ -36,6 +39,12 @@ public:
     void setWind(std::shared_ptr<analysis::WindField> wind);
     void setWindMode(int mode);
 
+    // The cursor readout currently on screen, one string per badge line; empty when
+    // no readout is showing. Lets callers (and tests) read what the user is seeing.
+    [[nodiscard]] QStringList hoverText() const {
+        return hoverActive_ ? hoverLines_ : QStringList();
+    }
+
     [[nodiscard]] const render::Colormap& colormap() const { return cmap_; }
     [[nodiscard]] bool hasField() const { return field_ != nullptr; }
     [[nodiscard]] QString units() const {
@@ -63,15 +72,25 @@ private:
     // Map a fractional grid index (col, row) to a screen point in the plot rect.
     QPointF indexToScreen(double col, double row, const QRectF& r) const;
 
+    // Badge lines for the cursor readout: position, value, and grid cell.
+    QStringList hoverTextAt(core::LatLon ll, float value) const;
+
     std::shared_ptr<core::Field2D> field_;
     render::Colormap cmap_ = render::Colormap::builtin("viridis");
     QImage image_;                   // cached north-up raster
     core::BBox bbox_{};              // geographic extent of field_
     bool contoursEnabled_ = false;
     double contourInterval_ = 0.0;   // 0 = auto
+    render::ContourCache contours_;  // isolines survive the per-mouse-move repaints
     bool autoRange_ = true;
     std::shared_ptr<analysis::WindField> wind_;
     int windMode_ = 0;
+
+    // Cursor readout state: the badge follows the pointer, so these change on every
+    // mouse-move and are cleared when the cursor leaves.
+    bool hoverActive_ = false;
+    QPointF hoverPos_;
+    QStringList hoverLines_;
 };
 
 }  // namespace met::app

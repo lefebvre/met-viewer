@@ -4,8 +4,10 @@
 #include <cmath>
 #include <limits>
 
+#include <QMouseEvent>
 #include <QPainter>
 
+#include "viewer/app/hoverreadout.h"
 #include "viewer/core/timeaxis.h"
 
 namespace met::app {
@@ -13,7 +15,32 @@ namespace {
 constexpr int kML = 64, kMR = 16, kMT = 22, kMB = 40;
 }
 
-TimeSeriesView::TimeSeriesView(QWidget* parent) : QWidget(parent) { setMinimumSize(360, 220); }
+TimeSeriesView::TimeSeriesView(QWidget* parent) : QWidget(parent) {
+    setMinimumSize(360, 220);
+    setMouseTracking(true);
+    connect(&HoverOptions::instance(), &HoverOptions::changed, this, [this](HoverView v) {
+        if (v != HoverView::TimeSeries) return;
+        hoverActive_ = false;  // drop a badge left over from before the toggle
+        update();
+    });
+}
+
+TimeSeriesView::Layout TimeSeriesView::layout() const {
+    Layout lay;
+    lay.rect = QRectF(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
+    if (ts_.values.size() < 2 || lay.rect.width() < 2 || lay.rect.height() < 2) return lay;
+
+    double lo = std::numeric_limits<double>::infinity(), hi = -lo;
+    for (float v : ts_.values)
+        if (!std::isnan(v)) { lo = std::min(lo, double(v)); hi = std::max(hi, double(v)); }
+    if (!std::isfinite(lo)) { lo = 0; hi = 1; }
+    if (lo == hi) { lo -= 1; hi += 1; }
+    const double pad = 0.08 * (hi - lo);
+    lay.lo = lo - pad;
+    lay.hi = hi + pad;
+    lay.valid = true;
+    return lay;
+}
 
 void TimeSeriesView::setSeries(const analysis::TimeSeries& ts, const QString& varName) {
     ts_ = ts;
@@ -36,18 +63,14 @@ void TimeSeriesView::paintEvent(QPaintEvent*) {
         return;
     }
 
-    const QRectF r(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
-    double lo = std::numeric_limits<double>::infinity(), hi = -lo;
-    for (float v : ts_.values)
-        if (!std::isnan(v)) { lo = std::min(lo, double(v)); hi = std::max(hi, double(v)); }
-    if (!std::isfinite(lo)) { lo = 0; hi = 1; }
-    if (lo == hi) { lo -= 1; hi += 1; }
-    const double pad = 0.08 * (hi - lo);
-    lo -= pad; hi += pad;
+    const Layout lay = layout();
+    if (!lay.valid) return;
+    const QRectF& r = lay.rect;
+    const double lo = lay.lo, hi = lay.hi;
 
     const int n = static_cast<int>(ts_.values.size());
-    auto xOf = [&](int i) { return r.left() + r.width() * i / (n - 1); };
-    auto yOf = [&](double v) { return r.bottom() - (v - lo) / (hi - lo) * r.height(); };
+    auto xOf = [&](int i) { return lay.xOf(i, n); };
+    auto yOf = [&](double v) { return lay.yOf(v); };
 
     p.setPen(palette().color(QPalette::Text));
     p.drawRect(r);
@@ -100,9 +123,60 @@ void TimeSeriesView::paintEvent(QPaintEvent*) {
     p.drawText(QRectF(0, 2, width(), kMT - 2), Qt::AlignCenter,
                tr("%1 at (%2°, %3°)  [%4]")
                    .arg(varName_)
-                   .arg(ts_.point.lat, 0, 'f', 1)
-                   .arg(ts_.point.lon, 0, 'f', 1)
+                   .arg(ts_.point.lat, 0, 'f', coordPrec_)
+                   .arg(ts_.point.lon, 0, 'f', coordPrec_)
                    .arg(QString::fromStdString(ts_.units)));
+
+    // Cursor readout, snapped to the nearest sample so the badge names a real point.
+    if (hoverActive_ && hoverIdx_ >= 0 && hoverIdx_ < n) {
+        const float hv = ts_.values[static_cast<std::size_t>(hoverIdx_)];
+        if (!std::isnan(hv)) {
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(QPen(palette().color(QPalette::Text), 1.0));
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(QPointF(xOf(hoverIdx_), yOf(hv)), 4.5, 4.5);
+            p.setRenderHint(QPainter::Antialiasing, false);
+        }
+        paintHoverReadout(p, r, hoverPos_, hoverLines_, palette());
+    }
+}
+
+void TimeSeriesView::mouseMoveEvent(QMouseEvent* event) {
+    const bool wasActive = hoverActive_;
+    hoverActive_ = false;
+    const Layout lay = layout();
+    const QPointF pos = event->position();
+    if (!lay.valid || !lay.rect.contains(pos) ||
+        !HoverOptions::instance().enabled(HoverView::TimeSeries)) {
+        if (wasActive) update();
+        return;
+    }
+
+    // Snap to the nearest time step: between samples there is no data to report.
+    const int n = static_cast<int>(ts_.values.size());
+    const double f = (pos.x() - lay.rect.left()) / lay.rect.width() * (n - 1);
+    const int i = std::clamp(static_cast<int>(std::lround(f)), 0, n - 1);
+    const float v = ts_.values[static_cast<std::size_t>(i)];
+
+    QStringList lines;
+    lines << QString::fromStdString(core::formatTime(ts_.times[static_cast<std::size_t>(i)]));
+    lines << (std::isnan(v) ? tr("(no data)")
+                            : formatValueWithUnits(static_cast<double>(v),
+                                                   QString::fromStdString(ts_.units)));
+
+    hoverActive_ = true;
+    hoverIdx_ = i;
+    // Anchor the crosshair on the snapped sample, not the raw pointer, so the badge
+    // and the highlighted point line up.
+    hoverPos_ = QPointF(lay.xOf(i, n), std::isnan(v) ? pos.y() : lay.yOf(v));
+    hoverLines_ = lines;
+    update();
+}
+
+void TimeSeriesView::leaveEvent(QEvent*) {
+    if (!hoverActive_) return;
+    hoverActive_ = false;
+    update();
 }
 
 }  // namespace met::app

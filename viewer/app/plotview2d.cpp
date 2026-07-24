@@ -10,6 +10,7 @@
 
 #include "viewer/analysis/sample.h"
 #include "viewer/analysis/wind.h"
+#include "viewer/app/hoverreadout.h"
 #include "viewer/render/contour.h"
 #include "viewer/render/fieldimage.h"
 #include "viewer/render/windbarb.h"
@@ -39,6 +40,11 @@ PlotView2D::PlotView2D(QWidget* parent) : QWidget(parent) {
     setMouseTracking(true);
     setMinimumSize(320, 240);
     cmap_.setRange(0.0, 1.0);
+    connect(&HoverOptions::instance(), &HoverOptions::changed, this, [this](HoverView v) {
+        if (v != HoverView::Plot) return;
+        hoverActive_ = false;  // drop a badge left over from before the toggle
+        update();
+    });
 }
 
 void PlotView2D::setColormapByName(const QString& name) {
@@ -196,7 +202,7 @@ void PlotView2D::paintEvent(QPaintEvent* /*event*/) {
             QPen pen(QColor(20, 20, 20, 180));
             pen.setWidthF(0.8);
             p.setPen(pen);
-            for (const auto& lvl : render::contourLevels(*field_, interval)) {
+            for (const auto& lvl : contours_.levels(*field_, interval)) {
                 for (const auto& s : lvl.segments) {
                     p.drawLine(indexToScreen(s.x0, s.y0, r), indexToScreen(s.x1, s.y1, r));
                 }
@@ -257,17 +263,23 @@ void PlotView2D::paintEvent(QPaintEvent* /*event*/) {
         p.drawText(QRectF(0, y - 8, kMarginLeft - 6, 16), Qt::AlignRight | Qt::AlignVCenter,
                    QString::number(lat, 'g', 4) + QStringLiteral("°"));
     }
+
+    if (hoverActive_) paintHoverReadout(p, r, hoverPos_, hoverLines_, palette());
 }
 
 void PlotView2D::mouseMoveEvent(QMouseEvent* event) {
+    const bool wasActive = hoverActive_;
+    hoverActive_ = false;
     if (!field_) {
         emit probeLeft();
+        if (wasActive) update();
         return;
     }
     const QRectF r = plotRect();
     const QPointF pos = event->position();
     if (!r.contains(pos)) {
         emit probeLeft();
+        if (wasActive) update();
         return;
     }
 
@@ -276,10 +288,48 @@ void PlotView2D::mouseMoveEvent(QMouseEvent* event) {
     const double lon = bbox_.minLon + fx * (bbox_.maxLon - bbox_.minLon);
     const double lat = bbox_.maxLat - fy * (bbox_.maxLat - bbox_.minLat);
 
-    const float v = analysis::sampleBilinear(*field_, core::LatLon{lat, lon});
+    const core::LatLon ll{lat, lon};
+    const float v = analysis::sampleBilinear(*field_, ll);
     emit probeMoved(lat, lon, static_cast<double>(v), !std::isnan(v));
+
+    // In-view badge (the status bar carries the same numbers, but a floating view
+    // can be far from it). Repainting is cheap: the raster and the isolines are cached.
+    if (!HoverOptions::instance().enabled(HoverView::Plot)) {
+        if (wasActive) update();
+        return;
+    }
+    hoverActive_ = true;
+    hoverPos_ = pos;
+    hoverLines_ = hoverTextAt(ll, v);
+    update();
 }
 
-void PlotView2D::leaveEvent(QEvent* /*event*/) { emit probeLeft(); }
+// Badge lines shared with MapView's readout: position, value, and the grid cell the
+// sample came from (which tells you the data's real resolution under the cursor).
+QStringList PlotView2D::hoverTextAt(core::LatLon ll, float value) const {
+    const int prec = field_ ? coordPrecision(core::gridSpacingDeg(field_->grid)) : 2;
+    QStringList lines;
+    lines << QStringLiteral("lat %1°  lon %2°")
+                 .arg(ll.lat, 0, 'f', prec)
+                 .arg(core::wrapLon180(ll.lon), 0, 'f', prec);
+    lines << (std::isnan(value) ? tr("(no data)")
+                                : formatValueWithUnits(static_cast<double>(value), units()));
+    if (field_) {
+        const core::GridIndex gi = core::latlonToIndex(field_->grid, ll);
+        if (gi.inDomain)
+            lines << QStringLiteral("i %1  j %2")
+                         .arg(static_cast<int>(std::lround(gi.x)))
+                         .arg(static_cast<int>(std::lround(gi.y)));
+    }
+    return lines;
+}
+
+void PlotView2D::leaveEvent(QEvent* /*event*/) {
+    emit probeLeft();
+    if (hoverActive_) {
+        hoverActive_ = false;
+        update();
+    }
+}
 
 }  // namespace met::app
