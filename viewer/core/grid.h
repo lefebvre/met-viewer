@@ -63,4 +63,10 @@ using GridDef = std::variant<RegularLatLonGrid, ProjectedGrid>;
 // Geographic bounding box covered by the grid.
 [[nodiscard]] BBox gridBBox(const GridDef& g);
 
+// Approximate horizontal grid spacing in degrees: the smaller of the two axis
+// steps (for a projected grid the metre spacing is converted at ~111.32 km/deg).
+// A coarse size hint — used to pick how many decimals a lat/lon readout deserves,
+// not for exact geometry.
+[[nodiscard]] double gridSpacingDeg(const GridDef& g);
+
 }  // namespace met::core

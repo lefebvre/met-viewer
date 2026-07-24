@@ -123,8 +123,8 @@ void TimeSeriesView::paintEvent(QPaintEvent*) {
     p.drawText(QRectF(0, 2, width(), kMT - 2), Qt::AlignCenter,
                tr("%1 at (%2°, %3°)  [%4]")
                    .arg(varName_)
-                   .arg(ts_.point.lat, 0, 'f', 1)
-                   .arg(ts_.point.lon, 0, 'f', 1)
+                   .arg(ts_.point.lat, 0, 'f', coordPrec_)
+                   .arg(ts_.point.lon, 0, 'f', coordPrec_)
                    .arg(QString::fromStdString(ts_.units)));
 
     // Cursor readout, snapped to the nearest sample so the badge names a real point.

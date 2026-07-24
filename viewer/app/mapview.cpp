@@ -680,10 +680,11 @@ void MapView::mouseMoveEvent(QMouseEvent* event) {
 }
 
 QStringList MapView::hoverTextAt(core::LatLon ll, float value) const {
+    const int prec = field_ ? coordPrecision(core::gridSpacingDeg(field_->grid)) : 2;
     QStringList lines;
     lines << QStringLiteral("lat %1°  lon %2°")
-                 .arg(ll.lat, 0, 'f', 2)
-                 .arg(core::wrapLon180(ll.lon), 0, 'f', 2);
+                 .arg(ll.lat, 0, 'f', prec)
+                 .arg(core::wrapLon180(ll.lon), 0, 'f', prec);
     lines << (std::isnan(value) ? tr("(no data)")
                                 : formatValueWithUnits(static_cast<double>(value), units()));
     if (field_) {

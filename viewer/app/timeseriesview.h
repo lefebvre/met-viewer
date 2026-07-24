@@ -16,6 +16,9 @@ public:
     explicit TimeSeriesView(QWidget* parent = nullptr);
     void setSeries(const analysis::TimeSeries& ts, const QString& varName);
     void setCurrentIndex(int index);  // highlight the current time step (marker)
+    // Decimals for the point's lat/lon in the title, from the source grid spacing
+    // (see app::coordPrecision). The series carries no grid, so MainWindow sets it.
+    void setCoordPrecision(int digits) { coordPrec_ = digits; }
 
     // The cursor readout currently on screen, one string per badge line; empty when
     // no readout is showing. Lets callers (and tests) read what the user is seeing.
@@ -50,6 +53,7 @@ private:
     analysis::TimeSeries ts_;
     QString varName_;
     int currentIdx_ = -1;  // marker position; -1 = none
+    int coordPrec_ = 2;    // lat/lon decimals in the title
 
     // Cursor readout state; hoverIdx_ is the series point the badge snapped to.
     bool hoverActive_ = false;

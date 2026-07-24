@@ -239,8 +239,8 @@ void CrossSectionView::mouseMoveEvent(QMouseEvent* event) {
         const core::LatLon a = cs_.points[s0], b = cs_.points[s1];
         lines << QStringLiteral("%1 km  (%2°, %3°)")
                      .arg(km, 0, 'f', 1)
-                     .arg(std::lerp(a.lat, b.lat, f), 0, 'f', 2)
-                     .arg(core::wrapLon180(std::lerp(a.lon, b.lon, f)), 0, 'f', 2);
+                     .arg(std::lerp(a.lat, b.lat, f), 0, 'f', coordPrec_)
+                     .arg(core::wrapLon180(std::lerp(a.lon, b.lon, f)), 0, 'f', coordPrec_);
     } else {
         lines << QStringLiteral("%1 km").arg(km, 0, 'f', 1);
     }

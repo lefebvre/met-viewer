@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QPalette>
 #include <QPointF>
+#include <QRegularExpression>
 #include <Qt>
 
 #include "viewer/analysis/crosssection.h"
@@ -148,6 +149,25 @@ TEST(FormatValueWithUnits, ConvertsToThePreferredDisplayUnit) {
     EXPECT_EQ(app::formatValueWithUnits(4.5, ""), QStringLiteral("4.50"));
 }
 
+TEST(CoordPrecision, ThreeDigitsOnlyForHighResolutionGrids) {
+    // Synoptic-scale spacing -> 2 digits; convection-allowing (< ~5 km) -> 3.
+    EXPECT_EQ(app::coordPrecision(0.25), 2);   // ERA5 / GFS
+    EXPECT_EQ(app::coordPrecision(0.1), 2);
+    EXPECT_EQ(app::coordPrecision(0.027), 3);  // HRRR ~3 km
+    EXPECT_EQ(app::coordPrecision(0.0), 2);    // unknown spacing
+
+    core::RegularLatLonGrid coarse;
+    coarse.dlat = -0.25;
+    coarse.dlon = 0.25;
+    EXPECT_EQ(app::coordPrecision(core::gridSpacingDeg(core::GridDef{coarse})), 2);
+
+    core::ProjectedGrid fine;
+    fine.crs = core::Crs("+proj=lcc +lat_1=38.5 +lat_2=38.5 +lat_0=38.5 +lon_0=-97.5 +R=6371200 "
+                         "+units=m");
+    fine.dx = fine.dy = 3000.0;  // 3 km
+    EXPECT_EQ(app::coordPrecision(core::gridSpacingDeg(core::GridDef{fine})), 3);
+}
+
 TEST(HoverReadout, PlotViewDrawsBadgeOnHoverAndClearsOnLeave) {
     app::PlotView2D view;
     view.resize(640, 480);
@@ -252,6 +272,22 @@ TEST(HoverReadout, CrossSectionReportsDistanceAlongThePath) {
     const QStringList lines = view.hoverText();
     ASSERT_FALSE(lines.isEmpty());
     EXPECT_NEAR(lines[0].split(' ').first().toDouble(), 590.0, 15.0) << lines[0].toStdString();
+}
+
+TEST(HoverReadout, CrossSectionHonorsCoordPrecision) {
+    app::CrossSectionView view;
+    view.resize(700, 420);
+    view.setSection(makeSection());
+    view.setCoordPrecision(3);  // pretend the source is a high-resolution grid
+
+    moveMouse(view, QPointF(350, 210));
+    const QStringList lines = view.hoverText();
+    ASSERT_FALSE(lines.isEmpty());
+    // "<km> km  (<lat>°, <lon>°)" — both coordinates carry three decimals.
+    EXPECT_TRUE(QRegularExpression(QStringLiteral("\\(-?\\d+\\.\\d{3}°, -?\\d+\\.\\d{3}°\\)"))
+                    .match(lines[0])
+                    .hasMatch())
+        << lines[0].toStdString();
 }
 
 TEST(HoverReadout, TimeSeriesSnapsToTheNearestSample) {

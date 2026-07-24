@@ -17,6 +17,9 @@ class SkewTView : public QWidget {
 public:
     explicit SkewTView(QWidget* parent = nullptr);
     void setSounding(const analysis::Sounding& s);
+    // Decimals for the point's lat/lon in the title, from the source grid spacing
+    // (see app::coordPrecision). The sounding carries no grid, so MainWindow sets it.
+    void setCoordPrecision(int digits) { coordPrec_ = digits; }
 
     // The cursor readout currently on screen, one string per badge line; empty when
     // no readout is showing. Lets callers (and tests) read what the user is seeing.
@@ -47,6 +50,7 @@ private:
     [[nodiscard]] Layout layout() const;
 
     analysis::Sounding s_;
+    int coordPrec_ = 2;  // lat/lon decimals in the title
 
     // Cursor readout state; cleared when the cursor leaves.
     bool hoverActive_ = false;

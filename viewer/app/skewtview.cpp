@@ -261,8 +261,8 @@ void SkewTView::paintEvent(QPaintEvent*) {
         p.setPen(palette().color(QPalette::Text));
         p.drawText(QRectF(0, 2, width(), kMT - 4), Qt::AlignCenter,
                    tr("Skew-T  (%1°, %2°)")
-                       .arg(s_.point.lat, 0, 'f', 1)
-                       .arg(s_.point.lon, 0, 'f', 1));
+                       .arg(s_.point.lat, 0, 'f', coordPrec_)
+                       .arg(s_.point.lon, 0, 'f', coordPrec_));
     }
 
     if (hoverActive_) paintHoverReadout(p, r, hoverPos_, hoverLines_, palette());

@@ -25,6 +25,9 @@ public:
     void setColormapByName(const QString& name);
     void setAutoRange(bool on);            // re-fit the range to the section data
     void setRange(double lo, double hi);   // manual range
+    // Decimals for the cursor readout's lat/lon, from the source grid spacing
+    // (see app::coordPrecision). The section carries no grid, so MainWindow sets it.
+    void setCoordPrecision(int digits) { coordPrec_ = digits; }
     [[nodiscard]] const render::Colormap& colormap() const { return cmap_; }
     [[nodiscard]] QString units() const { return QString::fromStdString(cs_.units); }
 
@@ -64,6 +67,7 @@ private:
     render::Colormap cmap_ = render::Colormap::builtin("turbo");
     double min_ = 0, max_ = 1;
     bool autoRange_ = true;
+    int coordPrec_ = 2;  // lat/lon decimals in the cursor readout
 
     // Rendered field cache. Each pixel costs a log-p scan of every level, so
     // rebuilding per paint would make the cursor readout's repaints unusable.

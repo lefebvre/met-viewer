@@ -49,4 +49,10 @@ void paintHoverReadout(QPainter& p, const QRectF& plotRect, QPointF at,
 // exists (see core::preferredDisplayUnit). Empty `units` yields just the number.
 [[nodiscard]] QString formatValueWithUnits(double value, const QString& units);
 
+// Decimal places for a lat/lon readout, chosen from the source grid spacing
+// (core::gridSpacingDeg): 2 (~1 km) for synoptic-scale grids, 3 (~0.1 km) for
+// high-resolution convection-allowing data finer than ~5 km. `spacingDeg <= 0`
+// (unknown) yields 2.
+[[nodiscard]] int coordPrecision(double spacingDeg);
+
 }  // namespace met::app

@@ -856,6 +856,10 @@ void MainWindow::onDerivedChanged(int index) {
     presentField();
 }
 
+int MainWindow::currentCoordPrecision() const {
+    return currentRaw_ ? coordPrecision(core::gridSpacingDeg(currentRaw_->grid)) : 2;
+}
+
 void MainWindow::displayField(std::shared_ptr<core::Field2D> field) {
     currentUnits_ = QString::fromStdString(field->meta.units);
     plot_->setField(field);    // each view auto-ranges and updates its own legend
@@ -1335,6 +1339,7 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
                 return;
             }
             auto* view = new CrossSectionView;
+            view->setCoordPrecision(currentCoordPrecision());
             auto* frame = wrapCrossSection(view);  // panel + legend wired first
             view->setSection(cs);                  // emits rangeChanged -> fills the legend
             addAnalysisDock(frame, tr("Section: %1").arg(QString::fromStdString(var)));
@@ -1373,6 +1378,7 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
                 return;
             }
             auto* view = new SkewTView;
+            view->setCoordPrecision(currentCoordPrecision());
             view->setSounding(s);
             addAnalysisDock(view, tr("Skew-T"));
             statusBar()->clearMessage();
@@ -1412,6 +1418,7 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
                 return;
             }
             auto* view = new TimeSeriesView;
+            view->setCoordPrecision(currentCoordPrecision());
             view->setSeries(ts, QString::fromStdString(var));
             view->setCurrentIndex(timeIdx_);
             addAnalysisDock(view, tr("Series: %1").arg(QString::fromStdString(var)));

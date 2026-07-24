@@ -105,6 +105,13 @@ void paintHoverReadout(QPainter& p, const QRectF& plotRect, QPointF at,
     p.restore();
 }
 
+int coordPrecision(double spacingDeg) {
+    // ~0.05° ≈ 5.5 km marks the line between synoptic-scale global models (GFS/ERA5
+    // at 0.25°) and convection-allowing mesoscale models (HRRR at ~3 km), which are
+    // where the extra digit earns its keep.
+    return (spacingDeg > 0.0 && spacingDeg < 0.05) ? 3 : 2;
+}
+
 QString formatValueWithUnits(double value, const QString& units) {
     if (std::isnan(value)) return QStringLiteral("—");
     QString s = QString::number(value, 'f', 2);
