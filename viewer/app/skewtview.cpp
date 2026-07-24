@@ -2,13 +2,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <numbers>
 #include <vector>
 
 #include <QFontMetrics>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 
 #include "viewer/analysis/wind.h"
+#include "viewer/app/hoverreadout.h"
 #include "viewer/render/windbarb.h"
 
 namespace met::app {
@@ -23,9 +27,69 @@ double tempForEs(double es) {
     const double l = std::log(es / 6.112);
     return 243.12 * l / (17.62 - l);
 }
+
+// The sounding interpolated to an arbitrary pressure, linearly in log-p between the
+// bracketing levels. Any field that is NaN at either end stays NaN. Returns false
+// when `press` falls outside the sounding.
+bool soundingAt(const analysis::Sounding& s, double press, analysis::SoundingLevel& out) {
+    if (s.levels.size() < 2) return false;
+    for (std::size_t i = 0; i + 1 < s.levels.size(); ++i) {
+        const analysis::SoundingLevel& a = s.levels[i];      // levels run top -> bottom
+        const analysis::SoundingLevel& b = s.levels[i + 1];
+        if (press < a.pressure || press > b.pressure) continue;
+        const double denom = std::log(b.pressure) - std::log(a.pressure);
+        const double f = denom != 0.0 ? (std::log(press) - std::log(a.pressure)) / denom : 0.0;
+        auto mix = [f](float x, float y) {
+            return std::isnan(x) || std::isnan(y) ? std::numeric_limits<float>::quiet_NaN()
+                                                  : static_cast<float>(std::lerp(x, y, f));
+        };
+        out.pressure = press;
+        out.tempK = mix(a.tempK, b.tempK);
+        out.dewpointK = mix(a.dewpointK, b.dewpointK);
+        out.windU = mix(a.windU, b.windU);
+        out.windV = mix(a.windV, b.windV);
+        return true;
+    }
+    return false;
+}
 }  // namespace
 
-SkewTView::SkewTView(QWidget* parent) : QWidget(parent) { setMinimumSize(360, 420); }
+double SkewTView::Layout::yOfP(double press) const {
+    const double logTop = std::log(kPtop), logBot = std::log(kPbot);
+    return rect.top() + rect.height() * (std::log(press) - logTop) / (logBot - logTop);
+}
+
+double SkewTView::Layout::pOfY(double y) const {
+    const double logTop = std::log(kPtop), logBot = std::log(kPbot);
+    return std::exp(logTop + (y - rect.top()) / rect.height() * (logBot - logTop));
+}
+
+double SkewTView::Layout::xOfT(double tC, double y) const {
+    const double base = rect.left() + (tC - kTmin) / (kTmax - kTmin) * rect.width();
+    return base + kSkew * (rect.bottom() - y);
+}
+
+double SkewTView::Layout::tOfX(double x, double y) const {
+    const double base = x - kSkew * (rect.bottom() - y);
+    return kTmin + (base - rect.left()) / rect.width() * (kTmax - kTmin);
+}
+
+SkewTView::Layout SkewTView::layout() const {
+    Layout lay;
+    lay.rect = QRectF(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
+    lay.valid = lay.rect.width() >= 2 && lay.rect.height() >= 2;
+    return lay;
+}
+
+SkewTView::SkewTView(QWidget* parent) : QWidget(parent) {
+    setMinimumSize(360, 420);
+    setMouseTracking(true);
+    connect(&HoverOptions::instance(), &HoverOptions::changed, this, [this](HoverView v) {
+        if (v != HoverView::SkewT) return;
+        hoverActive_ = false;  // drop a badge left over from before the toggle
+        update();
+    });
+}
 
 void SkewTView::setSounding(const analysis::Sounding& s) {
     s_ = s;
@@ -35,17 +99,12 @@ void SkewTView::setSounding(const analysis::Sounding& s) {
 void SkewTView::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), palette().base());
-    const QRectF r(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
+    const Layout lay = layout();
+    const QRectF& r = lay.rect;
     p.setClipRect(r);
 
-    const double logTop = std::log(kPtop), logBot = std::log(kPbot);
-    auto yOfP = [&](double press) {
-        return r.top() + r.height() * (std::log(press) - logTop) / (logBot - logTop);
-    };
-    auto xOfT = [&](double tC, double y) {
-        const double base = r.left() + (tC - kTmin) / (kTmax - kTmin) * r.width();
-        return base + kSkew * (r.bottom() - y);
-    };
+    auto yOfP = [&](double press) { return lay.yOfP(press); };
+    auto xOfT = [&](double tC, double y) { return lay.xOfT(tC, y); };
 
     // Isotherms (skewed straight lines).
     p.setPen(QPen(QColor(200, 120, 120, 120), 0.6));
@@ -202,9 +261,59 @@ void SkewTView::paintEvent(QPaintEvent*) {
         p.setPen(palette().color(QPalette::Text));
         p.drawText(QRectF(0, 2, width(), kMT - 4), Qt::AlignCenter,
                    tr("Skew-T  (%1°, %2°)")
-                       .arg(s_.point.lat, 0, 'f', 1)
-                       .arg(s_.point.lon, 0, 'f', 1));
+                       .arg(s_.point.lat, 0, 'f', coordPrec_)
+                       .arg(s_.point.lon, 0, 'f', coordPrec_));
     }
+
+    if (hoverActive_) paintHoverReadout(p, r, hoverPos_, hoverLines_, palette());
+}
+
+void SkewTView::mouseMoveEvent(QMouseEvent* event) {
+    const bool wasActive = hoverActive_;
+    hoverActive_ = false;
+    const Layout lay = layout();
+    const QPointF pos = event->position();
+    if (!lay.valid || !lay.rect.contains(pos) || s_.levels.empty() ||
+        !HoverOptions::instance().enabled(HoverView::SkewT)) {
+        if (wasActive) update();
+        return;
+    }
+
+    // Where the cursor sits on the diagram, then what the sounding says at that
+    // pressure — the second is the useful number, the first tells you which
+    // isotherm/isobar you are reading against.
+    const double press = lay.pOfY(pos.y());
+    const double tC = lay.tOfX(pos.x(), pos.y());
+    QStringList lines;
+    lines << QStringLiteral("%1 hPa   %2 °C").arg(press, 0, 'f', 0).arg(tC, 0, 'f', 1);
+
+    analysis::SoundingLevel lvl{};
+    if (soundingAt(s_, press, lvl)) {
+        if (!std::isnan(lvl.tempK)) {
+            QString s = QStringLiteral("T %1 °C").arg(lvl.tempK - 273.15f, 0, 'f', 1);
+            if (!std::isnan(lvl.dewpointK))
+                s += QStringLiteral("   Td %1 °C").arg(lvl.dewpointK - 273.15f, 0, 'f', 1);
+            lines << s;
+        }
+        if (!std::isnan(lvl.windU) && !std::isnan(lvl.windV)) {
+            // Meteorological convention: the direction the wind blows *from*.
+            const double dir = std::fmod(
+                std::atan2(-lvl.windU, -lvl.windV) * 180.0 / std::numbers::pi + 360.0, 360.0);
+            const double kt = analysis::toKnots(std::hypot(lvl.windU, lvl.windV));
+            lines << QStringLiteral("Wind %1°  %2 kt").arg(dir, 0, 'f', 0).arg(kt, 0, 'f', 0);
+        }
+    }
+
+    hoverActive_ = true;
+    hoverPos_ = pos;
+    hoverLines_ = lines;
+    update();
+}
+
+void SkewTView::leaveEvent(QEvent*) {
+    if (!hoverActive_) return;
+    hoverActive_ = false;
+    update();
 }
 
 }  // namespace met::app

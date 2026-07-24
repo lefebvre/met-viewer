@@ -30,4 +30,23 @@ struct ContourLevel {
 // roughly `target` lines. Returns 0 if the range is degenerate.
 [[nodiscard]] double niceContourInterval(double lo, double hi, int target);
 
+// Memoizes contourLevels() for the last (field, interval) it was asked for. The
+// segments are in grid-index space, so they are independent of the view transform
+// and survive pan/zoom/resize; only a different field or interval rebuilds them.
+// Views repaint on every mouse-move to follow the cursor readout, which would
+// otherwise re-run marching squares over the whole grid per frame.
+class ContourCache {
+public:
+    // `field` must outlive the returned reference (views hold it in a shared_ptr);
+    // identity is compared by address, so a new field object always rebuilds.
+    [[nodiscard]] const std::vector<ContourLevel>& levels(const core::Field2D& field,
+                                                          double interval);
+    void clear();
+
+private:
+    const core::Field2D* field_ = nullptr;
+    double interval_ = 0.0;
+    std::vector<ContourLevel> levels_;
+};
+
 }  // namespace met::render

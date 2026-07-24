@@ -215,4 +215,20 @@ BBox gridBBox(const GridDef& g) {
         g);
 }
 
+double gridSpacingDeg(const GridDef& g) {
+    return std::visit(
+        [](const auto& grid) -> double {
+            using T = std::decay_t<decltype(grid)>;
+            if constexpr (std::is_same_v<T, RegularLatLonGrid>) {
+                return std::min(std::abs(grid.dlat), std::abs(grid.dlon));
+            } else {
+                // Projected spacing is in metres; ~111.32 km per degree of latitude
+                // is close enough for a size hint at any usable latitude.
+                constexpr double kMetresPerDeg = 111320.0;
+                return std::min(std::abs(grid.dx), std::abs(grid.dy)) / kMetresPerDeg;
+            }
+        },
+        g);
+}
+
 }  // namespace met::core

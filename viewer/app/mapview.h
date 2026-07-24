@@ -7,12 +7,15 @@
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
 #include <QPointF>
+#include <QPolygonF>
+#include <QStringList>
 
 #include "viewer/analysis/wind.h"
 #include "viewer/app/coastlines.h"
 #include "viewer/app/glfieldrenderer.h"
 #include "viewer/core/field.h"
 #include "viewer/render/colormap.h"
+#include "viewer/render/contour.h"
 
 namespace met::app {
 
@@ -99,8 +102,11 @@ private:
     bool visibleValueRange(double& lo, double& hi) const;
     void drawBarbs(QPainter& p);
     void drawStreamlines(QPainter& p);
+    void ensureStreamlines();  // rebuild streamlines_ when the viewport/wind changed
     void drawContours(QPainter& p);
     bool drawFieldGpu();  // returns true if the GPU path rendered the field
+    // Badge lines for the cursor readout: position, value, and grid cell.
+    QStringList hoverTextAt(core::LatLon ll, float value) const;
 
     TileLayer* tiles_ = nullptr;
     std::shared_ptr<core::Field2D> field_;
@@ -134,6 +140,19 @@ private:
     const void* warpField_ = nullptr;
     QString warpCmap_;
     double warpMin_ = 0, warpMax_ = 0;
+
+    // Streamline cache: the integrated polylines and the viewport they were built
+    // for. Everything else in paintGL is cheap or already cached (warp_).
+    std::vector<QPolygonF> streamlines_;
+    const void* streamWind_ = nullptr;
+    int streamZoom_ = -1, streamW_ = -1, streamH_ = -1;
+    double streamCenterLon_ = 0, streamCenterLat_ = 0;
+    render::ContourCache contours_;  // isolines survive the per-mouse-move repaints
+
+    // Cursor readout state; cleared while panning and when the cursor leaves.
+    bool hoverActive_ = false;
+    QPointF hoverPos_;
+    QStringList hoverLines_;
 
     bool dragging_ = false;
     QPointF lastPos_;
