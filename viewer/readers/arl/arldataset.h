@@ -44,7 +44,9 @@ private:
     core::GridDef grid_{core::RegularLatLonGrid{}};
     int nx_ = 0;
     int ny_ = 0;
-    long recLen_ = 0;
+    // int64, not long: a multi-day ARL file exceeds 2 GB and `long` is 32-bit on
+    // Windows, which would wrap both the record length and every record offset.
+    std::int64_t recLen_ = 0;
     std::mutex mutex_;
 };
 

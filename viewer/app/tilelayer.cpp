@@ -1,13 +1,21 @@
 #include "viewer/app/tilelayer.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QNetworkAccessManager>
 #include <QNetworkDiskCache>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QStandardPaths>
+#include <QUrl>
+
+#include "viewer/core/log.h"
 
 namespace met::app {
+namespace {
+// Consecutive failures after which a tile stops being re-requested.
+constexpr int kMaxTileRetries = 3;
+}  // namespace
 
 TileLayer::TileLayer(QObject* parent) : QObject(parent), memory_(512) {
     nam_ = new QNetworkAccessManager(this);
@@ -36,9 +44,21 @@ QList<TileSource> TileLayer::builtinSources() {
         {"Esri World Imagery",
          "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
          "Esri, Maxar, Earthstar Geographics", 19},
+        {"Esri World Shaded Relief",
+         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Shaded_Relief/MapServer/tile/{z}/{y}/{x}",
+         "Esri", 13},
         {"OpenTopoMap", "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
          "© OpenStreetMap contributors, SRTM | © OpenTopoMap", 17},
     };
+}
+
+bool TileLayer::isValidUrlTemplate(const QString& t) {
+    const QUrl url(t);
+    const QString scheme = url.scheme().toLower();
+    if (scheme != QLatin1String("http") && scheme != QLatin1String("https")) return false;
+    if (url.host().isEmpty()) return false;
+    return t.contains(QLatin1String("{z}")) && t.contains(QLatin1String("{x}")) &&
+           t.contains(QLatin1String("{y}"));
 }
 
 void TileLayer::setSource(const TileSource& source) {
@@ -55,6 +75,7 @@ void TileLayer::setSource(const TileSource& source) {
     inFlight_.clear();
     pending_.clear();
     pendingUrls_.clear();
+    failed_.clear();  // a new source deserves a fresh try at every tile
 }
 
 QString TileLayer::keyOf(int z, int x, int y) const {
@@ -76,6 +97,11 @@ QImage TileLayer::tile(int z, int x, int y) {
     const QString key = keyOf(z, x, y);
     if (QImage* img = memory_.object(key)) return *img;
 
+    // Give up on a tile after a few consecutive failures until the source changes.
+    // Repaints are frequent (every mouse-move, for the cursor readout), so without
+    // this a 404 or an offline session turns into a steady request stream.
+    if (failed_.value(key, 0) >= kMaxTileRetries) return {};
+
     if (!inFlight_.contains(key) && !pendingUrls_.contains(key)) {
         pendingUrls_.insert(key, urlFor(z, x, y));
         pending_.enqueue(key);
@@ -89,8 +115,14 @@ void TileLayer::pump() {
         const QString key = pending_.dequeue();
         const QString url = pendingUrls_.take(key);
         QNetworkRequest req{QUrl(url)};
+        // OSM's tile usage policy requires a User-Agent that identifies the app and
+        // offers a way to reach its maintainer; a placeholder domain gets blocked.
+        // The version tracks the application version rather than being hardcoded.
         req.setHeader(QNetworkRequest::UserAgentHeader,
-                      QStringLiteral("met-viewer/0.3 (https://example.invalid; contact@example.invalid)"));
+                      QStringLiteral("met-viewer/%1 (+https://github.com/lefebvre/met-viewer)")
+                          .arg(QCoreApplication::applicationVersion().isEmpty()
+                                   ? QStringLiteral("dev")
+                                   : QCoreApplication::applicationVersion()));
         req.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
                          QNetworkRequest::PreferCache);
         req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
@@ -114,15 +146,30 @@ void TileLayer::onFinished(QNetworkReply* reply) {
     const QString key = reply->property("tileKey").toString();
     inFlight_.remove(key);
 
+    bool ok = false;
     if (reply->error() == QNetworkReply::NoError) {
         const QByteArray bytes = reply->readAll();
         QImage img;
         if (img.loadFromData(bytes)) {
             const QStringList parts = key.split('/');
             memory_.insert(key, new QImage(img));
+            failed_.remove(key);
+            ok = true;
             if (parts.size() == 3)
                 emit tileReady(parts[0].toInt(), parts[1].toInt(), parts[2].toInt());
         }
+    }
+    if (!ok && reply->error() != QNetworkReply::OperationCanceledError) {
+        // An abort (source switch / shutdown) is not the tile's fault, so it does
+        // not count against the retry budget.
+        const int n = failed_.value(key, 0) + 1;
+        failed_.insert(key, n);
+        if (n == kMaxTileRetries)
+            MET_LOG_WARN("tile {} failed {} times ({}); not retrying until the basemap changes",
+                         key.toStdString(), n, reply->errorString().toStdString());
+        else
+            MET_LOG_DEBUG("tile {} fetch failed: {}", key.toStdString(),
+                          reply->errorString().toStdString());
     }
     pump();  // free the slot for the next queued tile
 }

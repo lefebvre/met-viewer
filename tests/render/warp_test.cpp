@@ -2,9 +2,12 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
+#include <thread>
 
 #include "viewer/core/field.h"
+#include "viewer/core/grid.h"
 #include "viewer/render/colormap.h"
 #include "viewer/render/tilemath.h"
 #include "viewer/render/warp.h"
@@ -133,6 +136,46 @@ TEST(Warp, ProjectedGridProducesField) {
         for (int x = 0; x < img.width(); ++x)
             if (qAlpha(img.pixel(x, y)) > 0) ++opaque;
     EXPECT_GT(opaque, 1000);
+}
+
+// Performance tripwire for the projected path, which the regular-grid one below
+// does not exercise at all: it is the expensive one (a PROJ transform per output
+// pixel, versus a closed-form inverse), it is what a mesoscale file like HRRR
+// takes, and it runs synchronously inside paintGL. The budget is on the
+// multi-threaded number because that is what the view actually calls.
+TEST(Warp, ProjectedPerformanceTripwire) {
+    core::ProjectedGrid pg;  // HRRR-shaped Lambert
+    pg.crs = core::Crs(
+        "+proj=lcc +lat_1=38.5 +lat_2=38.5 +lat_0=38.5 +lon_0=-97.5 +R=6371229 +units=m +no_defs");
+    pg.nx = 1799;
+    pg.ny = 1059;
+    pg.dx = 3000;
+    pg.dy = 3000;
+    (void)pg.crs.forward(-122.72, 21.14, pg.x0, pg.y0);
+
+    core::Field2D f;
+    f.grid = pg;
+    f.values.assign(static_cast<std::size_t>(pg.nx) * static_cast<std::size_t>(pg.ny), 280.0f);
+    auto cmap = Colormap::builtin("viridis");
+    cmap.setRange(270.0, 290.0);
+
+    const core::BBox b = core::gridBBox(f.grid);
+    MercatorViewport view =
+        viewportFor(b, 1920, 1080, tile::zoomForLonSpan(b.maxLon - b.minLon, 1920));
+
+    const int threads =
+        std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 1);
+    (void)warpToMercator(f, cmap, view, 1.0, threads);  // warm up
+    const auto t0 = std::chrono::steady_clock::now();
+    QImage img = warpToMercator(f, cmap, view, 1.0, threads);
+    const auto t1 = std::chrono::steady_clock::now();
+    const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    std::printf("[warp] 1920x1080 Lambert, %d threads: %.2f ms\n", threads, ms);
+    ASSERT_FALSE(img.isNull());
+    // Generous relative to the ~27 ms measured on the dev box (and to a 2-core CI
+    // runner), but tight enough to catch the PROJ batch drifting back out of the
+    // parallel region, which alone cost ~5x.
+    EXPECT_LT(ms, 400.0);
 }
 
 // Performance tripwire: a 1080p warp of an ERA5-sized regular grid must stay

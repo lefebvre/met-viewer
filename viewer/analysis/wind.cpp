@@ -4,8 +4,10 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <numbers>
 #include <variant>
+#include <vector>
 
 #include "viewer/analysis/sample.h"
 
@@ -90,12 +92,24 @@ double gridNorthAngle(const core::GridDef& grid, double i, double j) {
     // Regular lat/lon grids are already earth-relative.
     if (std::holds_alternative<core::RegularLatLonGrid>(grid)) return 0.0;
 
-    // Sample the geographic direction of the grid's +y (row) axis by a small step.
+    const auto& p = std::get<core::ProjectedGrid>(grid);
     const int ny = core::gridHeight(grid);
-    const double step = 0.25;
-    const double j0 = std::min(j, static_cast<double>(ny - 1) - step);
+    if (ny < 2) return 0.0;
+
+    // Sample the geographic direction of the PROJECTION's +y axis, which is what
+    // grid-relative u/v are resolved against — not the direction of increasing row
+    // index. The two differ whenever the source scans north-to-south (dy < 0, i.e.
+    // GRIB jScansPositively = 0): stepping +j would then measure the bearing of
+    // projected -y, giving an angle 180 degrees off and flipping both components.
+    const double sign = p.dy < 0.0 ? -1.0 : 1.0;
+    const double step = 0.25 * sign;
+    // Keep both sample points inside the grid: j0 and j0+step must lie in [0, ny-1].
+    const double lo = step > 0.0 ? 0.0 : -step;
+    const double hi = step > 0.0 ? (ny - 1.0) - step : ny - 1.0;
+    const double j0 = std::clamp(j, lo, hi);
     const core::LatLon a = core::indexToLatLon(grid, i, j0);
     const core::LatLon b = core::indexToLatLon(grid, i, j0 + step);
+    if (std::isnan(a.lat) || std::isnan(b.lat)) return 0.0;  // inverse failed
 
     double dlon = b.lon - a.lon;
     while (dlon > 180.0) dlon -= 360.0;
@@ -113,20 +127,83 @@ void rotateToEarthRelative(WindField& w) {
 
     const int nx = w.width();
     const int ny = w.height();
-    for (int j = 0; j < ny; ++j) {
-        for (int i = 0; i < nx; ++i) {
-            const std::size_t k =
-                static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) + static_cast<std::size_t>(i);
-            const float ug = w.u.values[k];
-            const float vg = w.v.values[k];
-            if (std::isnan(ug) || std::isnan(vg)) continue;
-            const double theta = gridNorthAngle(w.u.grid, i, j);
-            const double c = std::cos(theta), s = std::sin(theta);
-            // Grid-relative (along grid x/y) -> earth-relative (east/north).
-            w.u.values[k] = static_cast<float>(ug * c + vg * s);
-            w.v.values[k] = static_cast<float>(-ug * s + vg * c);
+    if (nx <= 0 || ny <= 0) return;
+
+    // Rotate (ug, vg) by theta: grid-relative (along projected x/y) -> earth-
+    // relative (east/north). Takes cos/sin so the caller can supply an
+    // interpolated direction without an atan2 round-trip.
+    auto rotateCell = [&w, nx](int i, int j, double c, double s) {
+        const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
+                              static_cast<std::size_t>(i);
+        const float ug = w.u.values[k];
+        const float vg = w.v.values[k];
+        if (std::isnan(ug) || std::isnan(vg)) return;
+        w.u.values[k] = static_cast<float>(ug * c + vg * s);
+        w.v.values[k] = static_cast<float>(-ug * s + vg * c);
+    };
+
+    if (nx < 2 || ny < 2) {  // too small to interpolate over; evaluate directly
+        for (int j = 0; j < ny; ++j)
+            for (int i = 0; i < nx; ++i) {
+                const double t = gridNorthAngle(w.u.grid, i, j);
+                rotateCell(i, j, std::cos(t), std::sin(t));
+            }
+        return;
+    }
+
+    // Meridian convergence varies smoothly and very nearly linearly across a
+    // conformal projection (for Lambert it is exactly n*(lon - lon0)), so evaluate
+    // it on a coarse lattice and bilinearly interpolate between nodes. Each node
+    // costs two PROJ inverse transforms; doing that per cell instead costs
+    // 2*nx*ny of them — ~340 ms on an HRRR-sized grid, for an answer that differs
+    // by well under a hundredth of a degree.
+    constexpr int kStep = 16;  // cells between lattice nodes
+    const int lw = (nx - 2) / kStep + 2;
+    const int lh = (ny - 2) / kStep + 2;
+    const double spanX = (nx - 1.0) / (lw - 1);  // cells per lattice interval
+    const double spanY = (ny - 1.0) / (lh - 1);
+
+    std::vector<double> cosT(static_cast<std::size_t>(lw) * static_cast<std::size_t>(lh));
+    std::vector<double> sinT(cosT.size());
+    for (int lj = 0; lj < lh; ++lj) {
+        for (int li = 0; li < lw; ++li) {
+            const double t = gridNorthAngle(w.u.grid, li * spanX, lj * spanY);
+            const std::size_t n =
+                static_cast<std::size_t>(lj) * static_cast<std::size_t>(lw) +
+                static_cast<std::size_t>(li);
+            cosT[n] = std::cos(t);
+            sinT[n] = std::sin(t);
         }
     }
+
+    for (int j = 0; j < ny; ++j) {
+        const double fy = j / spanY;
+        const int lj = std::min(static_cast<int>(fy), lh - 2);
+        const double ty = fy - lj;
+        for (int i = 0; i < nx; ++i) {
+            const double fx = i / spanX;
+            const int li = std::min(static_cast<int>(fx), lw - 2);
+            const double tx = fx - li;
+            const std::size_t n00 = static_cast<std::size_t>(lj) * static_cast<std::size_t>(lw) +
+                                    static_cast<std::size_t>(li);
+            const std::size_t n10 = n00 + 1;
+            const std::size_t n01 = n00 + static_cast<std::size_t>(lw);
+            const std::size_t n11 = n01 + 1;
+            const double w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty);
+            const double w01 = (1 - tx) * ty, w11 = tx * ty;
+            // Interpolate the direction vector, not the angle: blending cos/sin
+            // avoids the wrap discontinuity at +/-pi.
+            double c = cosT[n00] * w00 + cosT[n10] * w10 + cosT[n01] * w01 + cosT[n11] * w11;
+            double s = sinT[n00] * w00 + sinT[n10] * w10 + sinT[n01] * w01 + sinT[n11] * w11;
+            const double len = std::hypot(c, s);
+            if (len > 1e-12) { c /= len; s /= len; }  // renormalize to a rotation
+            rotateCell(i, j, c, s);
+        }
+    }
+    // The values changed in place, so anything caching a derived product against
+    // the field id (rasters, isolines, GPU textures) must see a new field.
+    w.u.id = core::nextFieldId();
+    w.v.id = core::nextFieldId();
 }
 
 }  // namespace met::analysis

@@ -97,6 +97,11 @@ private:
     QPointF lonLatToScreen(core::LatLon ll) const;
     void fitToField();
     void ensureWarp();
+    // Cached-raster predicates: exactly current (blit as-is) vs. differing only by
+    // a translation (blit at an offset while panning).
+    [[nodiscard]] bool warpIsCurrent() const;
+    [[nodiscard]] bool warpIsPannable() const;
+    void drawFieldLayer(QPainter& p);
     void autorange();
     // Min/max of the field values whose cells fall within the current viewport.
     bool visibleValueRange(double& lo, double& hi) const;
@@ -117,7 +122,7 @@ private:
     bool gpuEnabled_ = false;  // opt-in; CPU warp is the robust default
     GlFieldRenderer glField_;
     bool glReady_ = false;
-    const void* uploadedField_ = nullptr;  // field last pushed to the GPU
+    std::uint64_t uploadedField_ = 0;  // Field2D::id last pushed to the GPU
     QString uploadedCmap_;
     double uploadedMin_ = 0, uploadedMax_ = 0;
     bool graticule_ = true;
@@ -137,14 +142,14 @@ private:
     double warpTlx_ = 0, warpTly_ = 0;
     int warpZoom_ = -1, warpW_ = -1, warpH_ = -1;
     double warpOpacity_ = -1;
-    const void* warpField_ = nullptr;
+    std::uint64_t warpField_ = 0;  // Field2D::id the cached raster belongs to
     QString warpCmap_;
     double warpMin_ = 0, warpMax_ = 0;
 
     // Streamline cache: the integrated polylines and the viewport they were built
     // for. Everything else in paintGL is cheap or already cached (warp_).
     std::vector<QPolygonF> streamlines_;
-    const void* streamWind_ = nullptr;
+    const void* streamWind_ = nullptr;  // WindField object identity, not a Field2D
     int streamZoom_ = -1, streamW_ = -1, streamH_ = -1;
     double streamCenterLon_ = 0, streamCenterLat_ = 0;
     render::ContourCache contours_;  // isolines survive the per-mouse-move repaints

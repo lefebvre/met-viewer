@@ -117,16 +117,16 @@ std::vector<ContourLevel> contourLevels(const core::Field2D& field, double inter
 
 const std::vector<ContourLevel>& ContourCache::levels(const core::Field2D& field,
                                                       double interval) {
-    if (&field != field_ || interval != interval_) {
+    if (field.id != fieldId_ || interval != interval_) {
         levels_ = contourLevels(field, interval);
-        field_ = &field;
+        fieldId_ = field.id;
         interval_ = interval;
     }
     return levels_;
 }
 
 void ContourCache::clear() {
-    field_ = nullptr;
+    fieldId_ = 0;
     interval_ = 0.0;
     levels_.clear();
 }

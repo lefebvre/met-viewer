@@ -68,3 +68,40 @@ TEST(Sample, NanAwareFallback) {
     const float v = sampleBilinearIndex(f, 0.01, 0.01);
     EXPECT_FALSE(std::isnan(v));
 }
+
+// A global grid's last cell wraps back onto column 0. latlonToIndex reports such
+// a point as in-domain (x runs up to nlon), so rejecting x > nlon-1 here punched a
+// dlon-wide NaN stripe through the field — visible as "(no data)" under the cursor
+// on ERA5 just west of the prime meridian, while the map drew data there.
+TEST(Sample, GlobalWrapSeamIsInterpolatedNotDropped) {
+    RegularLatLonGrid g;
+    g.lat0 = 90; g.lon0 = 0; g.dlat = -1; g.dlon = 1; g.nlon = 360; g.nlat = 181;
+    g.globalWrapLon = true;
+    Field2D f;
+    f.grid = g;
+    f.values.assign(360u * 181u, 42.0f);
+
+    for (double lon : {0.0, 90.0, 359.0, 359.5, 359.9, -0.5, -0.2}) {
+        const float v = sampleBilinear(f, LatLon{45.0, lon});
+        EXPECT_FLOAT_EQ(v, 42.0f) << "at lon " << lon;
+    }
+}
+
+TEST(Sample, GlobalWrapSeamBlendsTheTwoEdgeColumns) {
+    RegularLatLonGrid g;
+    g.lat0 = 0; g.lon0 = 0; g.dlat = -1; g.dlon = 90; g.nlon = 4; g.nlat = 2;
+    g.globalWrapLon = true;
+    Field2D f;
+    f.grid = g;
+    // Columns 0..3 hold 0, 10, 20, 30; halfway past the last column is (30+0)/2.
+    f.values = {0, 10, 20, 30, 0, 10, 20, 30};
+    EXPECT_FLOAT_EQ(sampleBilinearIndex(f, 3.5, 0.0), 15.0f);
+    EXPECT_FLOAT_EQ(sampleBilinearIndex(f, 4.0, 0.0), 0.0f);  // full wrap to column 0
+    EXPECT_TRUE(std::isnan(sampleBilinearIndex(f, 4.1, 0.0)));  // past the wrap
+}
+
+TEST(Sample, BoundedGridStillRejectsPastTheLastColumn) {
+    Field2D f = makeField();  // globalWrapLon is false
+    EXPECT_FALSE(std::isnan(sampleBilinearIndex(f, 2.0, 0.0)));
+    EXPECT_TRUE(std::isnan(sampleBilinearIndex(f, 2.5, 0.0)));
+}

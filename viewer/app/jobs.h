@@ -7,6 +7,7 @@
 
 #include <QMetaObject>
 #include <QObject>
+#include <QPointer>
 #include <QRunnable>
 #include <QString>
 #include <QThreadPool>
@@ -41,16 +42,27 @@ struct DecodeOutcome {
 
 // Decode one field on `pool`. `cb` runs on `context`'s thread (typically the GUI
 // thread) via a queued invocation, so it may touch widgets. The dataset is held
-// by shared_ptr for the duration of the job.
+// by shared_ptr for the duration of the job. If `context` is destroyed while the
+// job runs, the result is discarded and `cb` never runs — see the QPointer note
+// on submitCompute.
 void submitDecode(QThreadPool& pool, std::shared_ptr<readers::IDataset> dataset,
                   core::FieldKey key, quint64 generation, QObject* context,
                   std::function<void(DecodeOutcome)> cb);
 
 // Run `compute` on `pool`; deliver its result to `done` on `context`'s thread via
-// a queued invocation (so `done` may touch widgets). If `context` is destroyed
-// before the job finishes, the delivery is dropped. Use for heavier multi-slab
+// a queued invocation (so `done` may touch widgets). Use for heavier multi-slab
 // extractions (cross-section / sounding / time series) that must not block the UI
 // thread the way a synchronous readField loop does.
+//
+// The context is held by QPointer, not a raw pointer. Qt drops a queued event
+// whose receiver is destroyed *after* the event was posted, but posting to an
+// already-destroyed QObject is a use-after-free — invokeMethod dereferences the
+// receiver to find its thread. QPointer nulls on destruction, so a job that
+// outlives its context simply drops the delivery. (QPointer is only safe to read
+// from the GUI thread; the check below is a best-effort guard for the common case
+// where the context is destroyed long before the job finishes. Contexts must
+// still outlive the pool — MainWindow owns its QThreadPool, whose destructor
+// waits for outstanding jobs.)
 template <typename T>
 void submitCompute(QThreadPool& pool, QObject* context, std::function<T()> compute,
                    std::function<void(T)> done) {
@@ -62,14 +74,16 @@ void submitCompute(QThreadPool& pool, QObject* context, std::function<T()> compu
         }
         void run() override {
             T result = compute_();
+            QObject* ctx = ctx_.data();
+            if (!ctx) return;  // context went away: nothing to deliver to
             std::function<void(T)> d = done_;
             QMetaObject::invokeMethod(
-                ctx_, [d, result = std::move(result)]() mutable { d(std::move(result)); },
+                ctx, [d, result = std::move(result)]() mutable { d(std::move(result)); },
                 Qt::QueuedConnection);
         }
 
     private:
-        QObject* ctx_;
+        QPointer<QObject> ctx_;
         std::function<T()> compute_;
         std::function<void(T)> done_;
     };

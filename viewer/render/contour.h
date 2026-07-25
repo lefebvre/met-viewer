@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include "viewer/core/field.h"
@@ -37,14 +38,15 @@ struct ContourLevel {
 // otherwise re-run marching squares over the whole grid per frame.
 class ContourCache {
 public:
-    // `field` must outlive the returned reference (views hold it in a shared_ptr);
-    // identity is compared by address, so a new field object always rebuilds.
+    // Identity is Field2D::id, not the object's address: an address can be reused
+    // by the allocator after the previous field is freed, which would silently
+    // serve isolines belonging to the old data.
     [[nodiscard]] const std::vector<ContourLevel>& levels(const core::Field2D& field,
                                                           double interval);
     void clear();
 
 private:
-    const core::Field2D* field_ = nullptr;
+    std::uint64_t fieldId_ = 0;  // 0 = nothing cached (nextFieldId starts at 1)
     double interval_ = 0.0;
     std::vector<ContourLevel> levels_;
 };

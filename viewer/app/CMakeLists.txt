@@ -6,6 +6,8 @@ qt_standard_project_setup()
 # executable is a thin main() on top; all widgets/orchestration live here.
 add_library(met_app STATIC
     controlpanel.cpp
+    extractions.cpp
+    extractions.h
     controlpanel.h
     mainwindow.cpp
     mainwindow.h

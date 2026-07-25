@@ -14,6 +14,7 @@
 #include "viewer/app/mainwindow.h"
 #include "viewer/app/theme.h"
 #include "viewer/core/crs.h"
+#include "viewer/core/log.h"
 
 namespace {
 
@@ -141,8 +142,15 @@ int main(int argc, char** argv) {
         {"colormap", "Set the colormap by name (e.g. turbo, \"RdBu (diverging)\").", "name"},
         {"basemap", "Set the map basemap by name (e.g. \"Carto Dark\").", "name"},
         {"demo-at", "Sample point \"LAT,LON\" the --demo triggers use.", "lat,lon"},
+        {"verbose",
+         "Diagnostic log level on stderr: trace|debug|info|warn|error|off (default warn).",
+         "level", "info"},
     });
     parser.process(app);
+
+    // Set the log level before anything that might log (i.e. before opening files).
+    if (parser.isSet("verbose"))
+        met::core::setLogLevel(met::core::parseLogLevel(parser.value("verbose").toStdString()));
 
     if (parser.isSet("size")) {
         const QStringList wh = parser.value("size").split('x', Qt::SkipEmptyParts);

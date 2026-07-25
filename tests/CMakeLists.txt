@@ -19,6 +19,7 @@ add_executable(met_tests
     readers/grib_reader_test.cpp
     readers/grib1_test.cpp
     readers/netcdf_reader_test.cpp
+    readers/detect_test.cpp
     readers/multidataset_test.cpp
     readers/lambert_test.cpp
     readers/arl_test.cpp
@@ -63,6 +64,7 @@ add_executable(met_app_tests
     test_main_app.cpp
     app/fieldcache_test.cpp
     app/hoverreadout_test.cpp
+    app/plotview2d_test.cpp
     app/skewtview_test.cpp
     app/timecontroller_test.cpp
 )

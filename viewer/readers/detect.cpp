@@ -6,6 +6,7 @@
 #include <memory>
 #include <vector>
 
+#include "viewer/core/log.h"
 #include "viewer/readers/arl/arlreader.h"
 #include "viewer/readers/grib/gribreader.h"
 #include "viewer/readers/multidataset.h"
@@ -54,6 +55,8 @@ std::unique_ptr<IDataset> openDataset(const std::filesystem::path& path) {
     }
 
     if (!best) throw ReadError("no reader recognizes file: " + path.string());
+    core::logf(core::LogLevel::Debug, "{}: opening as {} (probe score {})", path.string(),
+               best->name(), bestScore);
     return best->open(path);
 }
 
@@ -66,7 +69,8 @@ OpenResult openDatasets(const std::vector<std::filesystem::path>& paths) {
     for (const auto& path : paths) {
         try {
             sources.emplace_back(std::shared_ptr<IDataset>(openDataset(path)));
-        } catch (const std::exception&) {
+        } catch (const std::exception& e) {
+            core::logf(core::LogLevel::Warn, "skipping {}: {}", path.string(), e.what());
             result.skipped.push_back(path);
         }
     }

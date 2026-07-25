@@ -7,8 +7,10 @@ namespace met::core {
 
 // Convert a scalar between two units. Returns nullopt if the pair is unknown.
 // Supported (both directions): K<->Cel, Pa<->hPa, m/s<->kt, gpm<->dam,
+// m2/s2<->gpm/dam (geopotential <-> geopotential height, via g = 9.80665),
 // kg/kg<->g/kg, m<->mm. Unit strings are matched case-insensitively against a
-// few common spellings.
+// few common spellings. A dimensionless "1" is deliberately NOT treated as a
+// mixing ratio — it is used for masks and fractions too.
 [[nodiscard]] std::optional<double> convert(double value, const std::string& from,
                                             const std::string& to);
 

@@ -54,11 +54,16 @@ struct UV {
 
 // Rotate grid-relative components to earth-relative in place. For a regular
 // lat/lon grid this is a no-op; for a conformal projected grid it applies the
-// per-point meridian-convergence rotation.
+// meridian-convergence rotation, evaluated on a coarse lattice and interpolated
+// (the angle is smooth, and a per-cell evaluation would spend two PROJ transforms
+// on every grid point).
 void rotateToEarthRelative(WindField& w);
 
 // The meridian-convergence angle (radians) at grid index (i, j): the bearing of
-// the grid's +y (row) axis measured east of true north. Zero for lat/lon grids.
+// the *projection's* +y axis measured east of true north. Deliberately keyed to
+// the projection rather than to increasing row index, because that is what
+// grid-relative wind components are resolved against — the two differ by 180
+// degrees on a north-to-south scanned grid. Zero for lat/lon grids.
 [[nodiscard]] double gridNorthAngle(const core::GridDef& grid, double i, double j);
 
 // m/s -> knots.

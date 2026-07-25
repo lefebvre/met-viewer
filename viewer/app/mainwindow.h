@@ -187,12 +187,27 @@ private:
     // extraction. Called at each of those settle points; fires TimeController::
     // frameReady() when nothing is left outstanding.
     void maybeAdvancePlayback();
-    void updateWind();     // (re)build the wind overlay for the current level/time
-    // Build the earth-relative wind field for the current level/time, or null.
-    std::shared_ptr<analysis::WindField> buildWindField();
+    // (Re)build the wind overlay for the current level/time. Serves it from the
+    // field cache when both components are warm, and otherwise decodes them on the
+    // thread pool — inline decoding froze the UI for seconds on a mesoscale grid.
+    void updateWind();
+    // The U/V field keys for the current level/time, or nullopt when the dataset
+    // has no recognizable wind pair.
+    [[nodiscard]] std::optional<std::pair<core::FieldKey, core::FieldKey>> currentWindKeys() const;
+    // Earth-relative wind built from cached components, or null on a cache miss.
+    std::shared_ptr<analysis::WindField> windFromCache();
+    void applyWind(const std::shared_ptr<analysis::WindField>& wind);
+    // Make sure the current U/V pair is in the field cache, decoding it on the pool
+    // if not, then run `then(ok)` on the GUI thread. Concurrent callers wanting the
+    // same pair (the overlay and a derived quantity both do, from one user action)
+    // share the single decode instead of racing two.
+    void ensureWindCached(std::function<void(bool)> then);
     void loadSettings();
     void saveSettings();
     void openPreferences();
+    // Ask for an XYZ URL template (the basemap combo's "Custom URL…" entry) and
+    // apply it, reverting the combo if the user cancels or the URL is unusable.
+    void promptCustomBasemap();
     void addRecentFile(const QString& path);  // record a successfully opened file
     void updateRecentMenu();                   // rebuild the "Open Recent" submenu
 
@@ -201,6 +216,10 @@ private:
     struct OpenBatch {
         std::vector<std::pair<std::filesystem::path, std::shared_ptr<readers::IDataset>>> opened;
         QStringList skipped;
+        // Each opened dataset's grid, sampled on the worker thread (nullopt when no
+        // field could be read). Determining this needs a real slab decode, so it is
+        // done here rather than in installBatch, which runs on the GUI thread.
+        std::vector<std::optional<core::GridDef>> grids;
     };
     // Open each path, catching per-file failures; bumps progress->done per file if
     // given. Static + touches no window state so it can run on a worker thread.
@@ -213,48 +232,9 @@ private:
     // the current set and de-dupes; sorted for deterministic order.
     std::vector<std::filesystem::path> pathsToOpen(const QStringList& paths, bool replace) const;
 
-    // Read all pressure levels of `varName` at `time` (pressure, field). Static +
-    // dataset-by-reference so it can run off the GUI thread without touching
-    // mutable window state; readField is serialized inside the reader.
-    // The read/compute helpers take an optional `onRead` callback invoked once per
-    // decoded slab (from the worker thread) so a background job can report progress.
-    static std::vector<std::pair<double, core::Field2D>> readLevelStack(
-        readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member,
-        const std::function<void()>& onRead = {});
-    // Read all native model levels (hybrid/sigma) of `varName` at `time`, keyed by
-    // the model-level index (not pressure); pair with the `pres` field to place them.
-    static std::vector<std::pair<double, core::Field2D>> readModelLevelStack(
-        readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member,
-        const std::function<void()>& onRead = {});
-    // Read all times of `varName` at `level` (time, field).
-    static std::vector<std::pair<core::TimePoint, core::Field2D>> readTimeStack(
-        readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member,
-        const std::function<void()>& onRead = {});
-    // Read the U/V wind stacks at `time` into uStack/vStack (both left empty when the
-    // dataset has no recognizable wind pair). `modelLevels` reads native model levels
-    // instead of pressure levels.
-    static void readWindStacks(readers::IDataset& ds, core::TimePoint time, int member,
-                               std::vector<std::pair<double, core::Field2D>>& uStack,
-                               std::vector<std::pair<double, core::Field2D>>& vStack,
-                               bool modelLevels = false, const std::function<void()>& onRead = {});
-    // Extract a sounding / cross-section, choosing the pressure-level path when the
-    // variable has isobaric levels, else the native model-level path (via `pres`).
-    // When `progress` is set, each slab read bumps its counter, and `generating` is
-    // flipped once loading finishes and the (unmeasured) extraction begins.
-    static analysis::Sounding computeSounding(readers::IDataset& ds, core::TimePoint time,
-                                              int member, core::LatLon point,
-                                              std::shared_ptr<JobProgress> progress = {});
-    static analysis::CrossSection computeCrossSection(readers::IDataset& ds,
-                                                      const std::string& var, core::TimePoint time,
-                                                      int member,
-                                                      const std::vector<core::LatLon>& path,
-                                                      int nSamples,
-                                                      std::shared_ptr<JobProgress> progress = {});
-
-    // Number of slab reads a compute* will perform (catalog-only, no I/O), used to
-    // size the progress bar before the job starts.
-    static int estimateSoundingReads(readers::IDataset& ds);
-    static int estimateCrossSectionReads(readers::IDataset& ds, const std::string& var);
+    // The multi-slab reads and the sounding/cross-section/time-series extractions
+    // built on them live in app/extractions.h — they touch no window state, run on
+    // the thread pool, and are unit-testable on their own.
 
     // Background-job progress: show/hide a shared status-bar bar as jobs come and go.
     void beginJob(const QString& text, std::shared_ptr<JobProgress> progress);
@@ -270,6 +250,12 @@ private:
     quint64 openGeneration_ = 0;  // supersede an in-flight async open when a newer one starts
     QString currentUnits_;
     quint64 generation_ = 0;
+    // In-flight U/V decode: its generation (newer supersedes), the keys it is for
+    // (so a same-keys request joins it), and the callbacks waiting on it.
+    quint64 windGeneration_ = 0;
+    bool windInFlight_ = false;
+    std::pair<core::FieldKey, core::FieldKey> windPendingKeys_;
+    std::vector<std::function<void(bool)>> windWaiters_;
     quint64 datasetEpoch_ = 0;  // bumped on dataset *replace*; invalidates per-tab analysis caches
     bool fieldReadyForStep_ = false;  // current frame's field has settled (for playback gating)
     FieldCache fieldCache_{1024ull * 1024 * 1024};  // 1 GB default
@@ -316,6 +302,9 @@ private:
     QComboBox* mapColormapCombo_ = nullptr;
     QCheckBox* plotContourCheck_ = nullptr;
     QComboBox* mapBasemapCombo_ = nullptr;
+    // Index of the basemap actually in effect, so a cancelled "Custom URL…" prompt
+    // can put the combo back rather than leaving it showing a basemap we never set.
+    int appliedBasemapIndex_ = 0;
     QSlider* mapOpacitySlider_ = nullptr;
     QCheckBox* mapViewRangeCheck_ = nullptr;
     QCheckBox* mapGraticuleCheck_ = nullptr;

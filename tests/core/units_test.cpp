@@ -30,3 +30,27 @@ TEST(Units, PreferredDisplay) {
     EXPECT_EQ(*preferredDisplayUnit("K"), "Cel");
     EXPECT_FALSE(preferredDisplayUnit("m/s").has_value());
 }
+
+// Geopotential (m2/s2) is NOT geopotential height (gpm): they differ by g. Aliasing
+// them mislabelled ERA5's `z` by a factor of ~9.81 in any converted readout.
+TEST(Units, GeopotentialIsDistinctFromGeopotentialHeight) {
+    ASSERT_TRUE(convert(9806.65, "m2/s2", "gpm").has_value());
+    EXPECT_NEAR(*convert(9806.65, "m2/s2", "gpm"), 1000.0, 1e-6);
+    EXPECT_NEAR(*convert(1000.0, "gpm", "m2/s2"), 9806.65, 1e-6);
+    EXPECT_NEAR(*convert(9806.65, "m2/s2", "dam"), 100.0, 1e-6);
+    // ecCodes spells it "m**2 s**-2".
+    EXPECT_NEAR(*convert(9806.65, "m**2 s**-2", "gpm"), 1000.0, 1e-6);
+    // Geopotential reads naturally as a height, so offer that as the display unit.
+    ASSERT_TRUE(preferredDisplayUnit("m2/s2").has_value());
+    EXPECT_EQ(*preferredDisplayUnit("m2/s2"), "gpm");
+}
+
+// A dimensionless "1" is used for masks, fractions and ratios alike, so it must
+// not be silently treated as a mixing ratio and offered a x1000 conversion.
+TEST(Units, DimensionlessOneIsNotAMixingRatio) {
+    EXPECT_FALSE(convert(0.5, "1", "g/kg").has_value());
+    EXPECT_FALSE(preferredDisplayUnit("1").has_value());
+    // The real mixing-ratio spellings still convert.
+    EXPECT_NEAR(*convert(0.001, "kg/kg", "g/kg"), 1.0, 1e-12);
+    EXPECT_NEAR(*convert(0.001, "kg kg**-1", "g/kg"), 1.0, 1e-12);
+}

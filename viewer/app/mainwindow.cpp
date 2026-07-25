@@ -19,7 +19,9 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHash>
+#include <QInputDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -52,6 +54,7 @@
 #include "viewer/app/controlpanel.h"
 #include "viewer/app/crosssectionview.h"
 #include "viewer/app/datasetdock.h"
+#include "viewer/app/extractions.h"
 #include "viewer/app/hoverreadout.h"
 #include "viewer/app/icons.h"
 #include "viewer/app/jobs.h"
@@ -63,6 +66,7 @@
 #include "viewer/app/timecontroller.h"
 #include "viewer/app/timeseriesview.h"
 #include "viewer/core/grid.h"
+#include "viewer/core/log.h"
 #include "viewer/core/timeaxis.h"
 #include "viewer/core/units.h"
 #include "viewer/readers/detect.h"
@@ -518,11 +522,16 @@ MainWindow::OpenBatch MainWindow::openBatch(const std::vector<std::filesystem::p
     OpenBatch batch;
     for (const auto& path : paths) {
         try {
-            batch.opened.emplace_back(
-                path, std::shared_ptr<readers::IDataset>(readers::openDataset(path)));
+            auto ds = std::shared_ptr<readers::IDataset>(readers::openDataset(path));
+            // Sample the grid here, on the worker thread: it costs a full slab
+            // decode per file, which is exactly what should not happen on the GUI
+            // thread while installing a batch.
+            batch.grids.push_back(representativeGrid(*ds));
+            batch.opened.emplace_back(path, std::move(ds));
         } catch (const std::exception& e) {
             // Keep the reason (e.g. "no reader recognizes file") so the skipped list
             // tells the user why, not just which.
+            MET_LOG_WARN("could not open {}: {}", path.string(), e.what());
             batch.skipped << (QString::fromStdString(path.filename().string()) + ": " +
                               QString::fromUtf8(e.what()));
         }
@@ -576,11 +585,16 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
     // (Format is irrelevant here: a GRIB file on the same grid as loaded ARL data
     // still merges; an ARL file on a different domain does not.)
     if (!replace && dataset_) {
-        const auto existing = representativeGrid(*dataset_);
+        // Prefer the field already on screen: it is the loaded set's grid and costs
+        // nothing. Only fall back to a decode when nothing has been displayed yet.
+        std::optional<core::GridDef> existing;
+        if (currentRaw_) existing = currentRaw_->grid;
+        else existing = representativeGrid(*dataset_);
         bool mismatch = false;
         if (existing) {
-            for (const auto& [path, ds] : batch.opened) {
-                const auto g = representativeGrid(*ds);
+            // Grids were sampled on the worker thread during openBatch().
+            for (std::size_t i = 0; i < batch.grids.size(); ++i) {
+                const auto& g = batch.grids[i];
                 if (g && !core::sameGrid(*existing, *g)) {
                     mismatch = true;
                     break;
@@ -821,15 +835,24 @@ void MainWindow::presentField() {
                     analysis::potentialTemperatureField(*tk, lvl.value));
         }
     } else {
-        auto wind = buildWindField();
-        if (wind) {
-            switch (derivedMode_) {
-                case 1: derived = std::make_shared<core::Field2D>(analysis::windSpeedField(*wind)); break;
-                case 2: derived = std::make_shared<core::Field2D>(analysis::windDirectionField(*wind)); break;
-                case 3: derived = std::make_shared<core::Field2D>(analysis::relativeVorticityField(*wind)); break;
-                case 4: derived = std::make_shared<core::Field2D>(analysis::divergenceField(*wind)); break;
-                default: break;
-            }
+        auto wind = windFromCache();
+        if (!wind) {
+            // The components aren't decoded yet. Show the raw field now and come
+            // back through here once they land, rather than blocking on the decode.
+            ensureWindCached([this](bool ok) {
+                if (ok) presentField();
+                else statusBar()->showMessage(tr("Derived quantity needs a U/V wind pair"), 3000);
+            });
+            showingDerived_ = false;
+            displayField(currentRaw_);
+            return;
+        }
+        switch (derivedMode_) {
+            case 1: derived = std::make_shared<core::Field2D>(analysis::windSpeedField(*wind)); break;
+            case 2: derived = std::make_shared<core::Field2D>(analysis::windDirectionField(*wind)); break;
+            case 3: derived = std::make_shared<core::Field2D>(analysis::relativeVorticityField(*wind)); break;
+            case 4: derived = std::make_shared<core::Field2D>(analysis::divergenceField(*wind)); break;
+            default: break;
         }
     }
 
@@ -916,175 +939,6 @@ void MainWindow::prefetchAhead() {
     }
 }
 
-namespace {
-// Count a variable's levels of the given kind (pressure vs native model), for
-// sizing the progress bar without any I/O.
-int countPressureLevels(const readers::IDataset& ds, const std::string& var) {
-    const auto* entry = ds.catalog().find(var);
-    if (!entry) return 0;
-    int n = 0;
-    for (const auto& lvl : entry->levels)
-        if (lvl.type == core::VerticalLevel::Type::PressureHPa) ++n;
-    return n;
-}
-int countModelLevels(const readers::IDataset& ds, const std::string& var) {
-    const auto* entry = ds.catalog().find(var);
-    if (!entry) return 0;
-    int n = 0;
-    for (const auto& lvl : entry->levels)
-        if (lvl.type == core::VerticalLevel::Type::Hybrid ||
-            lvl.type == core::VerticalLevel::Type::Sigma)
-            ++n;
-    return n;
-}
-}  // namespace
-
-std::vector<std::pair<double, core::Field2D>> MainWindow::readLevelStack(
-    readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member,
-    const std::function<void()>& onRead) {
-    std::vector<std::pair<double, core::Field2D>> stack;
-    const auto* entry = ds.catalog().find(varName);
-    if (!entry) return stack;
-    for (const auto& lvl : entry->levels) {
-        if (lvl.type != core::VerticalLevel::Type::PressureHPa) continue;
-        try {
-            stack.emplace_back(lvl.value, ds.readField(core::FieldKey{varName, lvl, time, member}));
-        } catch (const std::exception&) {
-        }
-        if (onRead) onRead();
-    }
-    return stack;
-}
-
-std::vector<std::pair<double, core::Field2D>> MainWindow::readModelLevelStack(
-    readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member,
-    const std::function<void()>& onRead) {
-    std::vector<std::pair<double, core::Field2D>> stack;
-    const auto* entry = ds.catalog().find(varName);
-    if (!entry) return stack;
-    for (const auto& lvl : entry->levels) {
-        if (lvl.type != core::VerticalLevel::Type::Hybrid &&
-            lvl.type != core::VerticalLevel::Type::Sigma)
-            continue;
-        try {
-            stack.emplace_back(lvl.value, ds.readField(core::FieldKey{varName, lvl, time, member}));
-        } catch (const std::exception&) {
-        }
-        if (onRead) onRead();
-    }
-    return stack;
-}
-
-std::vector<std::pair<core::TimePoint, core::Field2D>> MainWindow::readTimeStack(
-    readers::IDataset& ds, const std::string& varName, core::VerticalLevel level, int member,
-    const std::function<void()>& onRead) {
-    std::vector<std::pair<core::TimePoint, core::Field2D>> stack;
-    const auto* entry = ds.catalog().find(varName);
-    if (!entry) return stack;
-    for (const auto& t : entry->times) {
-        try {
-            stack.emplace_back(t, ds.readField(core::FieldKey{varName, level, t, member}));
-        } catch (const std::exception&) {
-        }
-        if (onRead) onRead();
-    }
-    return stack;
-}
-
-void MainWindow::readWindStacks(readers::IDataset& ds, core::TimePoint time, int member,
-                                std::vector<std::pair<double, core::Field2D>>& uStack,
-                                std::vector<std::pair<double, core::Field2D>>& vStack,
-                                bool modelLevels, const std::function<void()>& onRead) {
-    uStack.clear();
-    vStack.clear();
-    std::vector<std::string> names;
-    for (const auto& v : ds.catalog().variables()) names.push_back(v.varName);
-    const auto pair = analysis::findWindPair(names);
-    if (!pair) return;  // no U/V pair -> no wind profile
-    uStack = modelLevels ? readModelLevelStack(ds, pair->uName, time, member, onRead)
-                         : readLevelStack(ds, pair->uName, time, member, onRead);
-    vStack = modelLevels ? readModelLevelStack(ds, pair->vName, time, member, onRead)
-                         : readLevelStack(ds, pair->vName, time, member, onRead);
-}
-
-namespace {
-// A per-slab tick bound to a job's counter (no-op when there is no job).
-std::function<void()> readTick(const std::shared_ptr<JobProgress>& p) {
-    if (!p) return {};
-    return [p] { p->done.fetch_add(1, std::memory_order_relaxed); };
-}
-// Mark the transition from loading slabs to extracting/rendering the plot, so the
-// bar shows a busy animation for that (unmeasured, worker-thread) phase.
-void markGenerating(const std::shared_ptr<JobProgress>& p) {
-    if (p) p->generating.store(true, std::memory_order_relaxed);
-}
-}  // namespace
-
-analysis::Sounding MainWindow::computeSounding(readers::IDataset& ds, core::TimePoint time,
-                                               int member, core::LatLon point,
-                                               std::shared_ptr<JobProgress> progress) {
-    const auto onRead = readTick(progress);
-    // Isobaric path: temperature required; relative humidity (dewpoint) and U/V
-    // (wind profile) optional.
-    const auto tStack = readLevelStack(ds, "t", time, member, onRead);
-    if (tStack.size() >= 2) {
-        const auto rhStack = readLevelStack(ds, "r", time, member, onRead);
-        std::vector<std::pair<double, core::Field2D>> uStack, vStack;
-        readWindStacks(ds, time, member, uStack, vStack, /*modelLevels=*/false, onRead);
-        markGenerating(progress);
-        return analysis::extractSounding(tStack, rhStack, point, uStack, vStack);
-    }
-    // Native model-level path: pressure comes from the `pres` field, dewpoint from
-    // specific humidity `q`.
-    const auto tModel = readModelLevelStack(ds, "t", time, member, onRead);
-    const auto presStack = readModelLevelStack(ds, "pres", time, member, onRead);
-    if (tModel.size() < 2 || presStack.size() < 2) return analysis::Sounding{};
-    const auto qStack = readModelLevelStack(ds, "q", time, member, onRead);
-    std::vector<std::pair<double, core::Field2D>> uStack, vStack;
-    readWindStacks(ds, time, member, uStack, vStack, /*modelLevels=*/true, onRead);
-    markGenerating(progress);
-    return analysis::extractSoundingModelLevels(tModel, presStack, qStack, point, uStack, vStack);
-}
-
-analysis::CrossSection MainWindow::computeCrossSection(readers::IDataset& ds, const std::string& var,
-                                                       core::TimePoint time, int member,
-                                                       const std::vector<core::LatLon>& path,
-                                                       int nSamples,
-                                                       std::shared_ptr<JobProgress> progress) {
-    const auto onRead = readTick(progress);
-    const auto pres = readLevelStack(ds, var, time, member, onRead);
-    if (pres.size() >= 2) {
-        markGenerating(progress);
-        return analysis::extractCrossSection(pres, path, nSamples);
-    }
-    // Native model-level path with a terrain-following pressure axis.
-    const auto model = readModelLevelStack(ds, var, time, member, onRead);
-    const auto presStack = readModelLevelStack(ds, "pres", time, member, onRead);
-    if (model.size() < 2 || presStack.size() < 2) return analysis::CrossSection{};
-    markGenerating(progress);
-    return analysis::extractCrossSectionModelLevels(model, presStack, path, nSamples);
-}
-
-int MainWindow::estimateSoundingReads(readers::IDataset& ds) {
-    std::vector<std::string> names;
-    for (const auto& v : ds.catalog().variables()) names.push_back(v.varName);
-    const auto wind = analysis::findWindPair(names);
-    const std::string uName = wind ? wind->uName : std::string{};
-    const std::string vName = wind ? wind->vName : std::string{};
-    if (countPressureLevels(ds, "t") >= 2) {  // isobaric path
-        return countPressureLevels(ds, "t") + countPressureLevels(ds, "r") +
-               countPressureLevels(ds, uName) + countPressureLevels(ds, vName);
-    }
-    return countModelLevels(ds, "t") + countModelLevels(ds, "pres") + countModelLevels(ds, "q") +
-           countModelLevels(ds, uName) + countModelLevels(ds, vName);
-}
-
-int MainWindow::estimateCrossSectionReads(readers::IDataset& ds, const std::string& var) {
-    const int pl = countPressureLevels(ds, var);
-    if (pl >= 2) return pl;
-    return countModelLevels(ds, var) + countModelLevels(ds, "pres");
-}
-
 ViewFrame* MainWindow::buildPlotFrame() {
     auto* panel = new ControlPanel(tr("2D Plot"));
     plotColormapCombo_ = addColormapControls(panel, plot_, icons_);
@@ -1131,8 +985,11 @@ ViewFrame* MainWindow::buildMapFrame() {
     mapBasemapCombo_ = new QComboBox(panel);
     // Map each basemap source name to a glyph token where one fits.
     static const QHash<QString, QString> kBasemapIcons = {
-        {"OpenStreetMap", "base-osm"},     {"Carto Light", "base-light"},
-        {"Carto Dark", "base-dark"},       {"Esri World Imagery", "base-imagery"},
+        {"OpenStreetMap", "base-osm"},
+        {"Carto Light", "base-light"},
+        {"Carto Dark", "base-dark"},
+        {"Esri World Imagery", "base-imagery"},
+        {"Esri World Shaded Relief", "base-terrain"},
         {"OpenTopoMap", "base-terrain"},
     };
     for (const auto& src : TileLayer::builtinSources()) {
@@ -1140,13 +997,22 @@ ViewFrame* MainWindow::buildMapFrame() {
         const QString token = kBasemapIcons.value(src.name, QStringLiteral("base-custom"));
         icons_->applyComboItem(mapBasemapCombo_, mapBasemapCombo_->count() - 1, token);
     }
+    // A trailing "Custom…" entry so any XYZ service the user has the rights to use
+    // can be added without a rebuild. Kept last so the built-in indices (which are
+    // what QSettings persists) stay stable.
+    mapBasemapCombo_->addItem(tr("Custom URL…"));
+    icons_->applyComboItem(mapBasemapCombo_, mapBasemapCombo_->count() - 1, "base-custom");
     sizeComboToContents(mapBasemapCombo_);
     connect(mapBasemapCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int index) {
                 const auto sources = TileLayer::builtinSources();
-                if (index < 0 || index >= sources.size()) return;
-                tileLayer_->setSource(sources.at(index));
-                mapView_->refreshSource();
+                if (index >= 0 && index < sources.size()) {
+                    tileLayer_->setSource(sources.at(index));
+                    mapView_->refreshSource();
+                    appliedBasemapIndex_ = index;
+                    return;
+                }
+                if (index == sources.size()) promptCustomBasemap();
             });
     panel->addRow(icons_->iconLabel("base-osm", 20, tr("Basemap")), mapBasemapCombo_);
 
@@ -1254,12 +1120,12 @@ void MainWindow::refreshCrossSectionTab(QPointer<CrossSectionView> view, std::st
     tab->inFlight = true;
     auto dset = dataset_;
     auto p = std::make_shared<JobProgress>();
-    p->total = estimateCrossSectionReads(*dset, var);
+    p->total = extractions::estimateCrossSectionReads(*dset, var);
     beginJob(tr("Updating cross-section…"), p);
     submitCompute<analysis::CrossSection>(
         *pool_, this,
         [dset, var, t, mem, path, p] {
-            return MainWindow::computeCrossSection(*dset, var, t, mem, path, 200, p);
+            return extractions::computeCrossSection(*dset, var, t, mem, path, 200, p);
         },
         [this, view, var, path, tab, key, p](analysis::CrossSection ncs) {
             endJob(p);
@@ -1298,11 +1164,11 @@ void MainWindow::refreshSoundingTab(QPointer<SkewTView> view, core::LatLon point
     tab->inFlight = true;
     auto dset = dataset_;
     auto p = std::make_shared<JobProgress>();
-    p->total = estimateSoundingReads(*dset);
+    p->total = extractions::estimateSoundingReads(*dset);
     beginJob(tr("Updating sounding…"), p);
     submitCompute<analysis::Sounding>(
         *pool_, this,
-        [dset, t, mem, point, p] { return MainWindow::computeSounding(*dset, t, mem, point, p); },
+        [dset, t, mem, point, p] { return extractions::computeSounding(*dset, t, mem, point, p); },
         [this, view, point, tab, key, p](analysis::Sounding ns) {
             endJob(p);
             tab->inFlight = false;
@@ -1325,12 +1191,12 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
     const int member = currentMember_;
     auto ds = dataset_;
     auto prog = std::make_shared<JobProgress>();
-    prog->total = estimateCrossSectionReads(*ds, var);
+    prog->total = extractions::estimateCrossSectionReads(*ds, var);
     beginJob(tr("Extracting cross-section…"), prog);
     submitCompute<analysis::CrossSection>(
         *pool_, this,
         [ds, var, time, member, path, prog] {
-            return MainWindow::computeCrossSection(*ds, var, time, member, path, 200, prog);
+            return extractions::computeCrossSection(*ds, var, time, member, path, 200, prog);
         },
         [this, var, path, time, member, prog](analysis::CrossSection cs) {
             endJob(prog);
@@ -1364,12 +1230,12 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
     const int member = currentMember_;
     auto ds = dataset_;
     auto prog = std::make_shared<JobProgress>();
-    prog->total = estimateSoundingReads(*ds);
+    prog->total = extractions::estimateSoundingReads(*ds);
     beginJob(tr("Extracting sounding…"), prog);
     submitCompute<analysis::Sounding>(
         *pool_, this,
         [ds, time, member, point, prog] {
-            return MainWindow::computeSounding(*ds, time, member, point, prog);
+            return extractions::computeSounding(*ds, time, member, point, prog);
         },
         [this, point, time, member, prog](analysis::Sounding s) {
             endJob(prog);
@@ -1409,7 +1275,7 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
         *pool_, this,
         [ds, var, level, member, tick, point] {
             return analysis::extractTimeSeries(
-                MainWindow::readTimeStack(*ds, var, level, member, tick), point);
+                extractions::readTimeStack(*ds, var, level, member, tick), point);
         },
         [this, var, prog](analysis::TimeSeries ts) {
             endJob(prog);
@@ -1568,46 +1434,120 @@ void MainWindow::setTimeIndex(int index) {
     if (timeController_) timeController_->setCurrentIndex(index);
 }
 
-std::shared_ptr<analysis::WindField> MainWindow::buildWindField() {
-    if (!dataset_ || currentLevels_.empty() || currentTimes_.empty()) return nullptr;
+std::optional<std::pair<core::FieldKey, core::FieldKey>> MainWindow::currentWindKeys() const {
+    if (!dataset_ || currentLevels_.empty() || currentTimes_.empty()) return std::nullopt;
     std::vector<std::string> names;
     for (const auto& v : dataset_->catalog().variables()) names.push_back(v.varName);
     const auto pair = analysis::findWindPair(names);
-    if (!pair) return nullptr;
+    if (!pair) return std::nullopt;
 
     const core::VerticalLevel level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
     const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
-    // Route U/V through the field cache so animation with wind/derived overlays
-    // does not re-decode both components from disk on every frame.
-    auto fetch = [&](const core::FieldKey& key) -> std::shared_ptr<core::Field2D> {
-        if (auto c = fieldCache_.get(key)) return c;
-        auto f = std::make_shared<core::Field2D>(dataset_->readField(key));
-        fieldCache_.put(key, f);
-        return f;
-    };
-    try {
-        auto wind = std::make_shared<analysis::WindField>();
-        wind->u = *fetch(core::FieldKey{pair->uName, level, time, currentMember_});
-        wind->v = *fetch(core::FieldKey{pair->vName, level, time, currentMember_});
-        analysis::rotateToEarthRelative(*wind);  // rotates the copy, not the cached field
-        return wind;
-    } catch (const std::exception&) {
-        return nullptr;  // U/V may not exist at this level/time
+    return std::make_pair(core::FieldKey{pair->uName, level, time, currentMember_},
+                          core::FieldKey{pair->vName, level, time, currentMember_});
+}
+
+std::shared_ptr<analysis::WindField> MainWindow::windFromCache() {
+    const auto keys = currentWindKeys();
+    if (!keys) return nullptr;
+    auto u = fieldCache_.get(keys->first);
+    auto v = fieldCache_.get(keys->second);
+    if (!u || !v) return nullptr;
+    auto wind = std::make_shared<analysis::WindField>();
+    wind->u = *u;  // copy: rotation is in place and must not touch the cached field
+    wind->v = *v;
+    analysis::rotateToEarthRelative(*wind);
+    return wind;
+}
+
+void MainWindow::applyWind(const std::shared_ptr<analysis::WindField>& wind) {
+    mapView_->setWind(wind);
+    plot_->setWind(wind);
+}
+
+void MainWindow::ensureWindCached(std::function<void(bool)> then) {
+    const auto keys = currentWindKeys();
+    if (!keys) {
+        if (then) then(false);
+        return;
     }
+    if (fieldCache_.contains(keys->first) && fieldCache_.contains(keys->second)) {
+        if (then) then(true);  // the animation path: the prefetcher keeps these warm
+        return;
+    }
+
+    // Both the overlay and the derived-quantity path want the same U/V pair and are
+    // triggered by the same user action, so waiters on an in-flight decode of the
+    // same keys queue up behind it instead of starting a second one.
+    const bool sameRequest = windInFlight_ && windPendingKeys_ == *keys;
+    if (then) windWaiters_.push_back(std::move(then));
+    if (sameRequest) return;
+
+    // A different selection supersedes whatever was running; release its waiters so
+    // nothing is left hanging on a result that will never be delivered.
+    if (windInFlight_) {
+        auto stale = std::move(windWaiters_);
+        windWaiters_.clear();
+        // Re-queue only ours (appended last) and fail the rest.
+        std::vector<std::function<void(bool)>> mine;
+        if (!stale.empty()) {
+            mine.push_back(std::move(stale.back()));
+            stale.pop_back();
+        }
+        for (auto& cb : stale)
+            if (cb) cb(false);
+        windWaiters_ = std::move(mine);
+    }
+
+    const quint64 gen = ++windGeneration_;
+    windInFlight_ = true;
+    windPendingKeys_ = *keys;
+
+    // Decoding both components inline meant two full GRIB decodes plus the
+    // rotation on the GUI thread for every level/time change — seconds of frozen
+    // UI on a mesoscale grid.
+    auto ds = dataset_;
+    const core::FieldKey uKey = keys->first, vKey = keys->second;
+    using Pair = std::pair<std::shared_ptr<core::Field2D>, std::shared_ptr<core::Field2D>>;
+    submitCompute<Pair>(
+        *pool_, this,
+        [ds, uKey, vKey]() -> Pair {
+            try {
+                return {std::make_shared<core::Field2D>(ds->readField(uKey)),
+                        std::make_shared<core::Field2D>(ds->readField(vKey))};
+            } catch (const std::exception& e) {
+                MET_LOG_DEBUG("wind decode failed for {}/{}: {}", uKey.varName, vKey.varName,
+                              e.what());
+                return {};  // U/V may not exist at this level/time
+            }
+        },
+        [this, gen, uKey, vKey](Pair uv) {
+            if (gen != windGeneration_) return;  // superseded; its waiters were released
+            windInFlight_ = false;
+            const bool ok = uv.first && uv.second;
+            if (ok) {
+                fieldCache_.put(uKey, uv.first);
+                fieldCache_.put(vKey, uv.second);
+            }
+            auto waiters = std::move(windWaiters_);
+            windWaiters_.clear();
+            for (auto& cb : waiters)
+                if (cb) cb(ok);
+        });
 }
 
 void MainWindow::updateWind() {
     const int plotMode = plotWindCombo_ ? plotWindCombo_->currentIndex() : 0;
     const int mapMode = mapWindCombo_ ? mapWindCombo_->currentIndex() : 0;
     if (plotMode == 0 && mapMode == 0) {
-        mapView_->setWind(nullptr);
-        plot_->setWind(nullptr);
+        applyWind(nullptr);
         return;
     }
-    auto wind = buildWindField();  // shared field; each view draws per its own mode
-    if (!wind) statusBar()->showMessage(tr("No U/V wind pair at this level/time"), 3000);
-    mapView_->setWind(wind);
-    plot_->setWind(wind);
+    ensureWindCached([this](bool ok) {
+        auto wind = ok ? windFromCache() : nullptr;
+        if (!wind) statusBar()->showMessage(tr("No U/V wind pair at this level/time"), 3000);
+        applyWind(wind);
+    });
 }
 
 void MainWindow::onProbeMoved(double lat, double lon, double value, bool hasValue) {
@@ -1635,7 +1575,19 @@ void MainWindow::loadSettings() {
         if (ci >= 0) c->setCurrentIndex(ci);
     }
     const int bi = s.value("basemap", 0).toInt();
-    if (bi >= 0 && bi < mapBasemapCombo_->count()) mapBasemapCombo_->setCurrentIndex(bi);
+    const int customIndex = static_cast<int>(TileLayer::builtinSources().size());
+    if (bi == customIndex && TileLayer::isValidUrlTemplate(s.value("customBasemapUrl").toString())) {
+        // Re-apply the saved custom source directly. Going through the combo would
+        // fire the handler and re-open the URL prompt on every launch.
+        const QSignalBlocker block(mapBasemapCombo_);
+        mapBasemapCombo_->setCurrentIndex(bi);
+        tileLayer_->setSource(TileSource{tr("Custom"), s.value("customBasemapUrl").toString(),
+                                         s.value("customBasemapAttribution").toString(), 19});
+        mapView_->refreshSource();
+        appliedBasemapIndex_ = bi;
+    } else if (bi >= 0 && bi < customIndex) {
+        mapBasemapCombo_->setCurrentIndex(bi);
+    }
     mapOpacitySlider_->setValue(s.value("opacity", 75).toInt());
     mapGraticuleCheck_->setChecked(s.value("graticule", true).toBool());
     mapCoastlineCheck_->setChecked(s.value("coastlines", true).toBool());
@@ -1694,6 +1646,46 @@ void MainWindow::updateRecentMenu() {
             updateRecentMenu();
         });
     });
+}
+
+void MainWindow::promptCustomBasemap() {
+    QSettings s;
+    const QString previous = s.value("customBasemapUrl").toString();
+    bool ok = false;
+    const QString url = QInputDialog::getText(
+        this, tr("Custom basemap"),
+        tr("XYZ tile URL template, with {z}/{x}/{y} placeholders:\n"
+           "e.g. https://tile.example.org/{z}/{x}/{y}.png\n\n"
+           "Only use a service whose terms permit direct tile access."),
+        QLineEdit::Normal, previous, &ok);
+    // Restore the previous selection if the user cancels or gives something
+    // unusable, so the combo never claims a basemap that is not in effect.
+    auto revert = [this] {
+        const QSignalBlocker block(mapBasemapCombo_);
+        mapBasemapCombo_->setCurrentIndex(appliedBasemapIndex_);
+    };
+    if (!ok || url.trimmed().isEmpty()) {
+        revert();
+        return;
+    }
+    if (!TileLayer::isValidUrlTemplate(url.trimmed())) {
+        QMessageBox::warning(this, tr("Custom basemap"),
+                             tr("That is not a usable tile URL. It must be an http(s) address "
+                                "containing {z}, {x} and {y}."));
+        revert();
+        return;
+    }
+
+    const QString trimmed = url.trimmed();
+    const QString attribution =
+        QInputDialog::getText(this, tr("Custom basemap"),
+                              tr("Attribution text to display over the map (optional):"),
+                              QLineEdit::Normal, s.value("customBasemapAttribution").toString());
+    s.setValue("customBasemapUrl", trimmed);
+    s.setValue("customBasemapAttribution", attribution);
+    tileLayer_->setSource(TileSource{tr("Custom"), trimmed, attribution, 19});
+    mapView_->refreshSource();
+    appliedBasemapIndex_ = mapBasemapCombo_->currentIndex();
 }
 
 void MainWindow::openPreferences() {

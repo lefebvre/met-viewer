@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <cstddef>
 #include <limits>
+#include <memory>
 
 #include "viewer/core/field.h"
 #include "viewer/render/contour.h"
@@ -70,4 +72,54 @@ TEST(Contour, LevelsRespectInterval) {
 TEST(Contour, NiceInterval) {
     EXPECT_DOUBLE_EQ(niceContourInterval(0.0, 100.0, 10), 10.0);
     EXPECT_DOUBLE_EQ(niceContourInterval(0.0, 0.0, 10), 0.0);  // degenerate
+}
+
+// The isoline cache keys on Field2D::id rather than the field's address. Address
+// identity looks equivalent right up until the allocator hands a new field the
+// slot a freed one occupied, at which point the view keeps drawing the old
+// contours over new data with nothing to indicate it.
+TEST(Contour, CacheInvalidatesOnANewFieldAtTheSameAddress) {
+    render::ContourCache cache;
+
+    auto makeField = [](float scale) {
+        auto f = std::make_unique<core::Field2D>();
+        core::RegularLatLonGrid g;
+        g.lat0 = 0; g.lon0 = 0; g.dlat = 1; g.dlon = 1; g.nlon = 8; g.nlat = 8;
+        f->grid = g;
+        f->values.resize(64);
+        for (std::size_t j = 0; j < 8; ++j)
+            for (std::size_t i = 0; i < 8; ++i)
+                f->values[j * 8 + i] = scale * static_cast<float>(i);
+        return f;
+    };
+
+    auto a = makeField(1.0f);
+    const std::size_t levelsA = cache.levels(*a, 1.0).size();
+    ASSERT_GT(levelsA, 0u);
+    const void* addrA = a.get();
+    a.reset();
+
+    // A fresh field, quite possibly at the same address, with a different range.
+    auto b = makeField(10.0f);
+    const std::size_t levelsB = cache.levels(*b, 1.0).size();
+    if (b.get() == addrA) {
+        EXPECT_NE(levelsB, levelsA) << "same address must not serve the old field's isolines";
+    }
+    EXPECT_GT(levelsB, levelsA);  // 10x the range at the same interval => more lines
+}
+
+TEST(Contour, CacheReusesTheSameFieldAndInterval) {
+    core::Field2D f;
+    core::RegularLatLonGrid g;
+    g.lat0 = 0; g.lon0 = 0; g.dlat = 1; g.dlon = 1; g.nlon = 8; g.nlat = 8;
+    f.grid = g;
+    f.values.resize(64);
+    for (std::size_t j = 0; j < 8; ++j)
+        for (std::size_t i = 0; i < 8; ++i) f.values[j * 8 + i] = static_cast<float>(i);
+
+    render::ContourCache cache;
+    const auto* first = &cache.levels(f, 1.0);
+    const auto* second = &cache.levels(f, 1.0);
+    EXPECT_EQ(first, second);  // same storage: nothing was rebuilt
+    EXPECT_EQ(first->size(), second->size());
 }
