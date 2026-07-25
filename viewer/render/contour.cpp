@@ -59,6 +59,9 @@ std::vector<ContourSegment> contourAt(const core::Field2D& field, double level) 
                 out.push_back({p.first, p.second, q.first, q.second});
             };
 
+            // clang-format off
+            // Kept as a table: all 16 marching-squares cases are meant to be
+            // checked off at a glance, which one-statement-per-line hides.
             switch (c) {
                 case 1: case 14: emit(eL(), eB()); break;
                 case 2: case 13: emit(eB(), eR()); break;
@@ -71,6 +74,7 @@ std::vector<ContourSegment> contourAt(const core::Field2D& field, double level) 
                 case 10: emit(eB(), eR()); emit(eL(), eT()); break;
                 default: break;
             }
+            // clang-format on
         }
     }
     return out;
@@ -115,8 +119,7 @@ std::vector<ContourLevel> contourLevels(const core::Field2D& field, double inter
     return out;
 }
 
-const std::vector<ContourLevel>& ContourCache::levels(const core::Field2D& field,
-                                                      double interval) {
+const std::vector<ContourLevel>& ContourCache::levels(const core::Field2D& field, double interval) {
     if (field.id != fieldId_ || interval != interval_) {
         levels_ = contourLevels(field, interval);
         fieldId_ = field.id;

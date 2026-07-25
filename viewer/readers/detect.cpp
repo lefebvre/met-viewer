@@ -79,9 +79,8 @@ OpenResult openDatasets(const std::vector<std::filesystem::path>& paths) {
 
     // A single file needs no wrapping — return it directly so single-file behavior
     // (including formatName) is byte-for-byte what it was before.
-    result.dataset = sources.size() == 1
-                         ? std::move(sources.front())
-                         : std::make_shared<MultiDataset>(std::move(sources));
+    result.dataset = sources.size() == 1 ? std::move(sources.front())
+                                         : std::make_shared<MultiDataset>(std::move(sources));
     return result;
 }
 

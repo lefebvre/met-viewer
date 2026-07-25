@@ -8,9 +8,9 @@
 namespace met::app {
 
 namespace {
-constexpr int kMargin = 8;   // outer padding
-constexpr int kBarW = 20;    // gradient bar width
-constexpr int kGap = 6;      // bar-to-label gap
+constexpr int kMargin = 8;  // outer padding
+constexpr int kBarW = 20;   // gradient bar width
+constexpr int kGap = 6;     // bar-to-label gap
 }  // namespace
 
 ColorbarWidget::ColorbarWidget(QWidget* parent) : QWidget(parent) {}
@@ -25,8 +25,7 @@ QSize ColorbarWidget::sizeHint() const {
             labelW = std::max(labelW, fm.horizontalAdvance(QString::number(v, 'g', 4)));
     }
     int w = kMargin + kBarW + kGap + labelW + kMargin;
-    if (!units_.isEmpty())
-        w = std::max(w, kMargin + fm.horizontalAdvance(units_) + kMargin);
+    if (!units_.isEmpty()) w = std::max(w, kMargin + fm.horizontalAdvance(units_) + kMargin);
     const int unitsH = units_.isEmpty() ? 0 : fm.height() + 4;
     // Keep the gradient bar comfortably tall regardless of font size.
     const int h = 2 * kMargin + unitsH + 14 * fm.height();

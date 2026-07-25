@@ -57,6 +57,29 @@ sudo dnf install -y libasan libubsan
 Pass `--verbose <level>` (`trace|debug|info|warn|error|off`) to see diagnostics on
 stderr — which reader claimed a file, why a slab was skipped, why a tile failed.
 
+## Formatting
+
+Style is enforced by `.clang-format` and gated in CI:
+
+```sh
+cmake --build build/release --target format         # rewrite sources in place
+cmake --build build/release --target format-check   # report + fail, what CI runs
+```
+
+Use **clang-format 21.1.8** — the version the tree is formatted with, recorded in
+[`cmake/Format.cmake`](cmake/Format.cmake) and installed by CI. Output is not
+stable across major releases, so a different one will flag differences that are
+the tool's rather than yours. If your distro ships another version:
+
+```sh
+pip install clang-format==21.1.8
+```
+
+The CMake targets are created only when clang-format is found, so its absence
+never blocks a build. Two hand-aligned regions (the marching-squares dispatch
+table, the tile-URL table) are fenced with `// clang-format off` and explain why
+in place.
+
 The first configure builds Qt and other dependencies from source via vcpkg; expect this to take a while.
 
 ## Installers

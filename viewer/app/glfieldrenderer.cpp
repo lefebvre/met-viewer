@@ -78,8 +78,14 @@ GlFieldRenderer::~GlFieldRenderer() {
 }
 
 void GlFieldRenderer::teardown() {
-    if (fieldTex_) { glDeleteTextures(1, &fieldTex_); fieldTex_ = 0; }
-    if (vbo_) { glDeleteBuffers(1, &vbo_); vbo_ = 0; }
+    if (fieldTex_) {
+        glDeleteTextures(1, &fieldTex_);
+        fieldTex_ = 0;
+    }
+    if (vbo_) {
+        glDeleteBuffers(1, &vbo_);
+        vbo_ = 0;
+    }
     if (vao_.isCreated()) vao_.destroy();
     program_.reset();
     ready_ = false;
@@ -155,12 +161,11 @@ void GlFieldRenderer::render(const Grid& grid, const View& view, float opacity) 
     program_->setUniformValue("uTopLeftFrac",
                               QVector2D(static_cast<float>(view.topLeftWorldX / ws),
                                         static_cast<float>(view.topLeftWorldY / ws)));
-    program_->setUniformValue("uViewportFrac",
-                              QVector2D(static_cast<float>(view.widthPx / ws),
-                                        static_cast<float>(view.heightPx / ws)));
+    program_->setUniformValue("uViewportFrac", QVector2D(static_cast<float>(view.widthPx / ws),
+                                                         static_cast<float>(view.heightPx / ws)));
     program_->setUniformValue("uGrid0", QVector4D(grid.lon0, grid.lat0, grid.dlon, grid.dlat));
-    program_->setUniformValue("uGridN", QVector2D(static_cast<float>(grid.nlon),
-                                                  static_cast<float>(grid.nlat)));
+    program_->setUniformValue(
+        "uGridN", QVector2D(static_cast<float>(grid.nlon), static_cast<float>(grid.nlat)));
     program_->setUniformValue("uGlobalWrap", grid.globalWrap ? 1 : 0);
     program_->setUniformValue("uOpacity", opacity);
 
@@ -169,9 +174,9 @@ void GlFieldRenderer::render(const Grid& grid, const View& view, float opacity) 
     glBindTexture(GL_TEXTURE_2D, fieldTex_);
     // Global-wrap grids repeat on S so the antimeridian seam interpolates to
     // column 0 instead of clamping to a one-cell edge.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
-                    grid.globalWrap ? static_cast<GLint>(kGL_REPEAT)
-                                    : static_cast<GLint>(kGL_CLAMP_TO_EDGE));
+    glTexParameteri(
+        GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+        grid.globalWrap ? static_cast<GLint>(kGL_REPEAT) : static_cast<GLint>(kGL_CLAMP_TO_EDGE));
     program_->setUniformValue("uField", 0);
 
     vao_.bind();

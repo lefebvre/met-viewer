@@ -23,8 +23,8 @@ public:
     void setSection(const analysis::CrossSection& cs);
 
     void setColormapByName(const QString& name);
-    void setAutoRange(bool on);            // re-fit the range to the section data
-    void setRange(double lo, double hi);   // manual range
+    void setAutoRange(bool on);           // re-fit the range to the section data
+    void setRange(double lo, double hi);  // manual range
     // Decimals for the cursor readout's lat/lon, from the source grid spacing
     // (see app::coordPrecision). The section carries no grid, so MainWindow sets it.
     void setCoordPrecision(int digits) { coordPrec_ = digits; }
@@ -73,10 +73,10 @@ private:
     // rebuilding per paint would make the cursor readout's repaints unusable.
     QImage img_;
     QSize imgSize_;
-    quint64 imgSection_ = 0;   // cs_ generation the image was built from
+    quint64 imgSection_ = 0;  // cs_ generation the image was built from
     QString imgCmap_;
     double imgMin_ = 0, imgMax_ = 0;
-    quint64 sectionSeq_ = 0;   // bumped by setSection()
+    quint64 sectionSeq_ = 0;  // bumped by setSection()
 
     // Cursor readout state; cleared when the cursor leaves.
     bool hoverActive_ = false;

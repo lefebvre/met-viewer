@@ -8,10 +8,8 @@ namespace met::readers::arl {
 // the first record being an INDX label (ASCII date digits + "INDX").
 class ArlReader : public IFormatReader {
 public:
-    [[nodiscard]] int probe(std::span<const std::byte> head,
-                            std::string_view path) const override;
-    [[nodiscard]] std::unique_ptr<IDataset> open(
-        const std::filesystem::path& path) const override;
+    [[nodiscard]] int probe(std::span<const std::byte> head, std::string_view path) const override;
+    [[nodiscard]] std::unique_ptr<IDataset> open(const std::filesystem::path& path) const override;
     [[nodiscard]] std::string name() const override { return "ARL"; }
 };
 

@@ -9,9 +9,7 @@
 using namespace met;
 
 namespace {
-std::filesystem::path fixture(const char* n) {
-    return std::filesystem::path(MET_FIXTURE_DIR) / n;
-}
+std::filesystem::path fixture(const char* n) { return std::filesystem::path(MET_FIXTURE_DIR) / n; }
 }  // namespace
 
 TEST(GribLambert, DecodesProjectedGridValues) {

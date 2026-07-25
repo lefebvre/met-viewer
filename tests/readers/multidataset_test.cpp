@@ -110,8 +110,8 @@ TEST(MultiDataset, DuplicateCellLastSourceWins) {
 TEST(MultiDataset, MissingCellThrows) {
     // s0: t@500 for t=100,200; s1: t@850 for t=100. Cell (850, 200) exists in
     // neither, so the merged axes cross but that slab is absent.
-    auto s0 = fake(0, {{"t", hPa(500), core::TimePoint{100}, -1},
-                       {"t", hPa(500), core::TimePoint{200}, -1}});
+    auto s0 = fake(
+        0, {{"t", hPa(500), core::TimePoint{100}, -1}, {"t", hPa(500), core::TimePoint{200}, -1}});
     auto s1 = fake(1, {{"t", hPa(850), core::TimePoint{100}, -1}});
     readers::MultiDataset md({s0, s1});
 

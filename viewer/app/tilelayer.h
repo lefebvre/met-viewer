@@ -16,7 +16,7 @@ namespace met::app {
 // A named XYZ raster tile source.
 struct TileSource {
     QString name;
-    QString urlTemplate;   // with {z} {x} {y} placeholders
+    QString urlTemplate;  // with {z} {x} {y} placeholders
     QString attribution;
     int maxZoom = 19;
 };
@@ -59,17 +59,17 @@ private:
 
     QNetworkAccessManager* nam_ = nullptr;
     TileSource source_;
-    QCache<QString, QImage> memory_;      // decoded tiles
-    QSet<QString> inFlight_;              // keys currently fetching
-    QQueue<QString> pending_;             // keys waiting for a slot
-    QHash<QString, QString> pendingUrls_; // key -> url
-    QSet<QNetworkReply*> replies_;        // active replies (to abort on source switch)
+    QCache<QString, QImage> memory_;       // decoded tiles
+    QSet<QString> inFlight_;               // keys currently fetching
+    QQueue<QString> pending_;              // keys waiting for a slot
+    QHash<QString, QString> pendingUrls_;  // key -> url
+    QSet<QNetworkReply*> replies_;         // active replies (to abort on source switch)
     // Keys whose fetch failed, with the number of consecutive failures. Without
     // this a permanently-failing tile is re-requested by every repaint — and the
     // cursor readout repaints on every mouse-move, so moving the pointer over the
     // map would issue a request per tile per move. Cleared on setSource().
     QHash<QString, int> failed_;
-    unsigned sourceGen_ = 0;             // bumped on setSource; stale replies are dropped
+    unsigned sourceGen_ = 0;  // bumped on setSource; stale replies are dropped
     int maxInFlight_ = 6;
 };
 

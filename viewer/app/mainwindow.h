@@ -209,7 +209,7 @@ private:
     // apply it, reverting the combo if the user cancels or the URL is unusable.
     void promptCustomBasemap();
     void addRecentFile(const QString& path);  // record a successfully opened file
-    void updateRecentMenu();                   // rebuild the "Open Recent" submenu
+    void updateRecentMenu();                  // rebuild the "Open Recent" submenu
 
     // A batch of opened files: the successfully opened (path, dataset) pairs in
     // order, plus paths that failed to open (skipped, not fatal).

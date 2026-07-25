@@ -2,8 +2,6 @@
 
 namespace met::analysis {
 
-int placeholder() {
-    return 0;
-}
+int placeholder() { return 0; }
 
 }  // namespace met::analysis

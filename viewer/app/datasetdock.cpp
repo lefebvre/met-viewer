@@ -81,8 +81,7 @@ void DatasetDock::filterTree(const QString& text) {
             varItem->setExpanded(false);  // restore collapsed default
             continue;
         }
-        const bool varMatches =
-            varItem->text(0).contains(needle, Qt::CaseInsensitive);
+        const bool varMatches = varItem->text(0).contains(needle, Qt::CaseInsensitive);
         bool anyLeafMatch = false;
         for (int j = 0; j < varItem->childCount(); ++j) {
             QTreeWidgetItem* leaf = varItem->child(j);
@@ -104,8 +103,8 @@ void DatasetDock::selectField(const QString& varName, const core::VerticalLevel&
         for (int j = 0; j < varItem->childCount(); ++j) {
             QTreeWidgetItem* leaf = varItem->child(j);
             if (leaf->data(0, kRoleVar).toString() != varName) continue;
-            const auto type = static_cast<core::VerticalLevel::Type>(
-                leaf->data(0, kRoleLevelType).toInt());
+            const auto type =
+                static_cast<core::VerticalLevel::Type>(leaf->data(0, kRoleLevelType).toInt());
             if (type == level.type && leaf->data(0, kRoleLevelValue).toDouble() == level.value) {
                 tree_->setCurrentItem(leaf);  // highlights; does not emit itemActivated
                 tree_->scrollToItem(leaf);

@@ -41,13 +41,13 @@ public:
     void setAutoRange(bool on);
     void setViewRange(bool on);  // auto-range over the visible extent only
     void setRange(double lo, double hi);
-    void setOpacity(double opacity);          // 0..1
+    void setOpacity(double opacity);  // 0..1
     void setGraticuleVisible(bool on);
     void setCoastlinesVisible(bool on);
     void setContoursEnabled(bool on);
     void setContourInterval(double interval);  // <=0 = auto
     void setCoastlines(std::shared_ptr<std::vector<GeoPolyline>> lines);
-    void refreshSource();                     // basemap source changed
+    void refreshSource();  // basemap source changed
 
     // Wind overlay. Modes: 0 = off, 1 = barbs, 2 = streamlines.
     void setWind(std::shared_ptr<analysis::WindField> wind);
@@ -118,7 +118,7 @@ private:
     render::Colormap cmap_ = render::Colormap::builtin("viridis");
     double opacity_ = 0.75;
     bool autoRange_ = true;
-    bool viewRange_ = false;  // when auto-ranging, use the visible extent only
+    bool viewRange_ = false;   // when auto-ranging, use the visible extent only
     bool gpuEnabled_ = false;  // opt-in; CPU warp is the robust default
     GlFieldRenderer glField_;
     bool glReady_ = false;

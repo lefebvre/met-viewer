@@ -100,7 +100,10 @@ void TimeController::pause() { setPlaying(false); }
 
 void TimeController::advanceFrame() {
     if (!playing_) return;
-    if (slider_->maximum() <= 0) { setPlaying(false); return; }
+    if (slider_->maximum() <= 0) {
+        setPlaying(false);
+        return;
+    }
     const int next = (slider_->value() + 1) % (slider_->maximum() + 1);  // loop
     // Moves the slider (emits indexChanged → decode). The timer is NOT re-armed here;
     // the owner calls frameReady() once this frame's field is ready, arming the next.
@@ -146,7 +149,8 @@ void TimeController::stepNext() { slider_->setValue(slider_->value() + 1); }
 void TimeController::updateLabel() {
     const int i = slider_->value();
     if (i >= 0 && i < labels_.size()) {
-        label_->setText(QStringLiteral("%1  (%2/%3)").arg(labels_.at(i)).arg(i + 1).arg(labels_.size()));
+        label_->setText(
+            QStringLiteral("%1  (%2/%3)").arg(labels_.at(i)).arg(i + 1).arg(labels_.size()));
     } else {
         label_->setText(tr("(no time steps)"));
     }

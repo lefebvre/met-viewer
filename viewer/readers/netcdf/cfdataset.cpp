@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <ctime>
-#include <cstddef>
 #include <filesystem>
 #include <limits>
 #include <optional>
@@ -217,21 +217,31 @@ void CfDataset::scan() {
         const std::string units = attText(ncid_, varid, "units").value_or("");
         const std::string std = lower(attText(ncid_, varid, "standard_name").value_or(""));
         const std::string ln = lower(name);
-        if (latDim < 0 && (isLatUnits(units) || std == "latitude" || ln == "latitude" || ln == "lat")) {
-            latDim = dimid; latVar = varid; return;
+        if (latDim < 0 &&
+            (isLatUnits(units) || std == "latitude" || ln == "latitude" || ln == "lat")) {
+            latDim = dimid;
+            latVar = varid;
+            return;
         }
-        if (lonDim < 0 && (isLonUnits(units) || std == "longitude" || ln == "longitude" || ln == "lon")) {
-            lonDim = dimid; lonVar = varid; return;
+        if (lonDim < 0 &&
+            (isLonUnits(units) || std == "longitude" || ln == "longitude" || ln == "lon")) {
+            lonDim = dimid;
+            lonVar = varid;
+            return;
         }
-        if (timeDim < 0 && (std == "time" || ln == "time" || lower(units).find(" since ") != std::string::npos)) {
-            timeDim = dimid; timeVar = varid; return;
+        if (timeDim < 0 &&
+            (std == "time" || ln == "time" || lower(units).find(" since ") != std::string::npos)) {
+            timeDim = dimid;
+            timeVar = varid;
+            return;
         }
         if (levelDim < 0) {
             const bool hasPositive = attText(ncid_, varid, "positive").has_value();
             VerticalLevel::Type t = VerticalLevel::Type::Unknown;
             double sc = 1.0;
             if (classifyVertical(units, std, name, hasPositive, t, sc)) {
-                levelDim = dimid; levelVar = varid;
+                levelDim = dimid;
+                levelVar = varid;
             }
         }
     };
@@ -279,12 +289,12 @@ void CfDataset::scan() {
     if (timeDim >= 0) {
         times.resize(dimLen[static_cast<std::size_t>(timeDim)]);
         nc_get_var_double(ncid_, timeVar, times.data());
-        const std::string tu = attText(ncid_, timeVar, "units").value_or("seconds since 1970-01-01");
+        const std::string tu =
+            attText(ncid_, timeVar, "units").value_or("seconds since 1970-01-01");
         std::tie(timePerUnit, timeBase) = parseTimeUnits(tu);
     }
 
-    if (lat.empty() || lon.empty())
-        throw ReadError("NetCDF: empty latitude/longitude coordinate");
+    if (lat.empty() || lon.empty()) throw ReadError("NetCDF: empty latitude/longitude coordinate");
 
     // Build the grid geometry from the coordinate arrays. RegularLatLonGrid is a
     // uniform-spacing model, so verify the axes actually are uniform instead of
@@ -311,7 +321,8 @@ void CfDataset::scan() {
     };
     auto timeAt = [&](std::size_t i) -> TimePoint {
         if (times.empty()) return TimePoint{0};
-        return TimePoint{timeBase + static_cast<std::int64_t>(std::llround(times[i] * timePerUnit))};
+        return TimePoint{timeBase +
+                         static_cast<std::int64_t>(std::llround(times[i] * timePerUnit))};
     };
 
     // Data variables: any non-coordinate var whose dims include lat and lon.
@@ -341,18 +352,29 @@ void CfDataset::scan() {
         info.units = attText(ncid_, v, "units").value_or("");
         info.longName = attText(ncid_, v, "long_name").value_or("");
         info.standardName = attText(ncid_, v, "standard_name").value_or("");
-        if (auto s = attDouble(ncid_, v, "scale_factor")) { info.scale = *s; info.hasScale = true; }
-        if (auto o = attDouble(ncid_, v, "add_offset")) { info.offset = *o; info.hasOffset = true; }
-        if (auto f = attDouble(ncid_, v, "_FillValue")) { info.fill = *f; info.hasFill = true; }
-        else if (auto f2 = attDouble(ncid_, v, "missing_value")) { info.fill = *f2; info.hasFill = true; }
+        if (auto s = attDouble(ncid_, v, "scale_factor")) {
+            info.scale = *s;
+            info.hasScale = true;
+        }
+        if (auto o = attDouble(ncid_, v, "add_offset")) {
+            info.offset = *o;
+            info.hasOffset = true;
+        }
+        if (auto f = attDouble(ncid_, v, "_FillValue")) {
+            info.fill = *f;
+            info.hasFill = true;
+        } else if (auto f2 = attDouble(ncid_, v, "missing_value")) {
+            info.fill = *f2;
+            info.hasFill = true;
+        }
         vars_[nm] = info;
 
         const std::size_t nLev = levels.empty() ? 1 : levels.size();
         const std::size_t nTime = times.empty() ? 1 : times.size();
         for (std::size_t li = 0; li < nLev; ++li) {
             for (std::size_t ti = 0; ti < nTime; ++ti) {
-                const core::RecordHandle handle =
-                    (static_cast<core::RecordHandle>(li) << 24) | static_cast<core::RecordHandle>(ti);
+                const core::RecordHandle handle = (static_cast<core::RecordHandle>(li) << 24) |
+                                                  static_cast<core::RecordHandle>(ti);
                 catalog_.addRecord(nm, info.longName, info.units, info.standardName, levelAt(li),
                                    timeAt(ti), -1, handle);
             }

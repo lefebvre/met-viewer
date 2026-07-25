@@ -14,7 +14,12 @@ namespace {
 // A field whose value equals a linear function of lat/lon plus a per-call bias.
 core::Field2D linearField(double bias) {
     core::RegularLatLonGrid g;
-    g.lat0 = 70; g.lon0 = 0; g.dlat = -2; g.dlon = 2; g.nlon = 16; g.nlat = 8;
+    g.lat0 = 70;
+    g.lon0 = 0;
+    g.dlat = -2;
+    g.dlon = 2;
+    g.nlon = 16;
+    g.nlat = 8;
     core::Field2D f;
     f.grid = g;
     f.meta.units = "K";
@@ -46,16 +51,16 @@ TEST(Geo, PathSamplingEvenSpacing) {
 }
 
 TEST(CrossSection, SamplesEachLevelAlongPath) {
-    std::vector<std::pair<double, core::Field2D>> stack = {
-        {500.0, linearField(0.0)}, {850.0, linearField(21.0)}};
+    std::vector<std::pair<double, core::Field2D>> stack = {{500.0, linearField(0.0)},
+                                                           {850.0, linearField(21.0)}};
     const auto cs = analysis::extractCrossSection(stack, {{68, 4}, {58, 26}}, 50);
     ASSERT_EQ(cs.pressures.size(), 2u);
     ASSERT_EQ(cs.values.size(), 2u);
     EXPECT_EQ(cs.values[0].size(), 50u);
     EXPECT_EQ(cs.units, "K");
     // At the first path point (68,4): base = 273.15 + 0.4 - 13.6 = 259.95.
-    EXPECT_NEAR(cs.values[0].front(), 259.95f, 1e-2);         // 500 hPa, bias 0
-    EXPECT_NEAR(cs.values[1].front(), 259.95f + 21.0f, 1e-2); // 850 hPa, bias 21
+    EXPECT_NEAR(cs.values[0].front(), 259.95f, 1e-2);          // 500 hPa, bias 0
+    EXPECT_NEAR(cs.values[1].front(), 259.95f + 21.0f, 1e-2);  // 850 hPa, bias 21
     // Distance increases monotonically.
     EXPECT_GT(cs.distancesKm.back(), cs.distancesKm.front());
 }
@@ -83,8 +88,8 @@ TEST(Sounding, DewpointFromRH) {
 }
 
 TEST(Sounding, ExtractsSortedProfileWithDewpoint) {
-    std::vector<std::pair<double, core::Field2D>> t = {
-        {850.0, linearField(21.0)}, {500.0, linearField(0.0)}};
+    std::vector<std::pair<double, core::Field2D>> t = {{850.0, linearField(21.0)},
+                                                       {500.0, linearField(0.0)}};
     core::Field2D rhField = linearField(0.0);
     rhField.values.assign(rhField.values.size(), 60.0f);  // RH 60% everywhere
     std::vector<std::pair<double, core::Field2D>> rh = {{850.0, rhField}, {500.0, rhField}};
@@ -102,8 +107,8 @@ TEST(Sounding, ExtractsSortedProfileWithDewpoint) {
 }
 
 TEST(Sounding, ExtractsWindProfileWhenUVPresent) {
-    std::vector<std::pair<double, core::Field2D>> t = {
-        {850.0, linearField(21.0)}, {500.0, linearField(0.0)}};
+    std::vector<std::pair<double, core::Field2D>> t = {{850.0, linearField(21.0)},
+                                                       {500.0, linearField(0.0)}};
     const std::vector<std::pair<double, core::Field2D>> rh;  // no humidity
 
     core::Field2D uField = linearField(0.0), vField = linearField(0.0);

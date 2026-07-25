@@ -1,0 +1,29 @@
+# Derived from the style the codebase was already written in, not imposed on it:
+# each setting below was chosen by measuring which value produced the smallest
+# diff against the existing tree, so the one-time normalization stayed small and
+# the rules match what a contributor reading the code would infer anyway.
+---
+Language: Cpp
+BasedOnStyle: Google
+
+# Google's shape (attached braces, left-aligned pointers, two spaces before a
+# trailing comment) but with this project's wider indent and line budget.
+IndentWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+
+# `if constexpr (...) return a; else return b;` shows up throughout the GridDef
+# visitors, where splitting it across four lines buries a two-line dispatch.
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+
+# Include order is curated by hand into meaningful groups — own header, C++
+# standard library, third-party (Qt/fmt/PROJ/ecCodes), then project headers.
+# Google's categories would hoist any <foo.h> above <cmath>, splitting those
+# groups up. Sort within each group; never move a header across a blank line.
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive
+
+# Deterministic rather than inferred per file, so a file that happens to contain
+# only one pointer declaration cannot flip the whole file's convention.
+DerivePointerAlignment: false
+PointerAlignment: Left

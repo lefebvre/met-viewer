@@ -48,7 +48,8 @@ void dilateColors(std::vector<unsigned char>& rgba, int nx, int ny) {
     const std::vector<unsigned char> src = rgba;  // sample from an unmodified copy
     auto idx = [nx](int x, int y) {
         return (static_cast<std::size_t>(y) * static_cast<std::size_t>(nx) +
-                static_cast<std::size_t>(x)) * 4;
+                static_cast<std::size_t>(x)) *
+               4;
     };
     for (int y = 0; y < ny; ++y) {
         for (int x = 0; x < nx; ++x) {
@@ -165,10 +166,22 @@ void MapView::setOpacity(double opacity) {
     update();
 }
 
-void MapView::setGraticuleVisible(bool on) { graticule_ = on; update(); }
-void MapView::setCoastlinesVisible(bool on) { coastlinesVisible_ = on; update(); }
-void MapView::setContoursEnabled(bool on) { contoursEnabled_ = on; update(); }
-void MapView::setContourInterval(double interval) { contourInterval_ = interval; update(); }
+void MapView::setGraticuleVisible(bool on) {
+    graticule_ = on;
+    update();
+}
+void MapView::setCoastlinesVisible(bool on) {
+    coastlinesVisible_ = on;
+    update();
+}
+void MapView::setContoursEnabled(bool on) {
+    contoursEnabled_ = on;
+    update();
+}
+void MapView::setContourInterval(double interval) {
+    contourInterval_ = interval;
+    update();
+}
 void MapView::setWind(std::shared_ptr<analysis::WindField> wind) {
     wind_ = std::move(wind);
     update();
@@ -198,18 +211,24 @@ bool MapView::visibleValueRange(double& lo, double& hi) const {
         const core::GridIndex gi = core::latlonToIndex(field_->grid, screenToLonLat(screenPt));
         const int c = std::clamp(static_cast<int>(std::lround(gi.x)), 0, w - 1);
         const int r = std::clamp(static_cast<int>(std::lround(gi.y)), 0, h - 1);
-        c0 = std::min(c0, c); c1 = std::max(c1, c);
-        r0 = std::min(r0, r); r1 = std::max(r1, r);
+        c0 = std::min(c0, c);
+        c1 = std::max(c1, c);
+        r0 = std::min(r0, r);
+        r1 = std::max(r1, r);
     };
     const int steps = 24;
     for (int k = 0; k <= steps; ++k) {
         const double f = static_cast<double>(k) / steps;
-        acc({f * width(), 0.0}); acc({f * width(), double(height())});
-        acc({0.0, f * height()}); acc({double(width()), f * height()});
+        acc({f * width(), 0.0});
+        acc({f * width(), double(height())});
+        acc({0.0, f * height()});
+        acc({double(width()), f * height()});
     }
     if (c1 < c0 || r1 < r0) return false;
-    c0 = std::max(0, c0 - 1); r0 = std::max(0, r0 - 1);
-    c1 = std::min(w - 1, c1 + 1); r1 = std::min(h - 1, r1 + 1);
+    c0 = std::max(0, c0 - 1);
+    r0 = std::max(0, r0 - 1);
+    c1 = std::min(w - 1, c1 + 1);
+    r1 = std::min(h - 1, r1 + 1);
 
     for (int r = r0; r <= r1; ++r)
         for (int c = c0; c <= c1; ++c) {
@@ -233,7 +252,10 @@ void MapView::autorange() {
             hi = std::max(hi, static_cast<double>(v));
         }
     }
-    if (!std::isfinite(lo) || !std::isfinite(hi) || lo == hi) { lo = 0; hi = 1; }
+    if (!std::isfinite(lo) || !std::isfinite(hi) || lo == hi) {
+        lo = 0;
+        hi = 1;
+    }
     // Diverging colormaps read best centered on zero.
     if (render::Colormap::isDiverging(cmap_.name())) {
         const double m = std::max(std::abs(lo), std::abs(hi));
@@ -250,8 +272,7 @@ void MapView::fitToField() {
     centerLat_ = 0.5 * (b.minLat + b.maxLat);
     const int zx = render::tile::zoomForLonSpan(b.maxLon - b.minLon, std::max(64, width() - 8));
     // Constrain by the latitude span too (Mercator-projected height).
-    const double latPxSpan =
-        std::abs(latToWorldY(b.minLat, zx) - latToWorldY(b.maxLat, zx));
+    const double latPxSpan = std::abs(latToWorldY(b.minLat, zx) - latToWorldY(b.maxLat, zx));
     int z = zx;
     while (z > 0 && latPxSpan * std::pow(2.0, z - zx) > std::max(64, height() - 8)) --z;
     zoom_ = std::clamp(z, 0, 19);
@@ -273,23 +294,26 @@ void MapView::contextMenuEvent(QContextMenuEvent* event) {
 // viewport, i.e. it can be blitted as-is.
 bool MapView::warpIsCurrent() const {
     const double tlx = topLeftWorldX(), tly = topLeftWorldY();
-    return !warp_.isNull() && warpField_ == field_->id && warpZoom_ == zoom_ &&
-           warpW_ == width() && warpH_ == height() && warpTlx_ == tlx && warpTly_ == tly &&
-           warpOpacity_ == opacity_ && warpCmap_ == QString::fromStdString(cmap_.name()) &&
-           warpMin_ == cmap_.min() && warpMax_ == cmap_.max();
+    return !warp_.isNull() && warpField_ == field_->id && warpZoom_ == zoom_ && warpW_ == width() &&
+           warpH_ == height() && warpTlx_ == tlx && warpTly_ == tly && warpOpacity_ == opacity_ &&
+           warpCmap_ == QString::fromStdString(cmap_.name()) && warpMin_ == cmap_.min() &&
+           warpMax_ == cmap_.max();
 }
 
 // True when the cached raster differs from what we want only by a translation, so
 // drawing it at an offset is a correct (if edge-incomplete) preview of the pan.
 bool MapView::warpIsPannable() const {
-    return !warp_.isNull() && warpField_ == field_->id && warpZoom_ == zoom_ &&
-           warpW_ == width() && warpH_ == height() && warpOpacity_ == opacity_ &&
+    return !warp_.isNull() && warpField_ == field_->id && warpZoom_ == zoom_ && warpW_ == width() &&
+           warpH_ == height() && warpOpacity_ == opacity_ &&
            warpCmap_ == QString::fromStdString(cmap_.name()) && warpMin_ == cmap_.min() &&
            warpMax_ == cmap_.max();
 }
 
 void MapView::ensureWarp() {
-    if (!field_) { warp_ = {}; return; }
+    if (!field_) {
+        warp_ = {};
+        return;
+    }
     if (warpIsCurrent()) return;
 
     const double tlx = topLeftWorldX(), tly = topLeftWorldY();
@@ -297,10 +321,15 @@ void MapView::ensureWarp() {
     const int hw = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 1);
     warp_ = render::warpToMercator(*field_, cmap_, view, opacity_, hw);
     warpField_ = field_->id;
-    warpZoom_ = zoom_; warpW_ = width(); warpH_ = height();
-    warpTlx_ = tlx; warpTly_ = tly; warpOpacity_ = opacity_;
+    warpZoom_ = zoom_;
+    warpW_ = width();
+    warpH_ = height();
+    warpTlx_ = tlx;
+    warpTly_ = tly;
+    warpOpacity_ = opacity_;
     warpCmap_ = QString::fromStdString(cmap_.name());
-    warpMin_ = cmap_.min(); warpMax_ = cmap_.max();
+    warpMin_ = cmap_.min();
+    warpMax_ = cmap_.max();
 }
 
 // Draw the field layer. While a drag is in progress the cached raster is blitted
@@ -349,9 +378,13 @@ bool MapView::drawFieldGpu() {
     }
     if (!glField_.haveField()) return false;  // upload rejected -> fall back to CPU warp
 
-    const GlFieldRenderer::Grid grid{static_cast<float>(g.lon0), static_cast<float>(g.lat0),
-                                     static_cast<float>(g.dlon), static_cast<float>(g.dlat),
-                                     g.nlon, g.nlat, g.globalWrapLon};
+    const GlFieldRenderer::Grid grid{static_cast<float>(g.lon0),
+                                     static_cast<float>(g.lat0),
+                                     static_cast<float>(g.dlon),
+                                     static_cast<float>(g.dlat),
+                                     g.nlon,
+                                     g.nlat,
+                                     g.globalWrapLon};
     const GlFieldRenderer::View view{topLeftWorldX(), topLeftWorldY(),
                                      render::tile::worldSize(zoom_), width(), height()};
     glField_.render(grid, view, static_cast<float>(opacity_));
@@ -380,8 +413,7 @@ void MapView::paintGL() {
                 const QImage img = tiles_->tile(zoom_, wx, ty);
                 const double sx = tx * kTile - tlx;
                 const double sy = ty * kTile - tly;
-                if (!img.isNull())
-                    p.drawImage(QRectF(sx, sy, kTile, kTile), img);
+                if (!img.isNull()) p.drawImage(QRectF(sx, sy, kTile, kTile), img);
                 else {
                     p.setPen(QColor(200, 205, 210));
                     p.drawRect(QRectF(sx, sy, kTile, kTile));
@@ -412,7 +444,8 @@ void MapView::paintGL() {
         const core::LatLon br = screenToLonLat({double(width()), double(height())});
         auto niceStep = [](double span) {
             const double s[] = {1, 2, 5, 10, 15, 30, 45};
-            for (double v : s) if (span / v <= 8) return v;
+            for (double v : s)
+                if (span / v <= 8) return v;
             return 60.0;
         };
         const double lonStep = niceStep(std::abs(br.lon - tl.lon));
@@ -505,9 +538,8 @@ void MapView::drawBarbs(QPainter& p) {
             // Wind blows toward (u east, v north); in screen space north is -y.
             // The barb staff points in the direction the wind comes FROM.
             QPointF fromDir(-uv.u, uv.v);
-            const render::WindBarb barb =
-                render::makeWindBarb({double(sx), double(sy)}, fromDir,
-                                     analysis::toKnots(speed), 22.0);
+            const render::WindBarb barb = render::makeWindBarb({double(sx), double(sy)}, fromDir,
+                                                               analysis::toKnots(speed), 22.0);
             if (barb.calm) {
                 p.setBrush(Qt::NoBrush);
                 p.drawEllipse(QPointF(sx, sy), 2.0, 2.0);
@@ -593,10 +625,14 @@ void MapView::ensureStreamlines() {
                 for (int step = 0; step < maxSteps; ++step) {
                     double k1x, k1y, k2x, k2y, k3x, k3y, k4x, k4y;
                     if (!velScreen(cur, k1x, k1y)) break;
-                    if (!velScreen(cur + QPointF(0.5 * stepPx * dir * k1x, 0.5 * stepPx * dir * k1y),
-                                   k2x, k2y)) break;
-                    if (!velScreen(cur + QPointF(0.5 * stepPx * dir * k2x, 0.5 * stepPx * dir * k2y),
-                                   k3x, k3y)) break;
+                    if (!velScreen(
+                            cur + QPointF(0.5 * stepPx * dir * k1x, 0.5 * stepPx * dir * k1y), k2x,
+                            k2y))
+                        break;
+                    if (!velScreen(
+                            cur + QPointF(0.5 * stepPx * dir * k2x, 0.5 * stepPx * dir * k2y), k3x,
+                            k3y))
+                        break;
                     if (!velScreen(cur + QPointF(stepPx * dir * k3x, stepPx * dir * k3y), k4x, k4y))
                         break;
                     cur += QPointF(stepPx * dir * (k1x + 2 * k2x + 2 * k3x + k4x) / 6.0,
@@ -617,8 +653,7 @@ void MapView::ensureStreamlines() {
 
 void MapView::drawContours(QPainter& p) {
     double interval = contourInterval_;
-    if (!(interval > 0.0))
-        interval = render::niceContourInterval(cmap_.min(), cmap_.max(), 10);
+    if (!(interval > 0.0)) interval = render::niceContourInterval(cmap_.min(), cmap_.max(), 10);
     if (!(interval > 0.0)) return;
 
     p.setRenderHint(QPainter::Antialiasing, true);
@@ -681,7 +716,8 @@ void MapView::mouseMoveEvent(QMouseEvent* event) {
         const double cx = worldCenterX() - delta.x();
         const double cy = worldCenterY() - delta.y();
         centerLon_ = worldXToLon(cx, zoom_);
-        centerLat_ = std::clamp(worldYToLat(cy, zoom_), -render::tile::kMaxLat, render::tile::kMaxLat);
+        centerLat_ =
+            std::clamp(worldYToLat(cy, zoom_), -render::tile::kMaxLat, render::tile::kMaxLat);
         hoverActive_ = false;  // a readout pinned to a moving map reads as lag
         update();
         return;

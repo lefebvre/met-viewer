@@ -11,9 +11,12 @@ VerticalLevel pressure(double hPa) { return {VerticalLevel::Type::PressureHPa, h
 TEST(Catalog, SortsLevelsHighToLowAltitude) {
     DatasetCatalog cat;
     // Add out of order: 500, 850, 250 hPa.
-    cat.addRecord("t", "Temperature", "K", "air_temperature", pressure(500), TimePoint{100}, -1, 10);
-    cat.addRecord("t", "Temperature", "K", "air_temperature", pressure(850), TimePoint{100}, -1, 20);
-    cat.addRecord("t", "Temperature", "K", "air_temperature", pressure(250), TimePoint{100}, -1, 30);
+    cat.addRecord("t", "Temperature", "K", "air_temperature", pressure(500), TimePoint{100}, -1,
+                  10);
+    cat.addRecord("t", "Temperature", "K", "air_temperature", pressure(850), TimePoint{100}, -1,
+                  20);
+    cat.addRecord("t", "Temperature", "K", "air_temperature", pressure(250), TimePoint{100}, -1,
+                  30);
     cat.finalize();
 
     const VariableEntry* v = cat.find("t");

@@ -51,11 +51,28 @@ private:
 
     ThemeManager* theme_;
 
-    struct ActionReg { QPointer<QAction> w; QString token; };
-    struct ButtonReg { QPointer<QAbstractButton> w; QString token; };
-    struct ComboReg { QPointer<QComboBox> w; int index; QString token; };
-    struct LabelReg { QPointer<QLabel> w; QString token; int px; };
-    struct WindowIconReg { QPointer<QWidget> w; QString token; };
+    struct ActionReg {
+        QPointer<QAction> w;
+        QString token;
+    };
+    struct ButtonReg {
+        QPointer<QAbstractButton> w;
+        QString token;
+    };
+    struct ComboReg {
+        QPointer<QComboBox> w;
+        int index;
+        QString token;
+    };
+    struct LabelReg {
+        QPointer<QLabel> w;
+        QString token;
+        int px;
+    };
+    struct WindowIconReg {
+        QPointer<QWidget> w;
+        QString token;
+    };
 
     QVector<ActionReg> actions_;
     QVector<ButtonReg> buttons_;

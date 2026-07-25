@@ -21,9 +21,7 @@ constexpr double kMaxLat = 85.05112877980659;
     return static_cast<double>(kTileSize) * static_cast<double>(1 << zoom);
 }
 
-[[nodiscard]] inline double clampLat(double lat) {
-    return std::clamp(lat, -kMaxLat, kMaxLat);
-}
+[[nodiscard]] inline double clampLat(double lat) { return std::clamp(lat, -kMaxLat, kMaxLat); }
 
 // Longitude/latitude (degrees) -> world pixel coordinate at `zoom`.
 [[nodiscard]] inline double lonToWorldX(double lon, int zoom) {

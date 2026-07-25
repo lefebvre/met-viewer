@@ -61,8 +61,8 @@
 #include "viewer/app/mapview.h"
 #include "viewer/app/plotview2d.h"
 #include "viewer/app/skewtview.h"
-#include "viewer/app/tilelayer.h"
 #include "viewer/app/theme.h"
+#include "viewer/app/tilelayer.h"
 #include "viewer/app/timecontroller.h"
 #include "viewer/app/timeseriesview.h"
 #include "viewer/core/grid.h"
@@ -108,9 +108,7 @@ std::optional<core::GridDef> representativeGrid(readers::IDataset& ds) {
 // control actually needs. The control panel is then given that width (see
 // ViewFrame), so dropdown text/arrows are not clipped on high-DPI or large-font
 // systems instead of the combo silently shrinking and eliding.
-void sizeComboToContents(QComboBox* c) {
-    c->setSizeAdjustPolicy(QComboBox::AdjustToContents);
-}
+void sizeComboToContents(QComboBox* c) { c->setSizeAdjustPolicy(QComboBox::AdjustToContents); }
 
 // Add colormap + auto/manual range controls and a colorbar legend to `panel`,
 // wired to `view` (which must expose setColormapByName/setAutoRange/setRange/
@@ -250,8 +248,9 @@ void MainWindow::buildUi() {
     derivedCombo_->addItems({tr("(raw field)"), tr("Wind speed"), tr("Wind direction"),
                              tr("Rel. vorticity"), tr("Divergence"), tr("Potential temp θ")});
     sizeComboToContents(derivedCombo_);
-    derivedCombo_->setToolTip(tr("Compute a quantity from the current variable — e.g. θ from\n"
-                                 "temperature, or wind speed/vorticity from the U/V pair."));
+    derivedCombo_->setToolTip(
+        tr("Compute a quantity from the current variable — e.g. θ from\n"
+           "temperature, or wind speed/vorticity from the U/V pair."));
     connect(derivedCombo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             &MainWindow::onDerivedChanged);
     dataForm->addRow(icons_->iconLabel("data-grid", 20, tr("Derived")), derivedCombo_);
@@ -304,7 +303,11 @@ void MainWindow::buildUi() {
     toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);  // icons + tooltips
     auto* modeGroup = new QActionGroup(this);
     modeGroup->setExclusive(true);
-    struct ModeDef { const char* label; MapView::Mode mode; const char* icon; };
+    struct ModeDef {
+        const char* label;
+        MapView::Mode mode;
+        const char* icon;
+    };
     const ModeDef modes[] = {{"Pan", MapView::Mode::Pan, "view-pan"},
                              {"Cross-section", MapView::Mode::CrossSection, "mode-section"},
                              {"Sounding", MapView::Mode::Sounding, "mode-skewt"},
@@ -326,13 +329,16 @@ void MainWindow::buildUi() {
             QString hint;
             switch (mode) {
                 case MapView::Mode::CrossSection:
-                    hint = tr("Cross-section: click points along the path, then double-click to draw it.");
+                    hint =
+                        tr("Cross-section: click points along the path, then double-click to draw "
+                           "it.");
                     break;
                 case MapView::Mode::Sounding:
                     hint = tr("Sounding: click a point on the map to plot its skew-T.");
                     break;
                 case MapView::Mode::TimeSeries:
-                    hint = tr("Time series: click a point on the map to plot its values over time.");
+                    hint =
+                        tr("Time series: click a point on the map to plot its values over time.");
                     break;
                 case MapView::Mode::Pan:
                     break;  // default mode: keep the status bar clear for the probe readout
@@ -361,7 +367,10 @@ void MainWindow::buildUi() {
     // the views subscribe, so analysis docks opened later pick up the current state.
     viewMenu->addSeparator();
     auto* hoverMenu = viewMenu->addMenu(tr("&Cursor Readout"));
-    const struct { const char* label; HoverView view; } hovers[] = {
+    const struct {
+        const char* label;
+        HoverView view;
+    } hovers[] = {
         {QT_TR_NOOP("&2D Plot"), HoverView::Plot},
         {QT_TR_NOOP("&Map"), HoverView::Map},
         {QT_TR_NOOP("&Cross-section"), HoverView::CrossSection},
@@ -381,7 +390,10 @@ void MainWindow::buildUi() {
     viewMenu->addSeparator();
     auto* themeMenu = viewMenu->addMenu(tr("&Theme"));
     auto* themeGroup = new QActionGroup(this);
-    const struct { const char* label; ThemeManager::Mode mode; } themes[] = {
+    const struct {
+        const char* label;
+        ThemeManager::Mode mode;
+    } themes[] = {
         {QT_TR_NOOP("&System"), ThemeManager::Mode::System},
         {QT_TR_NOOP("&Light"), ThemeManager::Mode::Light},
         {QT_TR_NOOP("&Dark"), ThemeManager::Mode::Dark},
@@ -437,7 +449,10 @@ void MainWindow::pollProgress() {
     for (const auto& j : activeJobs_) {
         const int t = j->total.load(std::memory_order_relaxed);
         // total 0 = opaque decode; generating = slabs loaded, now extracting/rendering.
-        if (t <= 0 || j->generating.load(std::memory_order_relaxed)) { anyBusy = true; continue; }
+        if (t <= 0 || j->generating.load(std::memory_order_relaxed)) {
+            anyBusy = true;
+            continue;
+        }
         total += t;
         done += std::min(j->done.load(std::memory_order_relaxed), t);
     }
@@ -463,8 +478,8 @@ static QString dataFileFilter() {
 }
 
 void MainWindow::onOpenTriggered() {
-    const QStringList paths = QFileDialog::getOpenFileNames(
-        this, tr("Open meteorological files"), {}, dataFileFilter());
+    const QStringList paths =
+        QFileDialog::getOpenFileNames(this, tr("Open meteorological files"), {}, dataFileFilter());
     if (!paths.isEmpty()) openFiles(paths, /*replace=*/true);
 }
 
@@ -480,8 +495,8 @@ void MainWindow::onOpenFolderTriggered() {
     if (folder.isEmpty()) return;
     // Pick recognized data files by extension (ARL has no standard extension, so it
     // isn't matched here — use Open Files for those).
-    static const QStringList kNameFilters = {"*.grib", "*.grib2", "*.grb", "*.grb2",
-                                             "*.grib1", "*.nc", "*.nc4"};
+    static const QStringList kNameFilters = {"*.grib",  "*.grib2", "*.grb", "*.grb2",
+                                             "*.grib1", "*.nc",    "*.nc4"};
     QDir dir(folder);
     QStringList paths;
     for (const QString& name : dir.entryList(kNameFilters, QDir::Files, QDir::Name))
@@ -552,8 +567,7 @@ void MainWindow::openFiles(const QStringList& paths, bool replace) {
     beginJob(tr("Opening %n file(s)…", nullptr, static_cast<int>(newPaths.size())), progress);
 
     submitCompute<OpenBatch>(
-        *pool_, this,
-        [newPaths, progress]() { return openBatch(newPaths, progress.get()); },
+        *pool_, this, [newPaths, progress]() { return openBatch(newPaths, progress.get()); },
         [this, gen, replace, progress](OpenBatch batch) {
             endJob(progress);
             if (gen != openGeneration_) return;  // a newer open superseded this one
@@ -605,9 +619,10 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
             QMessageBox box(this);
             box.setIcon(QMessageBox::Question);
             box.setWindowTitle(tr("Different grid"));
-            box.setText(tr("The selected file(s) use a different grid or projection than the "
-                           "loaded data and can't be added to the same time series.\n\n"
-                           "Open them as a new dataset instead?"));
+            box.setText(
+                tr("The selected file(s) use a different grid or projection than the "
+                   "loaded data and can't be added to the same time series.\n\n"
+                   "Open them as a new dataset instead?"));
             QPushButton* replaceBtn = box.addButton(tr("Replace"), QMessageBox::AcceptRole);
             box.addButton(QMessageBox::Cancel);
             box.setDefaultButton(replaceBtn);
@@ -631,10 +646,9 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
     // Remember the current field so an "add" keeps showing it after the (now larger)
     // time axis merges in. Captured before onFieldChosen() overwrites the state.
     core::FieldKey keep;
-    const bool keepSelection =
-        !replace && !currentVar_.empty() && levelIdx_ >= 0 &&
-        levelIdx_ < static_cast<int>(currentLevels_.size()) && timeIdx_ >= 0 &&
-        timeIdx_ < static_cast<int>(currentTimes_.size());
+    const bool keepSelection = !replace && !currentVar_.empty() && levelIdx_ >= 0 &&
+                               levelIdx_ < static_cast<int>(currentLevels_.size()) &&
+                               timeIdx_ >= 0 && timeIdx_ < static_cast<int>(currentTimes_.size());
     if (keepSelection) {
         keep.varName = currentVar_;
         keep.level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
@@ -642,9 +656,8 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
         keep.member = currentMember_;
     }
 
-    dataset_ = loadedSources_.size() == 1
-                   ? loadedSources_.front()
-                   : std::make_shared<readers::MultiDataset>(loadedSources_);
+    dataset_ = loadedSources_.size() == 1 ? loadedSources_.front()
+                                          : std::make_shared<readers::MultiDataset>(loadedSources_);
     datasetDock_->setCatalog(dataset_->catalog());
     if (replace) plot_->clearField();
 
@@ -848,11 +861,20 @@ void MainWindow::presentField() {
             return;
         }
         switch (derivedMode_) {
-            case 1: derived = std::make_shared<core::Field2D>(analysis::windSpeedField(*wind)); break;
-            case 2: derived = std::make_shared<core::Field2D>(analysis::windDirectionField(*wind)); break;
-            case 3: derived = std::make_shared<core::Field2D>(analysis::relativeVorticityField(*wind)); break;
-            case 4: derived = std::make_shared<core::Field2D>(analysis::divergenceField(*wind)); break;
-            default: break;
+            case 1:
+                derived = std::make_shared<core::Field2D>(analysis::windSpeedField(*wind));
+                break;
+            case 2:
+                derived = std::make_shared<core::Field2D>(analysis::windDirectionField(*wind));
+                break;
+            case 3:
+                derived = std::make_shared<core::Field2D>(analysis::relativeVorticityField(*wind));
+                break;
+            case 4:
+                derived = std::make_shared<core::Field2D>(analysis::divergenceField(*wind));
+                break;
+            default:
+                break;
         }
     }
 
@@ -885,7 +907,7 @@ int MainWindow::currentCoordPrecision() const {
 
 void MainWindow::displayField(std::shared_ptr<core::Field2D> field) {
     currentUnits_ = QString::fromStdString(field->meta.units);
-    plot_->setField(field);    // each view auto-ranges and updates its own legend
+    plot_->setField(field);  // each view auto-ranges and updates its own legend
     mapView_->setField(field);
     probeLabel_->setText(tr("%1 @ %2 — %3×%4")
                              .arg(QString::fromStdString(field->meta.varName))
@@ -905,11 +927,21 @@ void MainWindow::updateShowingLabel() {
     const auto& meta = currentRaw_->meta;
     QString quantity;
     switch (showingDerived_ ? derivedMode_ : 0) {  // reflect what is actually on screen
-        case 1: quantity = tr("Wind speed"); break;
-        case 2: quantity = tr("Wind direction"); break;
-        case 3: quantity = tr("Relative vorticity"); break;
-        case 4: quantity = tr("Divergence"); break;
-        case 5: quantity = tr("Potential temperature θ"); break;
+        case 1:
+            quantity = tr("Wind speed");
+            break;
+        case 2:
+            quantity = tr("Wind direction");
+            break;
+        case 3:
+            quantity = tr("Relative vorticity");
+            break;
+        case 4:
+            quantity = tr("Divergence");
+            break;
+        case 5:
+            quantity = tr("Potential temperature θ");
+            break;
         default:
             quantity = QString::fromStdString(meta.longName.empty() ? meta.varName : meta.longName);
             break;
@@ -954,7 +986,8 @@ ViewFrame* MainWindow::buildPlotFrame() {
     interval->setRange(0.0, 1e6);
     interval->setDecimals(3);
     interval->setSpecialValueText(tr("auto"));
-    interval->setToolTip(tr("Spacing between contour lines (field units); \"auto\" picks a round value."));
+    interval->setToolTip(
+        tr("Spacing between contour lines (field units); \"auto\" picks a round value."));
     connect(interval, qOverload<double>(&QDoubleSpinBox::valueChanged), plot_,
             &PlotView2D::setContourInterval);
     panel->addRow(tr("Contour interval"), interval);
@@ -1050,7 +1083,8 @@ ViewFrame* MainWindow::buildMapFrame() {
     mapInterval->setRange(0.0, 1e6);
     mapInterval->setDecimals(3);
     mapInterval->setSpecialValueText(tr("auto"));
-    mapInterval->setToolTip(tr("Spacing between contour lines (field units); \"auto\" picks a round value."));
+    mapInterval->setToolTip(
+        tr("Spacing between contour lines (field units); \"auto\" picks a round value."));
     connect(mapInterval, qOverload<double>(&QDoubleSpinBox::valueChanged), mapView_,
             &MapView::setContourInterval);
     panel->addRow(tr("Contour interval"), mapInterval);
@@ -1131,8 +1165,8 @@ void MainWindow::refreshCrossSectionTab(QPointer<CrossSectionView> view, std::st
             endJob(p);
             tab->inFlight = false;
             if (ncs.pressures.size() >= 2) {
-                tab->cache[key] = ncs;             // cache the result for this (time, member)
-                if (view) view->setSection(ncs);   // always apply (coalescing keeps these in order)
+                tab->cache[key] = ncs;            // cache the result for this (time, member)
+                if (view) view->setSection(ncs);  // always apply (coalescing keeps these in order)
             }
             if (tab->pending) {  // newer time requested while this ran → re-chase the current one
                 tab->pending = false;
@@ -1215,12 +1249,11 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
             auto tab = std::make_shared<CrossSectionTab>();
             tab->epoch = datasetEpoch_;
             tab->cache[std::make_pair(static_cast<std::int64_t>(time.epochSeconds), member)] = cs;
-            analyses_.push_back(
-                {frame,
-                 [this, v = QPointer<CrossSectionView>(view), var, path, tab]() {
-                     refreshCrossSectionTab(v, var, path, tab);
-                 },
-                 [tab]() { return tab->inFlight; }});
+            analyses_.push_back({frame,
+                                 [this, v = QPointer<CrossSectionView>(view), var, path, tab]() {
+                                     refreshCrossSectionTab(v, var, path, tab);
+                                 },
+                                 [tab]() { return tab->inFlight; }});
         });
 }
 
@@ -1268,7 +1301,8 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
     const int member = currentMember_;
     auto ds = dataset_;
     auto prog = std::make_shared<JobProgress>();
-    if (const auto* entry = ds->catalog().find(var)) prog->total = static_cast<int>(entry->times.size());
+    if (const auto* entry = ds->catalog().find(var))
+        prog->total = static_cast<int>(entry->times.size());
     beginJob(tr("Extracting time series…"), prog);
     auto tick = [prog] { prog->done.fetch_add(1, std::memory_order_relaxed); };
     submitCompute<analysis::TimeSeries>(
@@ -1347,12 +1381,13 @@ QDockWidget* MainWindow::addAnalysisDock(QWidget* frame, const QString& title) {
             QTimer::singleShot(0, this, [this, a, b]() {
                 // Empty the area, then re-dock `a` (removing its tab-siblings leaves it
                 // floating, so add it back explicitly) and split `b` beside it.
-                for (QDockWidget* d : {plotDock_, mapDock_, a, b})
-                    viewArea_->removeDockWidget(d);
+                for (QDockWidget* d : {plotDock_, mapDock_, a, b}) viewArea_->removeDockWidget(d);
                 viewArea_->addDockWidget(Qt::LeftDockWidgetArea, a);
                 viewArea_->splitDockWidget(a, b, Qt::Horizontal);
-                a->show(); a->raise();
-                b->show(); b->raise();
+                a->show();
+                a->raise();
+                b->show();
+                b->raise();
                 // Even the split — otherwise the cross-section (which carries a control
                 // panel) claims most of the width and squeezes the skew-T.
                 const int half = viewArea_->width() / 2;
@@ -1404,11 +1439,10 @@ void MainWindow::selectVariable(const QString& name) {
 void MainWindow::selectLevelHpa(double hPa) {
     for (std::size_t i = 0; i < currentLevels_.size(); ++i) {
         const auto& lvl = currentLevels_[i];
-        if (lvl.type == core::VerticalLevel::Type::PressureHPa &&
-            std::abs(lvl.value - hPa) < 0.5) {
-            if (levelCombo_) levelCombo_->setCurrentIndex(static_cast<int>(i));  // triggers onLevelChanged
-            if (datasetDock_)
-                datasetDock_->selectField(QString::fromStdString(currentVar_), lvl);
+        if (lvl.type == core::VerticalLevel::Type::PressureHPa && std::abs(lvl.value - hPa) < 0.5) {
+            if (levelCombo_)
+                levelCombo_->setCurrentIndex(static_cast<int>(i));  // triggers onLevelChanged
+            if (datasetDock_) datasetDock_->selectField(QString::fromStdString(currentVar_), lvl);
             return;
         }
     }
@@ -1567,7 +1601,8 @@ void MainWindow::loadSettings() {
     if (s.contains("windowState")) restoreState(s.value("windowState").toByteArray());
     // Restore the view-area split/tab arrangement of the base views (analysis docks
     // don't exist yet and are skipped by restoreState).
-    if (s.contains("viewAreaState")) viewArea_->restoreState(s.value("viewAreaState").toByteArray());
+    if (s.contains("viewAreaState"))
+        viewArea_->restoreState(s.value("viewAreaState").toByteArray());
 
     const QString cmap = s.value("colormap", "viridis").toString();
     for (QComboBox* c : {plotColormapCombo_, mapColormapCombo_}) {
@@ -1576,7 +1611,8 @@ void MainWindow::loadSettings() {
     }
     const int bi = s.value("basemap", 0).toInt();
     const int customIndex = static_cast<int>(TileLayer::builtinSources().size());
-    if (bi == customIndex && TileLayer::isValidUrlTemplate(s.value("customBasemapUrl").toString())) {
+    if (bi == customIndex &&
+        TileLayer::isValidUrlTemplate(s.value("customBasemapUrl").toString())) {
         // Re-apply the saved custom source directly. Going through the combo would
         // fire the handler and re-open the URL prompt on every launch.
         const QSignalBlocker block(mapBasemapCombo_);
@@ -1616,7 +1652,7 @@ void MainWindow::addRecentFile(const QString& path) {
     const QString abs = QFileInfo(path).absoluteFilePath();
     QSettings s;
     QStringList recent = s.value("recentFiles").toStringList();
-    recent.removeAll(abs);   // move-to-front (most-recent-first, deduplicated)
+    recent.removeAll(abs);  // move-to-front (most-recent-first, deduplicated)
     recent.prepend(abs);
     while (recent.size() > 10) recent.removeLast();
     s.setValue("recentFiles", recent);
@@ -1652,12 +1688,12 @@ void MainWindow::promptCustomBasemap() {
     QSettings s;
     const QString previous = s.value("customBasemapUrl").toString();
     bool ok = false;
-    const QString url = QInputDialog::getText(
-        this, tr("Custom basemap"),
-        tr("XYZ tile URL template, with {z}/{x}/{y} placeholders:\n"
-           "e.g. https://tile.example.org/{z}/{x}/{y}.png\n\n"
-           "Only use a service whose terms permit direct tile access."),
-        QLineEdit::Normal, previous, &ok);
+    const QString url =
+        QInputDialog::getText(this, tr("Custom basemap"),
+                              tr("XYZ tile URL template, with {z}/{x}/{y} placeholders:\n"
+                                 "e.g. https://tile.example.org/{z}/{x}/{y}.png\n\n"
+                                 "Only use a service whose terms permit direct tile access."),
+                              QLineEdit::Normal, previous, &ok);
     // Restore the previous selection if the user cancels or gives something
     // unusable, so the combo never claims a basemap that is not in effect.
     auto revert = [this] {
@@ -1677,10 +1713,9 @@ void MainWindow::promptCustomBasemap() {
     }
 
     const QString trimmed = url.trimmed();
-    const QString attribution =
-        QInputDialog::getText(this, tr("Custom basemap"),
-                              tr("Attribution text to display over the map (optional):"),
-                              QLineEdit::Normal, s.value("customBasemapAttribution").toString());
+    const QString attribution = QInputDialog::getText(
+        this, tr("Custom basemap"), tr("Attribution text to display over the map (optional):"),
+        QLineEdit::Normal, s.value("customBasemapAttribution").toString());
     s.setValue("customBasemapUrl", trimmed);
     s.setValue("customBasemapAttribution", attribution);
     tileLayer_->setSource(TileSource{tr("Custom"), trimmed, attribution, 19});

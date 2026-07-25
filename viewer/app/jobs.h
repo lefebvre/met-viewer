@@ -45,9 +45,8 @@ struct DecodeOutcome {
 // by shared_ptr for the duration of the job. If `context` is destroyed while the
 // job runs, the result is discarded and `cb` never runs — see the QPointer note
 // on submitCompute.
-void submitDecode(QThreadPool& pool, std::shared_ptr<readers::IDataset> dataset,
-                  core::FieldKey key, quint64 generation, QObject* context,
-                  std::function<void(DecodeOutcome)> cb);
+void submitDecode(QThreadPool& pool, std::shared_ptr<readers::IDataset> dataset, core::FieldKey key,
+                  quint64 generation, QObject* context, std::function<void(DecodeOutcome)> cb);
 
 // Run `compute` on `pool`; deliver its result to `done` on `context`'s thread via
 // a queued invocation (so `done` may touch widgets). Use for heavier multi-slab

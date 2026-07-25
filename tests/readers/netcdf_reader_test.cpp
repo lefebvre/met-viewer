@@ -39,8 +39,8 @@ TEST(CfReader, DecodesPackedShortsWithScaleOffset) {
     auto f = ds->readField(core::FieldKey{"t", hPa(500), v->times.front(), -1});
     ASSERT_EQ(f.width(), 16);
     ASSERT_EQ(f.height(), 8);
-    EXPECT_NEAR(f.at(0, 0), 259.15f, 1e-2);    // (70,0)
-    EXPECT_NEAR(f.at(15, 7), 264.95f, 1e-2);   // (56,30)
+    EXPECT_NEAR(f.at(0, 0), 259.15f, 1e-2);   // (70,0)
+    EXPECT_NEAR(f.at(15, 7), 264.95f, 1e-2);  // (56,30)
 }
 
 TEST(CfReader, LevelTermAndFillValue) {
@@ -61,7 +61,7 @@ TEST(CfReader, GridIsNorthToSouth) {
     const auto* v = ds->catalog().find("t");
     auto f = ds->readField(core::FieldKey{"t", hPa(500), v->times.front(), -1});
     const core::LatLon nw = core::indexToLatLon(f.grid, 0, 0);
-    EXPECT_DOUBLE_EQ(nw.lat, 70.0);   // row 0 is the northernmost latitude
+    EXPECT_DOUBLE_EQ(nw.lat, 70.0);  // row 0 is the northernmost latitude
     EXPECT_DOUBLE_EQ(nw.lon, 0.0);
 }
 
@@ -74,8 +74,7 @@ TEST(CfReader, NonPressureVerticalAxisIsNotCollapsed) {
     const auto* v = ds->catalog().find("t");
     ASSERT_NE(v, nullptr);
     ASSERT_EQ(v->levels.size(), 4u);
-    for (const auto& lvl : v->levels)
-        EXPECT_EQ(lvl.type, core::VerticalLevel::Type::HeightM);
+    for (const auto& lvl : v->levels) EXPECT_EQ(lvl.type, core::VerticalLevel::Type::HeightM);
     // Height sorts high-altitude first.
     EXPECT_DOUBLE_EQ(v->levels.front().value, 500.0);
     EXPECT_DOUBLE_EQ(v->levels.back().value, 10.0);

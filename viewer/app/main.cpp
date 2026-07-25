@@ -52,8 +52,8 @@ void locateBundledProjData() {
     const QString exeDir = QCoreApplication::applicationDirPath();
     const QStringList candidates = {
         exeDir + QStringLiteral("/../share/proj"),  // GNUInstallDirs / AppImage usr/bin
-        exeDir + QStringLiteral("/share/proj"),      // flat install with a share/ subdir
-        exeDir + QStringLiteral("/proj"),            // proj data staged next to the exe
+        exeDir + QStringLiteral("/share/proj"),     // flat install with a share/ subdir
+        exeDir + QStringLiteral("/proj"),           // proj data staged next to the exe
     };
     for (const QString& c : candidates) {
         if (QFileInfo::exists(c + QStringLiteral("/proj.db"))) {
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
     fmt.setVersion(3, 3);
     fmt.setProfile(QSurfaceFormat::CoreProfile);
     fmt.setRenderableType(QSurfaceFormat::OpenGL);
-    fmt.setSamples(0);   // no MSAA: multisample-FBO resolve corrupts native GL
+    fmt.setSamples(0);  // no MSAA: multisample-FBO resolve corrupts native GL
     fmt.setDepthBufferSize(0);
     fmt.setStencilBufferSize(0);
     QSurfaceFormat::setDefaultFormat(fmt);
@@ -143,8 +143,8 @@ int main(int argc, char** argv) {
         {"basemap", "Set the map basemap by name (e.g. \"Carto Dark\").", "name"},
         {"demo-at", "Sample point \"LAT,LON\" the --demo triggers use.", "lat,lon"},
         {"verbose",
-         "Diagnostic log level on stderr: trace|debug|info|warn|error|off (default warn).",
-         "level", "info"},
+         "Diagnostic log level on stderr: trace|debug|info|warn|error|off (default warn).", "level",
+         "info"},
     });
     parser.process(app);
 

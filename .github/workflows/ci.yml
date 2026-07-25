@@ -19,6 +19,41 @@ env:
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
 
 jobs:
+  # Formatting is its own job, deliberately not a step in the build: it needs no
+  # dependencies, so it reports in well under a minute instead of after Qt has
+  # compiled. `cmake --build --target format-check` is the same check for local
+  # use; this job avoids configuring CMake at all, since that would drag in the
+  # whole vcpkg toolchain just to run a formatter.
+  format:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned, and pinned to the same version cmake/Format.cmake records.
+      # clang-format's output shifts between major releases, so an unpinned
+      # binary would flag the tool's differences as if they were the author's —
+      # the usual way a format gate decays into permanent red.
+      - name: Install clang-format
+        run: pip install --disable-pip-version-check clang-format==21.1.8
+
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+          clang-format --version
+          # Same set as cmake/Format.cmake's glob; keep the two in step.
+          mapfile -t files < <(find viewer tests \
+            \( -name '*.cpp' -o -name '*.h' \) ! -name 'colormaps_data.h' | sort)
+          echo "checking ${#files[@]} files"
+          clang-format --dry-run --Werror --style=file "${files[@]}"
+
+      - name: How to fix
+        if: failure()
+        run: |
+          echo "Formatting differs from .clang-format. Fix it with either:"
+          echo "  cmake --build build/release --target format"
+          echo "  pip install clang-format==21.1.8 && clang-format -i --style=file <files>"
+
   linux:
     name: Linux (AlmaLinux 9)
     runs-on: ubuntu-latest

@@ -39,8 +39,7 @@ MultiDataset::MultiDataset(std::vector<std::shared_ptr<IDataset>> sources)
     std::set<std::string> names;
     for (const auto& s : sources_) names.insert(s->formatName());
     const std::string base = names.size() == 1 ? *names.begin() : "Mixed";
-    formatName_ =
-        sources_.size() == 1 ? base : base + " ×" + std::to_string(sources_.size());
+    formatName_ = sources_.size() == 1 ? base : base + " ×" + std::to_string(sources_.size());
 }
 
 core::Field2D MultiDataset::readField(const core::FieldKey& key) {

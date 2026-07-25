@@ -42,8 +42,8 @@ private:
 // translucent text box of `lines` placed beside the cursor and nudged to stay inside
 // `plotRect`. Colors come from `pal` so the badge follows the light/dark theme.
 // No-op when `lines` is empty or `at` is outside `plotRect`.
-void paintHoverReadout(QPainter& p, const QRectF& plotRect, QPointF at,
-                       const QStringList& lines, const QPalette& pal);
+void paintHoverReadout(QPainter& p, const QRectF& plotRect, QPointF at, const QStringList& lines,
+                       const QPalette& pal);
 
 // "273.15 K (0.00 °C)" — the native value plus the preferred display unit when one
 // exists (see core::preferredDisplayUnit). Empty `units` yields just the number.

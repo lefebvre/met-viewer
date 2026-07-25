@@ -129,7 +129,8 @@ analysis::Sounding makeSounding() {
 // another — HoverOptions is process-wide.
 class ScopedHover {
 public:
-    explicit ScopedHover(app::HoverView v) : v_(v), was_(app::HoverOptions::instance().enabled(v)) {}
+    explicit ScopedHover(app::HoverView v)
+        : v_(v), was_(app::HoverOptions::instance().enabled(v)) {}
     ~ScopedHover() { app::HoverOptions::instance().setEnabled(v_, was_); }
 
 private:
@@ -151,7 +152,7 @@ TEST(FormatValueWithUnits, ConvertsToThePreferredDisplayUnit) {
 
 TEST(CoordPrecision, ThreeDigitsOnlyForHighResolutionGrids) {
     // Synoptic-scale spacing -> 2 digits; convection-allowing (< ~5 km) -> 3.
-    EXPECT_EQ(app::coordPrecision(0.25), 2);   // ERA5 / GFS
+    EXPECT_EQ(app::coordPrecision(0.25), 2);  // ERA5 / GFS
     EXPECT_EQ(app::coordPrecision(0.1), 2);
     EXPECT_EQ(app::coordPrecision(0.027), 3);  // HRRR ~3 km
     EXPECT_EQ(app::coordPrecision(0.0), 2);    // unknown spacing
@@ -162,8 +163,9 @@ TEST(CoordPrecision, ThreeDigitsOnlyForHighResolutionGrids) {
     EXPECT_EQ(app::coordPrecision(core::gridSpacingDeg(core::GridDef{coarse})), 2);
 
     core::ProjectedGrid fine;
-    fine.crs = core::Crs("+proj=lcc +lat_1=38.5 +lat_2=38.5 +lat_0=38.5 +lon_0=-97.5 +R=6371200 "
-                         "+units=m");
+    fine.crs = core::Crs(
+        "+proj=lcc +lat_1=38.5 +lat_2=38.5 +lat_0=38.5 +lon_0=-97.5 +R=6371200 "
+        "+units=m");
     fine.dx = fine.dy = 3000.0;  // 3 km
     EXPECT_EQ(app::coordPrecision(core::gridSpacingDeg(core::GridDef{fine})), 3);
 }
@@ -314,8 +316,7 @@ TEST(HoverReadout, BadgeBoxStaysInsideThePlotRectNearEveryCorner) {
     // any one view's plot geometry.
     const QRectF plot(20, 20, 260, 160);
     const QStringList lines = {QStringLiteral("512 km  (44.80°, -95.20°)"),
-                               QStringLiteral("685.0 hPa"),
-                               QStringLiteral("273.40 K (0.25 °C)")};
+                               QStringLiteral("685.0 hPa"), QStringLiteral("273.40 K (0.25 °C)")};
 
     // This plot is deliberately narrower than the readout is wide, so it also covers
     // the case where placement alone cannot fit the box and the clip has to.

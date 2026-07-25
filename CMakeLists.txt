@@ -11,6 +11,7 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 
 include(cmake/Warnings.cmake)
 include(cmake/Sanitizers.cmake)
+include(cmake/Format.cmake)
 
 option(MET_BUILD_TESTS "Build unit tests" ON)
 

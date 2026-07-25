@@ -17,16 +17,21 @@ namespace {
 // so reordering HoverView never silently re-reads someone else's setting.
 const char* settingsKey(HoverView v) {
     switch (v) {
-        case HoverView::Plot: return "hover/plot";
-        case HoverView::Map: return "hover/map";
-        case HoverView::CrossSection: return "hover/crossSection";
-        case HoverView::TimeSeries: return "hover/timeSeries";
-        case HoverView::SkewT: return "hover/skewT";
+        case HoverView::Plot:
+            return "hover/plot";
+        case HoverView::Map:
+            return "hover/map";
+        case HoverView::CrossSection:
+            return "hover/crossSection";
+        case HoverView::TimeSeries:
+            return "hover/timeSeries";
+        case HoverView::SkewT:
+            return "hover/skewT";
     }
     return "hover/unknown";
 }
 
-constexpr int kPad = 5;       // text box inner padding
+constexpr int kPad = 5;         // text box inner padding
 constexpr int kCursorGap = 12;  // offset from the cursor to the box corner
 
 }  // namespace
@@ -51,8 +56,8 @@ void HoverOptions::setEnabled(HoverView v, bool on) {
     emit changed(v);
 }
 
-void paintHoverReadout(QPainter& p, const QRectF& plotRect, QPointF at,
-                       const QStringList& lines, const QPalette& pal) {
+void paintHoverReadout(QPainter& p, const QRectF& plotRect, QPointF at, const QStringList& lines,
+                       const QPalette& pal) {
     if (lines.isEmpty() || !plotRect.contains(at)) return;
 
     p.save();

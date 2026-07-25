@@ -84,7 +84,12 @@ TEST(Contour, CacheInvalidatesOnANewFieldAtTheSameAddress) {
     auto makeField = [](float scale) {
         auto f = std::make_unique<core::Field2D>();
         core::RegularLatLonGrid g;
-        g.lat0 = 0; g.lon0 = 0; g.dlat = 1; g.dlon = 1; g.nlon = 8; g.nlat = 8;
+        g.lat0 = 0;
+        g.lon0 = 0;
+        g.dlat = 1;
+        g.dlon = 1;
+        g.nlon = 8;
+        g.nlat = 8;
         f->grid = g;
         f->values.resize(64);
         for (std::size_t j = 0; j < 8; ++j)
@@ -111,7 +116,12 @@ TEST(Contour, CacheInvalidatesOnANewFieldAtTheSameAddress) {
 TEST(Contour, CacheReusesTheSameFieldAndInterval) {
     core::Field2D f;
     core::RegularLatLonGrid g;
-    g.lat0 = 0; g.lon0 = 0; g.dlat = 1; g.dlon = 1; g.nlon = 8; g.nlat = 8;
+    g.lat0 = 0;
+    g.lon0 = 0;
+    g.dlat = 1;
+    g.dlon = 1;
+    g.nlon = 8;
+    g.nlat = 8;
     f.grid = g;
     f.values.resize(64);
     for (std::size_t j = 0; j < 8; ++j)

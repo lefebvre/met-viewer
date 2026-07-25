@@ -22,8 +22,7 @@ TileLayer::TileLayer(QObject* parent) : QObject(parent), memory_(512) {
 
     // Persistent disk cache so tiles survive restarts and we respect servers.
     auto* disk = new QNetworkDiskCache(this);
-    const QString dir =
-        QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/tiles";
+    const QString dir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/tiles";
     QDir().mkpath(dir);
     disk->setCacheDirectory(dir);
     disk->setMaximumCacheSize(512LL * 1024 * 1024);  // 512 MB
@@ -34,6 +33,9 @@ TileLayer::TileLayer(QObject* parent) : QObject(parent), memory_(512) {
 }
 
 QList<TileSource> TileLayer::builtinSources() {
+    // clang-format off
+    // Tile URLs stay on one line each: reflowing splits them into adjacent string
+    // literals, which makes a template impossible to grep for or copy out.
     return {
         {"OpenStreetMap", "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
          "© OpenStreetMap contributors", 19},
@@ -50,6 +52,7 @@ QList<TileSource> TileLayer::builtinSources() {
         {"OpenTopoMap", "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
          "© OpenStreetMap contributors, SRTM | © OpenTopoMap", 17},
     };
+    // clang-format on
 }
 
 bool TileLayer::isValidUrlTemplate(const QString& t) {
@@ -123,8 +126,7 @@ void TileLayer::pump() {
                           .arg(QCoreApplication::applicationVersion().isEmpty()
                                    ? QStringLiteral("dev")
                                    : QCoreApplication::applicationVersion()));
-        req.setAttribute(QNetworkRequest::CacheLoadControlAttribute,
-                         QNetworkRequest::PreferCache);
+        req.setAttribute(QNetworkRequest::CacheLoadControlAttribute, QNetworkRequest::PreferCache);
         req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
                          QNetworkRequest::NoLessSafeRedirectPolicy);
         req.setRawHeader("Accept", "image/png,image/*");

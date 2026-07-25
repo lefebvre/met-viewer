@@ -18,9 +18,9 @@
 namespace met::app {
 namespace {
 constexpr int kML = 44, kMR = 58, kMT = 24, kMB = 30;  // wide right margin: wind column
-constexpr double kPtop = 100.0, kPbot = 1050.0;   // pressure axis (hPa)
-constexpr double kTmin = -40.0, kTmax = 40.0;     // temperature at the bottom (°C)
-constexpr double kSkew = 0.85;                    // px of x per px of height
+constexpr double kPtop = 100.0, kPbot = 1050.0;        // pressure axis (hPa)
+constexpr double kTmin = -40.0, kTmax = 40.0;          // temperature at the bottom (°C)
+constexpr double kSkew = 0.85;                         // px of x per px of height
 
 // Inverse Magnus: dewpoint/temperature (°C) whose saturation vapour pressure is es (hPa).
 double tempForEs(double es) {
@@ -34,7 +34,7 @@ double tempForEs(double es) {
 bool soundingAt(const analysis::Sounding& s, double press, analysis::SoundingLevel& out) {
     if (s.levels.size() < 2) return false;
     for (std::size_t i = 0; i + 1 < s.levels.size(); ++i) {
-        const analysis::SoundingLevel& a = s.levels[i];      // levels run top -> bottom
+        const analysis::SoundingLevel& a = s.levels[i];  // levels run top -> bottom
         const analysis::SoundingLevel& b = s.levels[i + 1];
         if (press < a.pressure || press > b.pressure) continue;
         const double denom = std::log(b.pressure) - std::log(a.pressure);
@@ -121,7 +121,10 @@ void SkewTView::paintEvent(QPaintEvent*) {
         for (double press = kPbot; press >= kPtop; press -= 25) {
             const double tK = theta * std::pow(press / 1000.0, 0.2854);
             const QPointF pt(xOfT(tK - 273.15, yOfP(press)), yOfP(press));
-            if (first) { path.moveTo(pt); first = false; } else path.lineTo(pt);
+            if (first) {
+                path.moveTo(pt);
+                first = false;
+            } else path.lineTo(pt);
         }
         p.drawPath(path);
     }
@@ -138,7 +141,10 @@ void SkewTView::paintEvent(QPaintEvent*) {
             const double es = w * press / (0.622 + w);
             const double td = tempForEs(es);
             const QPointF pt(xOfT(td, yOfP(press)), yOfP(press));
-            if (first) { path.moveTo(pt); first = false; } else path.lineTo(pt);
+            if (first) {
+                path.moveTo(pt);
+                first = false;
+            } else path.lineTo(pt);
         }
         p.drawPath(path);
     }
@@ -171,14 +177,17 @@ void SkewTView::paintEvent(QPaintEvent*) {
             const float k = dewpoint ? lvl.dewpointK : lvl.tempK;
             if (std::isnan(k)) continue;
             const QPointF pt(xOfT(k - 273.15f, yOfP(lvl.pressure)), yOfP(lvl.pressure));
-            if (first) { path.moveTo(pt); first = false; } else path.lineTo(pt);
+            if (first) {
+                path.moveTo(pt);
+                first = false;
+            } else path.lineTo(pt);
         }
         p.setPen(QPen(color, 2.0));
         p.drawPath(path);
     };
     if (!s_.levels.empty()) {
-        drawTrace(true, QColor(30, 140, 60));    // dewpoint (green)
-        drawTrace(false, QColor(200, 40, 40));   // temperature (red)
+        drawTrace(true, QColor(30, 140, 60));   // dewpoint (green)
+        drawTrace(false, QColor(200, 40, 40));  // temperature (red)
     }
     p.setClipping(false);
 
@@ -219,7 +228,12 @@ void SkewTView::paintEvent(QPaintEvent*) {
 
     // Legend (top-left, translucent so it stays readable over the background grid).
     if (!s_.levels.empty()) {
-        struct Item { QColor color; Qt::PenStyle style; double w; QString label; };
+        struct Item {
+            QColor color;
+            Qt::PenStyle style;
+            double w;
+            QString label;
+        };
         const std::vector<Item> items = {
             {QColor(200, 40, 40), Qt::SolidLine, 2.0, tr("Temperature")},
             {QColor(30, 140, 60), Qt::SolidLine, 2.0, tr("Dewpoint")},

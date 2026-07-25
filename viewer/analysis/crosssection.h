@@ -14,10 +14,10 @@ namespace met::analysis {
 // native model levels position each column at its own pressure; for isobaric data
 // every column in a level shares the same value.
 struct CrossSection {
-    std::vector<core::LatLon> points;             // path sample points
-    std::vector<double> distancesKm;              // cumulative distance along the path
-    std::vector<std::vector<double>> pressures;   // [level][sample], hPa
-    std::vector<std::vector<float>> values;       // [level][sample]
+    std::vector<core::LatLon> points;            // path sample points
+    std::vector<double> distancesKm;             // cumulative distance along the path
+    std::vector<std::vector<double>> pressures;  // [level][sample], hPa
+    std::vector<std::vector<float>> values;      // [level][sample]
     std::string units;
 };
 

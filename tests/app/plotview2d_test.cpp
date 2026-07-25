@@ -83,8 +83,7 @@ std::shared_ptr<core::Field2D> latLonRamp() {
     f->grid = g;
     f->values.resize(40u * 30u);
     for (std::size_t j = 0; j < 30; ++j)
-        for (std::size_t i = 0; i < 40; ++i)
-            f->values[j * 40 + i] = static_cast<float>(i);
+        for (std::size_t i = 0; i < 40; ++i) f->values[j * 40 + i] = static_cast<float>(i);
     f->meta.units = "K";
     return f;
 }
@@ -192,8 +191,8 @@ TEST(PlotView2D, ProbePositionAndValueAgreeOnAProjectedGrid) {
     for (double fx : {0.1, 0.5, 0.9}) {
         for (double fy : {0.1, 0.5, 0.9}) {
             probe.clear();
-            moveMouse(view, QPointF(rect.left() + rect.width() * fx,
-                                    rect.top() + rect.height() * fy));
+            moveMouse(view,
+                      QPointF(rect.left() + rect.width() * fx, rect.top() + rect.height() * fy));
             if (!probe.got || !probe.hasValue) continue;
             const core::GridIndex gi =
                 core::latlonToIndex(field->grid, core::LatLon{probe.lat, probe.lon});

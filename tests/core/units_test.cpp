@@ -17,13 +17,9 @@ TEST(Units, Pressure) {
     EXPECT_NEAR(*convert(500.0, "hPa", "Pa"), 50000.0, 1e-9);
 }
 
-TEST(Units, Wind) {
-    EXPECT_NEAR(*convert(1.0, "m/s", "kt"), 1.9438444924406, 1e-9);
-}
+TEST(Units, Wind) { EXPECT_NEAR(*convert(1.0, "m/s", "kt"), 1.9438444924406, 1e-9); }
 
-TEST(Units, UnknownPairReturnsNullopt) {
-    EXPECT_FALSE(convert(1.0, "K", "hPa").has_value());
-}
+TEST(Units, UnknownPairReturnsNullopt) { EXPECT_FALSE(convert(1.0, "K", "hPa").has_value()); }
 
 TEST(Units, PreferredDisplay) {
     ASSERT_TRUE(preferredDisplayUnit("K").has_value());

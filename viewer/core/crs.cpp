@@ -104,7 +104,10 @@ void Crs::forwardBatch(double* a, double* b, std::size_t n) const {
     if (!pj) {
         // Honor the documented contract: failed points become HUGE_VAL so callers
         // can detect them, rather than silently leaving the input unchanged.
-        for (std::size_t i = 0; i < n; ++i) { a[i] = HUGE_VAL; b[i] = HUGE_VAL; }
+        for (std::size_t i = 0; i < n; ++i) {
+            a[i] = HUGE_VAL;
+            b[i] = HUGE_VAL;
+        }
         return;
     }
     // proj_trans_generic transforms in place over strided arrays.
@@ -115,7 +118,10 @@ void Crs::forwardBatch(double* a, double* b, std::size_t n) const {
 void Crs::inverseBatch(double* a, double* b, std::size_t n) const {
     PJ* pj = tls().get(proj_);
     if (!pj) {
-        for (std::size_t i = 0; i < n; ++i) { a[i] = HUGE_VAL; b[i] = HUGE_VAL; }
+        for (std::size_t i = 0; i < n; ++i) {
+            a[i] = HUGE_VAL;
+            b[i] = HUGE_VAL;
+        }
         return;
     }
     proj_trans_generic(pj, PJ_INV, a, sizeof(double), n, b, sizeof(double), n, nullptr, 0, 0,

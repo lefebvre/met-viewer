@@ -33,7 +33,8 @@ void civilFromDays(std::int64_t z, int& y, unsigned& m, unsigned& d) {
 }  // namespace
 
 std::int64_t timegmUtc(int year, int mon, int day, int hour, int min, int sec) {
-    const std::int64_t days = daysFromCivil(year, static_cast<unsigned>(mon), static_cast<unsigned>(day));
+    const std::int64_t days =
+        daysFromCivil(year, static_cast<unsigned>(mon), static_cast<unsigned>(day));
     return ((days * 24 + hour) * 60 + min) * 60 + sec;
 }
 
