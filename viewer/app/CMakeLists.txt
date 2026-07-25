@@ -65,6 +65,12 @@ add_executable(met_viewer
 )
 target_link_libraries(met_viewer PRIVATE met_app)
 
+# Single source of truth for the version: project(VERSION) in the top-level
+# CMakeLists. main.cpp used to carry its own hardcoded copy, which meant the
+# version the app reports (--version, and the User-Agent the tile servers see)
+# could silently drift from the one CPack stamps on the installer.
+target_compile_definitions(met_viewer PRIVATE MET_VERSION="${PROJECT_VERSION}")
+
 # AUTORCC compiles the .qrc listed in the sources above (app icon, coastline
 # data). qt_standard_project_setup() enables AUTOMOC/AUTOUIC but NOT AUTORCC, so
 # without this the resource is silently dropped and ":/..." lookups fail.

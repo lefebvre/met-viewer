@@ -180,15 +180,29 @@ TEST(Warp, ProjectedPerformanceTripwire) {
     const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     std::printf("[warp] 1920x1080 Lambert, %d threads: %.2f ms\n", threads, ms);
     ASSERT_FALSE(img.isNull());
-    // Generous relative to the ~27 ms measured on the dev box (and to a 2-core CI
-    // runner), but tight enough to catch the PROJ batch drifting back out of the
-    // parallel region, which alone cost ~5x.
-    EXPECT_LT(ms, 400.0);
+    // See the budget note on Warp.PerformanceTripwire below: this is sized to
+    // catch an order-of-magnitude regression (per-pixel PROJ instead of a batched
+    // transform) on CI hardware, not to resolve a factor of two. It cannot police
+    // the batch drifting back out of the parallel region, because on a runner with
+    // a handful of cores that costs far less than it does on a workstation.
+    EXPECT_LT(ms, 1500.0);
 }
 
 // Performance tripwire: a 1080p warp of an ERA5-sized regular grid must stay
-// well under budget. Generous threshold to avoid flakiness while still catching
-// gross regressions (e.g. accidentally dropping the per-row mapping cache).
+// well under budget, catching gross regressions such as dropping the per-row
+// mapping cache or routing a regular grid through the projected (PROJ) path.
+//
+// On the budget: this measured 36 ms on a 32-core workstation and 208 ms on a
+// GitHub Actions runner — roughly six times slower per core. The original 150 ms
+// was set from a workstation and never actually ran in CI, because the Linux job
+// used to die during dependency builds before reaching the tests.
+//
+// So the number is deliberately loose. A shared cloud runner cannot resolve a
+// factor of two through its own scheduling noise, and pretending otherwise buys
+// a flaky test rather than a signal. What it does still catch is the
+// order-of-magnitude kind: the regressions above cost 10x or more, and would
+// blow past this by a wide margin. Tightening it requires stable hardware, not a
+// smaller constant.
 TEST(Warp, PerformanceTripwire) {
     auto f = linearField(1440, 721, 90, -180, -0.25, 0.25);
     auto cmap = Colormap::builtin("viridis");
@@ -204,5 +218,5 @@ TEST(Warp, PerformanceTripwire) {
     const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     std::printf("[warp] 1920x1080 single-threaded: %.2f ms\n", ms);
     ASSERT_FALSE(img.isNull());
-    EXPECT_LT(ms, 150.0);
+    EXPECT_LT(ms, 750.0);
 }
