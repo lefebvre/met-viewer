@@ -4,6 +4,7 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QSize>
 #include <QSlider>
 #include <QTimer>
 #include <QToolButton>
@@ -62,6 +63,9 @@ void TimeController::setIcons(IconThemer* icons) {
     play_->setAccessibleName(tr("Play/pause"));
     icons_->applyButton(prev_, "anim-prev");
     icons_->applyButton(next_, "anim-next");
+    // Play's glyph is state-dependent, so it isn't registered with applyButton and
+    // needs the same icon size set here.
+    play_->setIconSize(QSize(IconThemer::kButtonIconPx, IconThemer::kButtonIconPx));
     updatePlayIcon();
     // The play button's glyph depends on state, so refresh it on theme change
     // ourselves rather than registering a fixed token.

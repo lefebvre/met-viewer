@@ -314,6 +314,14 @@ private:
     QComboBox* plotWindCombo_ = nullptr;
     QComboBox* mapWindCombo_ = nullptr;
 
+    // Map picking modes. Time-series picking is only meaningful on a multi-step
+    // dataset, so its action is enabled/disabled with the selection; `panAct_` is
+    // what the toolbar falls back to when that happens mid-pick.
+    QAction* panAct_ = nullptr;
+    QAction* timeSeriesAct_ = nullptr;
+    // Enable/disable the time-series mode for the current variable's time axis.
+    void updateTimeSeriesAvailability();
+
     TimeController* timeController_ = nullptr;
     ThemeManager* theme_ = nullptr;
     IconThemer* icons_ = nullptr;

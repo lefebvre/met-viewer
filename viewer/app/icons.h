@@ -30,14 +30,33 @@ public:
 
     [[nodiscard]] ThemeManager* theme() const { return theme_; }
 
-    // A multi-size icon for `token` in the currently active variant.
-    [[nodiscard]] QIcon iconFor(const QString& token) const;
+    // Icon-only controls carry their meaning entirely in the glyph, so they are
+    // drawn at twice the style default (16 for a plain button, 24 in a toolbar)
+    // rather than at text-label scale.
+    static constexpr int kButtonIconPx = 32;
+    static constexpr int kToolbarIconPx = 48;
+    static constexpr int kToggleIconPx = 40;
+
+    // Which glyph directory to draw from, relative to the active UI scheme.
+    enum class Variant {
+        Contrast,  // opposite of the UI scheme: the normal, legible glyph
+        Match,     // same as the UI scheme: recedes into the panel, reading as "off"
+    };
+
+    // A multi-size icon for `token` in the currently active theme.
+    [[nodiscard]] QIcon iconFor(const QString& token, Variant variant = Variant::Contrast) const;
 
     // Set the icon now and re-apply it on every future theme change. Each helper
     // preserves the widget's accessible text (tooltip / accessibleName) so
     // icon-only controls stay identifiable to menus, accessibility, and tests.
     void applyAction(QAction* action, const QString& token);
     void applyButton(QAbstractButton* button, const QString& token);
+    // Turns `button` into an indicator-less checkable icon: the glyph alone shows
+    // the state, contrasting with the UI scheme when checked and matching it (so
+    // it recedes) when unchecked. The button stays a checkbox to accessibility,
+    // which is what still reports the on/off state — the visual cue is contrast
+    // only. Call after any initial setChecked() so the first glyph matches.
+    void applyToggleButton(QAbstractButton* button, const QString& token);
     void applyComboItem(QComboBox* combo, int index, const QString& token);
     // Sets the widget's windowIcon (e.g. a QDockWidget, shown on its tab).
     void applyWindowIcon(QWidget* widget, const QString& token);
@@ -76,6 +95,7 @@ private:
 
     QVector<ActionReg> actions_;
     QVector<ButtonReg> buttons_;
+    QVector<ButtonReg> toggles_;
     QVector<ComboReg> comboItems_;
     QVector<LabelReg> labels_;
     QVector<WindowIconReg> windowIcons_;

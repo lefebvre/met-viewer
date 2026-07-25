@@ -18,6 +18,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
+#include <QHBoxLayout>
 #include <QHash>
 #include <QInputDialog>
 #include <QLabel>
@@ -42,6 +43,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QSettings>
+#include <QSize>
 #include <QSpinBox>
 #include <QToolBar>
 
@@ -166,6 +168,19 @@ QComboBox* addColormapControls(ControlPanel* panel, View* view, IconThemer* icon
                          maxS->setValue(hi);
                      });
     return cmap;
+}
+
+// Group icon-only toggles into one horizontal strip instead of giving each its
+// own form row: the glyphs are square and self-describing, so a row reads as a
+// single set of options and keeps the panel short.
+QWidget* toggleStrip(QWidget* parent, std::initializer_list<QWidget*> toggles) {
+    auto* strip = new QWidget(parent);
+    auto* row = new QHBoxLayout(strip);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(4);
+    for (auto* t : toggles) row->addWidget(t);
+    row->addStretch(1);  // left-align; the strip itself spans the panel width
+    return strip;
 }
 
 }  // namespace
@@ -301,6 +316,7 @@ void MainWindow::buildUi() {
     auto* toolbar = addToolBar(tr("Tools"));
     toolbar->setObjectName("toolsToolbar");
     toolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);  // icons + tooltips
+    toolbar->setIconSize(QSize(IconThemer::kToolbarIconPx, IconThemer::kToolbarIconPx));
     auto* modeGroup = new QActionGroup(this);
     modeGroup->setExclusive(true);
     struct ModeDef {
@@ -346,8 +362,13 @@ void MainWindow::buildUi() {
             if (hint.isEmpty()) statusBar()->clearMessage();
             else statusBar()->showMessage(hint);
         });
-        if (m.mode == MapView::Mode::Pan) act->setChecked(true);
+        if (m.mode == MapView::Mode::Pan) {
+            act->setChecked(true);
+            panAct_ = act;
+        }
+        if (m.mode == MapView::Mode::TimeSeries) timeSeriesAct_ = act;
     }
+    updateTimeSeriesAvailability();  // nothing loaded yet: starts disabled
 
     // View menu: the dock panels and the toolbar can be hidden via their close
     // button, so offer a way to bring them back. toggleViewAction() is a checkable
@@ -689,7 +710,9 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
         key.validTime = v.times.empty() ? core::TimePoint{} : v.times.front();
         key.member = v.members.empty() ? -1 : v.members.front();
         onFieldChosen(key);
+        return;
     }
+    updateTimeSeriesAvailability();  // nothing selectable in the new set
 }
 
 void MainWindow::onFieldChosen(const core::FieldKey& key) {
@@ -726,8 +749,25 @@ void MainWindow::onFieldChosen(const core::FieldKey& key) {
         QSignalBlocker block(timeController_);
         timeController_->setSteps(times, timeIdx_);
     }
+    updateTimeSeriesAvailability();
 
     decodeCurrent();
+}
+
+void MainWindow::updateTimeSeriesAvailability() {
+    if (!timeSeriesAct_) return;
+    // A series needs at least two steps to plot. Rather than let the pick silently
+    // do nothing on a single-step dataset, disable the mode and say why in the
+    // tooltip; drop back to Pan if the user is already in it.
+    const bool ok = dataset_ && currentTimes_.size() >= 2;
+    timeSeriesAct_->setEnabled(ok);
+    timeSeriesAct_->setToolTip(ok ? tr("Time series")
+                                  : tr("Time series — needs a dataset with multiple time steps"));
+    if (!ok && timeSeriesAct_->isChecked() && panAct_) {
+        panAct_->setChecked(true);
+        mapView_->setInteractionMode(MapView::Mode::Pan);
+        statusBar()->clearMessage();
+    }
 }
 
 void MainWindow::onLevelChanged(int index) {
@@ -978,9 +1018,9 @@ ViewFrame* MainWindow::buildPlotFrame() {
     plotContourCheck_ = new QCheckBox(panel);
     plotContourCheck_->setToolTip(tr("Overlay contour lines on the 2D plot."));
     plotContourCheck_->setAccessibleName(tr("Contours"));
-    icons_->applyButton(plotContourCheck_, "render-contours");
+    icons_->applyToggleButton(plotContourCheck_, "render-contours");
     connect(plotContourCheck_, &QCheckBox::toggled, plot_, &PlotView2D::setContoursEnabled);
-    panel->addRow(plotContourCheck_);
+    panel->addRow(toggleStrip(panel, {plotContourCheck_}));
 
     auto* interval = new QDoubleSpinBox(panel);
     interval->setRange(0.0, 1e6);
@@ -1060,24 +1100,22 @@ ViewFrame* MainWindow::buildMapFrame() {
     mapGraticuleCheck_->setChecked(true);
     mapGraticuleCheck_->setToolTip(tr("Graticule"));
     mapGraticuleCheck_->setAccessibleName(tr("Graticule"));
-    icons_->applyButton(mapGraticuleCheck_, "overlay-graticule");
+    icons_->applyToggleButton(mapGraticuleCheck_, "overlay-graticule");
     connect(mapGraticuleCheck_, &QCheckBox::toggled, mapView_, &MapView::setGraticuleVisible);
-    panel->addRow(mapGraticuleCheck_);
 
     mapCoastlineCheck_ = new QCheckBox(panel);
     mapCoastlineCheck_->setChecked(true);
     mapCoastlineCheck_->setToolTip(tr("Coastlines"));
     mapCoastlineCheck_->setAccessibleName(tr("Coastlines"));
-    icons_->applyButton(mapCoastlineCheck_, "overlay-coast");
+    icons_->applyToggleButton(mapCoastlineCheck_, "overlay-coast");
     connect(mapCoastlineCheck_, &QCheckBox::toggled, mapView_, &MapView::setCoastlinesVisible);
-    panel->addRow(mapCoastlineCheck_);
 
     mapContourCheck_ = new QCheckBox(panel);
     mapContourCheck_->setToolTip(tr("Overlay contour lines on the map."));
     mapContourCheck_->setAccessibleName(tr("Contours"));
-    icons_->applyButton(mapContourCheck_, "render-contours");
+    icons_->applyToggleButton(mapContourCheck_, "render-contours");
     connect(mapContourCheck_, &QCheckBox::toggled, mapView_, &MapView::setContoursEnabled);
-    panel->addRow(mapContourCheck_);
+    panel->addRow(toggleStrip(panel, {mapGraticuleCheck_, mapCoastlineCheck_, mapContourCheck_}));
 
     auto* mapInterval = new QDoubleSpinBox(panel);
     mapInterval->setRange(0.0, 1e6);
@@ -1295,7 +1333,11 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
 }
 
 void MainWindow::onTimeSeriesRequested(core::LatLon point) {
-    if (currentVar_.empty() || !dataset_ || currentLevels_.empty()) return;
+    if (currentVar_.empty() || !dataset_ || currentLevels_.empty()) {
+        // A pick that lands before any field is loaded used to do nothing at all.
+        statusBar()->showMessage(tr("Open a file and choose a field first"), 4000);
+        return;
+    }
     const std::string var = currentVar_;
     const core::VerticalLevel level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
     const int member = currentMember_;
@@ -1315,6 +1357,13 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
             endJob(prog);
             if (ts.values.size() < 2) {
                 statusBar()->showMessage(tr("Time series needs multiple time steps"), 4000);
+                return;
+            }
+            // Every step sampled outside the grid: an all-NaN series draws as an
+            // empty box, which reads as a broken tool. Say so instead.
+            if (std::none_of(ts.values.begin(), ts.values.end(),
+                             [](double v) { return !std::isnan(v); })) {
+                statusBar()->showMessage(tr("No data at that point (outside the grid)"), 4000);
                 return;
             }
             auto* view = new TimeSeriesView;
