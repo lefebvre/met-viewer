@@ -59,9 +59,9 @@ TEST(Colormap, DivergingCenterIsNeutral) {
     // A diverging map is light/neutral in the middle and saturated at the ends.
     Colormap cm = Colormap::builtin("RdBu (diverging)");
     cm.setRange(-1.0, 1.0);
-    const Rgba mid = cm.map(0.0);   // center -> near white
-    const Rgba neg = cm.map(-1.0);  // one end
-    const Rgba pos = cm.map(1.0);   // other end
+    const Rgba mid = cm.map(0.0);           // center -> near white
+    const Rgba neg = cm.map(-1.0);          // one end
+    const Rgba pos = cm.map(1.0);           // other end
     EXPECT_GT(mid.r + mid.g + mid.b, 600);  // bright center
     // Ends are distinct hues (blue vs red family).
     EXPECT_NE(neg.b > neg.r, pos.b > pos.r);

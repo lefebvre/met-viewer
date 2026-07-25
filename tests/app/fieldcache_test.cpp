@@ -51,9 +51,9 @@ TEST(FieldCache, EvictsLeastRecentlyUsed) {
     // Touch A so B is the least-recently-used.
     EXPECT_NE(cache.get(key("t", 500, 0)), nullptr);
     cache.put(key("t", 500, 2), makeField(100, 3.0f));  // C -> evicts B
-    EXPECT_TRUE(cache.contains(key("t", 500, 0)));   // A kept (recently used)
-    EXPECT_FALSE(cache.contains(key("t", 500, 1)));  // B evicted
-    EXPECT_TRUE(cache.contains(key("t", 500, 2)));   // C present
+    EXPECT_TRUE(cache.contains(key("t", 500, 0)));      // A kept (recently used)
+    EXPECT_FALSE(cache.contains(key("t", 500, 1)));     // B evicted
+    EXPECT_TRUE(cache.contains(key("t", 500, 2)));      // C present
     EXPECT_EQ(cache.count(), 2u);
 }
 

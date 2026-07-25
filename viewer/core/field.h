@@ -11,10 +11,10 @@ namespace met::core {
 
 // Identifies one 2D slab within a dataset.
 struct FieldKey {
-    std::string varName;                  // canonical short name ("t", "u", "gh")
-    VerticalLevel level;                  // vertical position
-    TimePoint validTime;                  // valid time (UTC)
-    int member = -1;                      // ensemble member, -1 = deterministic
+    std::string varName;  // canonical short name ("t", "u", "gh")
+    VerticalLevel level;  // vertical position
+    TimePoint validTime;  // valid time (UTC)
+    int member = -1;      // ensemble member, -1 = deterministic
 
     friend bool operator==(const FieldKey& a, const FieldKey& b) {
         return a.varName == b.varName && a.level == b.level && a.validTime == b.validTime &&

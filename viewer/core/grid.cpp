@@ -196,7 +196,10 @@ BBox gridBBox(const GridDef& g) {
                     double gap = 0.0, gapStart = lons.front();
                     for (std::size_t i = 1; i < lons.size(); ++i) {
                         const double d = lons[i] - lons[i - 1];
-                        if (d > gap) { gap = d; gapStart = lons[i - 1]; }
+                        if (d > gap) {
+                            gap = d;
+                            gapStart = lons[i - 1];
+                        }
                     }
                     const double wrapGap = (lons.front() + 360.0) - lons.back();
                     if (wrapGap >= gap) {

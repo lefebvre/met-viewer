@@ -26,15 +26,17 @@ double finiteMean(const std::vector<double>& v) {
     double sum = 0.0;
     int n = 0;
     for (double x : v)
-        if (std::isfinite(x)) { sum += x; ++n; }
+        if (std::isfinite(x)) {
+            sum += x;
+            ++n;
+        }
     return n ? sum / n : std::numeric_limits<double>::infinity();
 }
 
 }  // namespace
 
-CrossSection extractCrossSection(
-    const std::vector<std::pair<double, core::Field2D>>& levelStack,
-    const std::vector<core::LatLon>& vertices, int nSamples) {
+CrossSection extractCrossSection(const std::vector<std::pair<double, core::Field2D>>& levelStack,
+                                 const std::vector<core::LatLon>& vertices, int nSamples) {
     CrossSection cs;
     if (levelStack.empty() || vertices.size() < 2 || nSamples < 2) return cs;
 
@@ -49,8 +51,9 @@ CrossSection extractCrossSection(
     // mapping assumes a sorted axis.
     std::vector<std::size_t> order(levelStack.size());
     std::iota(order.begin(), order.end(), std::size_t{0});
-    std::sort(order.begin(), order.end(),
-              [&](std::size_t a, std::size_t b) { return levelStack[a].first < levelStack[b].first; });
+    std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+        return levelStack[a].first < levelStack[b].first;
+    });
 
     // Project the path to grid indices once — every level shares the same grid.
     std::vector<core::GridIndex> pathIdx;
@@ -103,7 +106,10 @@ CrossSection extractCrossSectionModelLevels(
     for (const auto& [levelKey, vfield] : levelStack) {
         const core::Field2D* pfield = nullptr;
         for (const auto& [k, f] : presStack)
-            if (std::abs(k - levelKey) < 1e-6) { pfield = &f; break; }
+            if (std::abs(k - levelKey) < 1e-6) {
+                pfield = &f;
+                break;
+            }
         if (!pfield) continue;  // no pressure at this level
 
         Row row;
@@ -112,9 +118,8 @@ CrossSection extractCrossSectionModelLevels(
         for (const core::GridIndex& gi : pathIdx) {
             row.values.push_back(sampleAt(vfield, gi));
             const float rawP = sampleAt(*pfield, gi);
-            row.pressures.push_back(std::isnan(rawP)
-                                        ? std::numeric_limits<double>::quiet_NaN()
-                                        : core::toHpa(rawP, pfield->meta.units));
+            row.pressures.push_back(std::isnan(rawP) ? std::numeric_limits<double>::quiet_NaN()
+                                                     : core::toHpa(rawP, pfield->meta.units));
         }
         row.meanP = finiteMean(row.pressures);
         rows.push_back(std::move(row));

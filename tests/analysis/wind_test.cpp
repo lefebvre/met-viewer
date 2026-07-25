@@ -48,9 +48,15 @@ TEST(Wind, BarbQuantization) {
 namespace {
 met::analysis::WindField makeUniformWind(float u, float v) {
     core::RegularLatLonGrid g;
-    g.lat0 = 40; g.lon0 = 0; g.dlat = -1; g.dlon = 1; g.nlon = 4; g.nlat = 4;
+    g.lat0 = 40;
+    g.lon0 = 0;
+    g.dlat = -1;
+    g.dlon = 1;
+    g.nlon = 4;
+    g.nlat = 4;
     met::analysis::WindField w;
-    w.u.grid = g; w.v.grid = g;
+    w.u.grid = g;
+    w.v.grid = g;
     w.u.values.assign(16, u);
     w.v.values.assign(16, v);
     return w;
@@ -78,13 +84,17 @@ TEST(Wind, ProjectedGridRotationAngleIsSmallNearCentralMeridian) {
     // meridian the grid north aligns with true north, so the angle is ~0; off
     // the meridian it is non-zero.
     core::ProjectedGrid pg;
-    pg.crs = core::Crs("+proj=lcc +lat_1=40 +lat_2=40 +lat_0=40 +lon_0=260 +R=6371229 +units=m +no_defs");
-    pg.nx = 20; pg.ny = 12; pg.dx = 50000; pg.dy = 50000;
+    pg.crs = core::Crs(
+        "+proj=lcc +lat_1=40 +lat_2=40 +lat_0=40 +lon_0=260 +R=6371229 +units=m +no_defs");
+    pg.nx = 20;
+    pg.ny = 12;
+    pg.dx = 50000;
+    pg.dy = 50000;
     (void)pg.crs.forward(260.0, 30.0, pg.x0, pg.y0);  // anchor on the meridian
     core::GridDef g = pg;
 
-    const double angCenter = analysis::gridNorthAngle(g, 0, 5);   // near lon_0
-    const double angEast = analysis::gridNorthAngle(g, 19, 5);    // well east
+    const double angCenter = analysis::gridNorthAngle(g, 0, 5);  // near lon_0
+    const double angEast = analysis::gridNorthAngle(g, 19, 5);   // well east
     EXPECT_NEAR(angCenter, 0.0, 0.02);
     EXPECT_GT(std::abs(angEast), 0.05);
 }

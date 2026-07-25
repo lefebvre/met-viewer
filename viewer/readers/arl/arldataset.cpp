@@ -139,8 +139,9 @@ GridDef buildGrid(const std::array<double, 12>& g, int nx, int ny) {
         proj = fmt::format("+proj=merc +lat_ts={} +lon_0={} +R={} +units=m +no_defs", ref_lat,
                            ref_lon, R);
     } else {
-        proj = fmt::format("+proj=lcc +lat_1={} +lat_2={} +lat_0={} +lon_0={} +R={} +units=m +no_defs",
-                           tang_lat, tang_lat, tang_lat, ref_lon, R);
+        proj =
+            fmt::format("+proj=lcc +lat_1={} +lat_2={} +lat_0={} +lon_0={} +R={} +units=m +no_defs",
+                        tang_lat, tang_lat, tang_lat, ref_lon, R);
     }
 
     ProjectedGrid p;

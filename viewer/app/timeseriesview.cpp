@@ -32,9 +32,18 @@ TimeSeriesView::Layout TimeSeriesView::layout() const {
 
     double lo = std::numeric_limits<double>::infinity(), hi = -lo;
     for (float v : ts_.values)
-        if (!std::isnan(v)) { lo = std::min(lo, double(v)); hi = std::max(hi, double(v)); }
-    if (!std::isfinite(lo)) { lo = 0; hi = 1; }
-    if (lo == hi) { lo -= 1; hi += 1; }
+        if (!std::isnan(v)) {
+            lo = std::min(lo, double(v));
+            hi = std::max(hi, double(v));
+        }
+    if (!std::isfinite(lo)) {
+        lo = 0;
+        hi = 1;
+    }
+    if (lo == hi) {
+        lo -= 1;
+        hi += 1;
+    }
     const double pad = 0.08 * (hi - lo);
     lay.lo = lo - pad;
     lay.hi = hi + pad;
@@ -88,7 +97,8 @@ void TimeSeriesView::paintEvent(QPaintEvent*) {
     for (int i = 0; i < n; i += stride) {
         const double x = xOf(i);
         p.drawLine(QPointF(x, r.bottom()), QPointF(x, r.bottom() + 4));
-        const QString label = QString::fromStdString(met::core::formatTime(ts_.times[static_cast<std::size_t>(i)]));
+        const QString label =
+            QString::fromStdString(met::core::formatTime(ts_.times[static_cast<std::size_t>(i)]));
         p.save();
         p.translate(x, r.bottom() + 6);
         p.rotate(30);

@@ -14,8 +14,7 @@ namespace {
 constexpr int kGlyphSizes[] = {16, 24, 32, 48};
 }  // namespace
 
-IconThemer::IconThemer(ThemeManager* theme, QObject* parent)
-    : QObject(parent), theme_(theme) {
+IconThemer::IconThemer(ThemeManager* theme, QObject* parent) : QObject(parent), theme_(theme) {
     connect(theme_, &ThemeManager::effectiveSchemeChanged, this, &IconThemer::refresh);
 }
 

@@ -55,10 +55,11 @@ TEST(GribReader, HonorsMissingValuesWithoutBitmap) {
     // must decode to NaN rather than leaking the 9999 sentinel as real data,
     // and genuine values must stay finite. Regression: missing was honored only
     // when a bitmap was present.
-    auto ds = readers::openDataset(std::filesystem::path(MET_FIXTURE_DIR) / "regular_ll_missing.grib2");
+    auto ds =
+        readers::openDataset(std::filesystem::path(MET_FIXTURE_DIR) / "regular_ll_missing.grib2");
     const auto& v = ds->catalog().variables().front();
-    core::Field2D f =
-        ds->readField(core::FieldKey{v.varName, v.levels.front(), v.times.front(), v.members.front()});
+    core::Field2D f = ds->readField(
+        core::FieldKey{v.varName, v.levels.front(), v.times.front(), v.members.front()});
     ASSERT_EQ(f.width(), 4);
     ASSERT_EQ(f.height(), 4);
     // Scan-order missing indices 5, 6, 10 -> (col,row) (1,1), (2,1), (2,2).

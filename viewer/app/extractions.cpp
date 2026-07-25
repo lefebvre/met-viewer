@@ -74,9 +74,10 @@ bool isModelLevel(const core::VerticalLevel& lvl) {
 
 }  // namespace
 
-std::vector<std::pair<double, core::Field2D>> readLevelStack(
-    readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member,
-    const std::function<void()>& onRead) {
+std::vector<std::pair<double, core::Field2D>> readLevelStack(readers::IDataset& ds,
+                                                             const std::string& varName,
+                                                             core::TimePoint time, int member,
+                                                             const std::function<void()>& onRead) {
     return readLevels(ds, varName, time, member, onRead, isPressure,
                       [](const core::VerticalLevel& lvl) { return lvl.value; });
 }

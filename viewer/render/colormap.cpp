@@ -16,8 +16,7 @@ Colormap Colormap::builtin(const std::string& name) {
     if (name == "cividis") return Colormap("cividis", detail::k_cividis, detail::kColormapSize);
     if (name == "RdBu (diverging)")
         return Colormap("RdBu (diverging)", detail::k_RdBu_r, detail::kColormapSize);
-    if (name == "coolwarm")
-        return Colormap("coolwarm", detail::k_coolwarm, detail::kColormapSize);
+    if (name == "coolwarm") return Colormap("coolwarm", detail::k_coolwarm, detail::kColormapSize);
     return Colormap("viridis", detail::k_viridis, detail::kColormapSize);
 }
 

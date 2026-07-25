@@ -9,9 +9,9 @@ std::uint64_t makeCellKey(int levelIdx, int timeIdx, int member) {
     // allows ~1M levels/times/members — far beyond any real dataset. Values are
     // masked, so a pathological count would alias to a wrong (existing) record
     // rather than corrupt memory; not guarded because it cannot occur in practice.
-    const std::uint64_t l = static_cast<std::uint64_t>(levelIdx) & 0xFFFFF;         // 20 bits
-    const std::uint64_t t = static_cast<std::uint64_t>(timeIdx) & 0xFFFFF;          // 20 bits
-    const std::uint64_t m = static_cast<std::uint64_t>(member + 1) & 0xFFFFF;       // 20 bits
+    const std::uint64_t l = static_cast<std::uint64_t>(levelIdx) & 0xFFFFF;    // 20 bits
+    const std::uint64_t t = static_cast<std::uint64_t>(timeIdx) & 0xFFFFF;     // 20 bits
+    const std::uint64_t m = static_cast<std::uint64_t>(member + 1) & 0xFFFFF;  // 20 bits
     return (l << 40) | (t << 20) | m;
 }
 
@@ -99,8 +99,9 @@ void DatasetCatalog::finalize() {
         // Build the sparse record map against sorted axis indices.
         entry.records.clear();
         for (const auto& r : raws) {
-            const int li = static_cast<int>(
-                std::find(entry.levels.begin(), entry.levels.end(), r.level) - entry.levels.begin());
+            const int li =
+                static_cast<int>(std::find(entry.levels.begin(), entry.levels.end(), r.level) -
+                                 entry.levels.begin());
             const int ti = static_cast<int>(
                 std::find(entry.times.begin(), entry.times.end(), r.time) - entry.times.begin());
             // Last writer wins for a duplicate (var, level, time, member) cell.

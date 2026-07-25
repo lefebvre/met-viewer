@@ -15,9 +15,7 @@
 using namespace met;
 
 namespace {
-std::filesystem::path fixture(const char* n) {
-    return std::filesystem::path(MET_FIXTURE_DIR) / n;
-}
+std::filesystem::path fixture(const char* n) { return std::filesystem::path(MET_FIXTURE_DIR) / n; }
 }  // namespace
 
 TEST(Arl, ProbeAcceptsAlphaGridId) {
@@ -61,7 +59,7 @@ TEST(Arl, UnpacksKnownAnalyticField) {
     ASSERT_EQ(f.height(), 10);
     // value(i,j) = 273 + 0.5*i + 0.3*j, recovered within the 1-byte packing
     // precision (scale 2^(7-3) = 16 -> ~0.03).
-    EXPECT_NEAR(f.at(0, 0), 273.0f, 1e-3);   // == VAR1, stored exactly
+    EXPECT_NEAR(f.at(0, 0), 273.0f, 1e-3);  // == VAR1, stored exactly
     EXPECT_NEAR(f.at(19, 0), 282.5f, 0.05f);
     EXPECT_NEAR(f.at(0, 9), 275.7f, 0.05f);
     EXPECT_NEAR(f.at(19, 9), 285.2f, 0.05f);

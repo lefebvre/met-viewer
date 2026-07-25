@@ -114,8 +114,8 @@ std::optional<core::Field2D> asTemperatureKelvin(const core::Field2D& f) {
     const bool nameTemp = sn == "air_temperature" || sn == "temperature" || vn == "t" ||
                           vn == "temp" || vn == "t2m" || vn == "2t" || vn == "tmp";
     const bool kelvin = u == "K" || ul == "kelvin" || ul == "degk" || ul == "deg_k";
-    const bool celsius = ul == "c" || ul == "degc" || ul == "celsius" ||
-                         ul == "degrees_celsius" || ul == "deg_c" || u == "°C";
+    const bool celsius = ul == "c" || ul == "degc" || ul == "celsius" || ul == "degrees_celsius" ||
+                         ul == "deg_c" || u == "°C";
 
     // Reject clearly non-temperature fields (geopotential, wind, RH, pressure…).
     if (!nameTemp && !kelvin && !celsius) return std::nullopt;

@@ -21,8 +21,8 @@ class TempFile {
 public:
     explicit TempFile(const std::string& contents) {
         path_ = std::filesystem::temp_directory_path() /
-                ("met_detect_test_" + std::to_string(::getpid()) + "_" +
-                 std::to_string(counter()) + ".bin");
+                ("met_detect_test_" + std::to_string(::getpid()) + "_" + std::to_string(counter()) +
+                 ".bin");
         std::ofstream out(path_, std::ios::binary);
         out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
     }
@@ -56,8 +56,9 @@ TEST(Detect, RecognizesEachFixtureFormat) {
 // (real files carry WMO preambles), so it must not claim a text file that merely
 // mentions GRIB — the edition byte is what makes the match trustworthy.
 TEST(Detect, TextMentioningGribIsNotClaimed) {
-    TempFile f("This document describes the GRIB edition 2 format in prose.\n"
-               "Nothing here is actually a GRIB message.\n");
+    TempFile f(
+        "This document describes the GRIB edition 2 format in prose.\n"
+        "Nothing here is actually a GRIB message.\n");
     EXPECT_THROW((void)readers::openDataset(f.path()), readers::ReadError);
 }
 

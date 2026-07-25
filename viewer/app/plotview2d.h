@@ -32,7 +32,7 @@ public:
     void setContoursEnabled(bool enabled);
     void setContourInterval(double interval);  // 0 = auto
 
-    void setAutoRange(bool on);         // re-fit the colormap to the field
+    void setAutoRange(bool on);           // re-fit the colormap to the field
     void setRange(double lo, double hi);  // manual colormap range
 
     // Wind barbs overlay (mode 1 = barbs; 0/2 hide barbs in this view).
@@ -65,9 +65,9 @@ protected:
     void leaveEvent(QEvent* event) override;
 
 private:
-    QRectF plotRect() const;         // drawing area inside axis margins
-    void rebuildImage();             // regenerate cached raster from field+cmap
-    void autorange();                // fit cmap range to field
+    QRectF plotRect() const;  // drawing area inside axis margins
+    void rebuildImage();      // regenerate cached raster from field+cmap
+    void autorange();         // fit cmap range to field
 
     // The view draws the field in flat grid-index space (see indexToScreen), so
     // index<->screen is the primitive and geography is derived from it via the
@@ -90,8 +90,8 @@ private:
 
     std::shared_ptr<core::Field2D> field_;
     render::Colormap cmap_ = render::Colormap::builtin("viridis");
-    QImage image_;                   // cached north-up raster
-    core::BBox bbox_{};              // geographic extent of field_
+    QImage image_;       // cached north-up raster
+    core::BBox bbox_{};  // geographic extent of field_
     bool contoursEnabled_ = false;
     double contourInterval_ = 0.0;   // 0 = auto
     render::ContourCache contours_;  // isolines survive the per-mouse-move repaints

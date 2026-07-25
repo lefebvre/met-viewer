@@ -247,8 +247,7 @@ void PlotView2D::drawGraticule(QPainter& p, const QRectF& r) const {
         if (poly.size() > 1) {
             p.drawPolyline(poly);
             const QPointF label = poly.first();
-            p.drawText(label + QPointF(3, -3),
-                       QString::number(at, 'g', 4) + QStringLiteral("°"));
+            p.drawText(label + QPointF(3, -3), QString::number(at, 'g', 4) + QStringLiteral("°"));
         }
     };
 
@@ -280,8 +279,7 @@ void PlotView2D::paintEvent(QPaintEvent* /*event*/) {
     // Contour overlay.
     if (contoursEnabled_) {
         double interval = contourInterval_;
-        if (!(interval > 0.0))
-            interval = render::niceContourInterval(cmap_.min(), cmap_.max(), 10);
+        if (!(interval > 0.0)) interval = render::niceContourInterval(cmap_.min(), cmap_.max(), 10);
         if (interval > 0.0) {
             p.setRenderHint(QPainter::Antialiasing, true);
             QPen pen(QColor(20, 20, 20, 180));
@@ -311,8 +309,8 @@ void PlotView2D::paintEvent(QPaintEvent* /*event*/) {
                 const analysis::UV uv = analysis::sampleWind(*wind_, bcol, brow);
                 if (std::isnan(uv.u) || std::isnan(uv.v)) continue;
                 const double speed = std::hypot(uv.u, uv.v);
-                const render::WindBarb barb = render::makeWindBarb(
-                    {sx, sy}, QPointF(-uv.u, uv.v), analysis::toKnots(speed), 20.0);
+                const render::WindBarb barb = render::makeWindBarb({sx, sy}, QPointF(-uv.u, uv.v),
+                                                                   analysis::toKnots(speed), 20.0);
                 if (barb.calm) continue;
                 for (const QLineF& l : barb.lines) p.drawLine(l);
                 for (const QPolygonF& tri : barb.pennants) p.drawPolygon(tri);
@@ -324,8 +322,7 @@ void PlotView2D::paintEvent(QPaintEvent* /*event*/) {
     // Axis ticks (slightly smaller font; guard against pixel-sized fonts whose
     // pointSizeF() is -1).
     QFont f = p.font();
-    if (f.pointSizeF() > 2.0)
-        f.setPointSizeF(f.pointSizeF() - 1.0);
+    if (f.pointSizeF() > 2.0) f.setPointSizeF(f.pointSizeF() - 1.0);
     p.setFont(f);
 
     // Axis labels. On a regular lat/lon grid, index space is linear in lat/lon, so
@@ -423,8 +420,7 @@ void PlotView2D::mouseMoveEvent(QMouseEvent* event) {
 QStringList PlotView2D::hoverTextAt(core::LatLon ll, float value, double col, double row) const {
     const int prec = field_ ? coordPrecision(core::gridSpacingDeg(field_->grid)) : 2;
     QStringList lines;
-    if (std::isnan(ll.lat) || std::isnan(ll.lon))
-        lines << tr("(position unavailable)");
+    if (std::isnan(ll.lat) || std::isnan(ll.lon)) lines << tr("(position unavailable)");
     else
         lines << QStringLiteral("lat %1°  lon %2°")
                      .arg(ll.lat, 0, 'f', prec)

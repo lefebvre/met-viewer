@@ -19,8 +19,12 @@ namespace {
 // Linear field value = 273 + 0.1*lon - 0.2*lat over a regular grid.
 core::Field2D linearField(int nlon, int nlat, double lat0, double lon0, double dlat, double dlon) {
     core::RegularLatLonGrid g;
-    g.lat0 = lat0; g.lon0 = lon0; g.dlat = dlat; g.dlon = dlon;
-    g.nlon = nlon; g.nlat = nlat;
+    g.lat0 = lat0;
+    g.lon0 = lon0;
+    g.dlat = dlat;
+    g.dlon = dlon;
+    g.nlon = nlon;
+    g.nlat = nlat;
     core::Field2D f;
     f.grid = g;
     f.values.resize(static_cast<std::size_t>(nlon) * static_cast<std::size_t>(nlat));
@@ -43,7 +47,7 @@ MercatorViewport viewportFor(const core::BBox& b, int width, int height, int zoo
 }  // namespace
 
 TEST(Warp, ValueMatchesColormapAtPixel) {
-    auto f = linearField(16, 8, 70, 0, -2, 2);       // 0..30 lon, 56..70 lat
+    auto f = linearField(16, 8, 70, 0, -2, 2);  // 0..30 lon, 56..70 lat
     auto cmap = Colormap::builtin("viridis");
     cmap.setRange(259.0, 265.0);
 
@@ -74,7 +78,8 @@ TEST(Warp, OutsideDomainIsTransparent) {
     cmap.setRange(259.0, 265.0);
     // Zoom far in so the small field covers only part of a large viewport.
     const core::BBox b = core::gridBBox(f.grid);
-    MercatorViewport view = viewportFor(b, 600, 600, tile::zoomForLonSpan(b.maxLon - b.minLon, 100));
+    MercatorViewport view =
+        viewportFor(b, 600, 600, tile::zoomForLonSpan(b.maxLon - b.minLon, 100));
     QImage img = warpToMercator(f, cmap, view, 1.0, 1);
     // Corners of a viewport larger than the field must be transparent.
     EXPECT_EQ(qAlpha(img.pixel(0, 0)), 0);
@@ -109,8 +114,12 @@ TEST(Warp, ProjectedGridProducesField) {
     // A small Lambert grid with a linear field; warping to Mercator must produce
     // a non-empty region whose sampled colors match the field.
     core::ProjectedGrid pg;
-    pg.crs = core::Crs("+proj=lcc +lat_1=40 +lat_2=40 +lat_0=40 +lon_0=260 +R=6371229 +units=m +no_defs");
-    pg.nx = 16; pg.ny = 12; pg.dx = 50000; pg.dy = 50000;
+    pg.crs = core::Crs(
+        "+proj=lcc +lat_1=40 +lat_2=40 +lat_0=40 +lon_0=260 +R=6371229 +units=m +no_defs");
+    pg.nx = 16;
+    pg.ny = 12;
+    pg.dx = 50000;
+    pg.dy = 50000;
     (void)pg.crs.forward(250.0, 30.0, pg.x0, pg.y0);
 
     core::Field2D f;
@@ -163,8 +172,7 @@ TEST(Warp, ProjectedPerformanceTripwire) {
     MercatorViewport view =
         viewportFor(b, 1920, 1080, tile::zoomForLonSpan(b.maxLon - b.minLon, 1920));
 
-    const int threads =
-        std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 1);
+    const int threads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 1);
     (void)warpToMercator(f, cmap, view, 1.0, threads);  // warm up
     const auto t0 = std::chrono::steady_clock::now();
     QImage img = warpToMercator(f, cmap, view, 1.0, threads);

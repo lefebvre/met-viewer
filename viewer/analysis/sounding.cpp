@@ -11,16 +11,16 @@
 namespace met::analysis {
 namespace {
 // The field in `stack` whose pressure matches `pressure`, or null if none.
-const core::Field2D* fieldAtPressure(
-    const std::vector<std::pair<double, core::Field2D>>& stack, double pressure) {
+const core::Field2D* fieldAtPressure(const std::vector<std::pair<double, core::Field2D>>& stack,
+                                     double pressure) {
     for (const auto& [p, f] : stack)
         if (std::abs(p - pressure) < 1e-6) return &f;
     return nullptr;
 }
 
 // The field in `stack` whose key (model-level index) matches `key`, or null.
-const core::Field2D* fieldAtKey(
-    const std::vector<std::pair<double, core::Field2D>>& stack, double key) {
+const core::Field2D* fieldAtKey(const std::vector<std::pair<double, core::Field2D>>& stack,
+                                double key) {
     for (const auto& [k, f] : stack)
         if (std::abs(k - key) < 1e-6) return &f;
     return nullptr;
@@ -82,17 +82,18 @@ Sounding extractSounding(const std::vector<std::pair<double, core::Field2D>>& tS
         s.levels.push_back(std::move(lvl));
     }
     // Sort top (low pressure) to bottom (high pressure).
-    std::sort(s.levels.begin(), s.levels.end(),
-              [](const SoundingLevel& a, const SoundingLevel& b) { return a.pressure < b.pressure; });
+    std::sort(s.levels.begin(), s.levels.end(), [](const SoundingLevel& a, const SoundingLevel& b) {
+        return a.pressure < b.pressure;
+    });
     return s;
 }
 
-Sounding extractSoundingModelLevels(
-    const std::vector<std::pair<double, core::Field2D>>& tStack,
-    const std::vector<std::pair<double, core::Field2D>>& presStack,
-    const std::vector<std::pair<double, core::Field2D>>& qStack, core::LatLon point,
-    const std::vector<std::pair<double, core::Field2D>>& uStack,
-    const std::vector<std::pair<double, core::Field2D>>& vStack) {
+Sounding extractSoundingModelLevels(const std::vector<std::pair<double, core::Field2D>>& tStack,
+                                    const std::vector<std::pair<double, core::Field2D>>& presStack,
+                                    const std::vector<std::pair<double, core::Field2D>>& qStack,
+                                    core::LatLon point,
+                                    const std::vector<std::pair<double, core::Field2D>>& uStack,
+                                    const std::vector<std::pair<double, core::Field2D>>& vStack) {
     Sounding s;
     s.point = point;
     for (const auto& [levelKey, tfield] : tStack) {
@@ -117,8 +118,9 @@ Sounding extractSoundingModelLevels(
         }
         s.levels.push_back(lvl);
     }
-    std::sort(s.levels.begin(), s.levels.end(),
-              [](const SoundingLevel& a, const SoundingLevel& b) { return a.pressure < b.pressure; });
+    std::sort(s.levels.begin(), s.levels.end(), [](const SoundingLevel& a, const SoundingLevel& b) {
+        return a.pressure < b.pressure;
+    });
     return s;
 }
 

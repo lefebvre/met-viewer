@@ -39,9 +39,7 @@ std::optional<WindPair> findWindPair(const std::vector<std::string>& varNames) {
     std::vector<std::string> lc;
     lc.reserve(varNames.size());
     for (const auto& n : varNames) lc.push_back(lower(n));
-    auto has = [&](const std::string& n) {
-        return std::find(lc.begin(), lc.end(), n) != lc.end();
-    };
+    auto has = [&](const std::string& n) { return std::find(lc.begin(), lc.end(), n) != lc.end(); };
     for (const auto& p : pairTable()) {
         if (has(p.uName) && has(p.vName)) {
             // Return the original-cased names.
@@ -168,9 +166,8 @@ void rotateToEarthRelative(WindField& w) {
     for (int lj = 0; lj < lh; ++lj) {
         for (int li = 0; li < lw; ++li) {
             const double t = gridNorthAngle(w.u.grid, li * spanX, lj * spanY);
-            const std::size_t n =
-                static_cast<std::size_t>(lj) * static_cast<std::size_t>(lw) +
-                static_cast<std::size_t>(li);
+            const std::size_t n = static_cast<std::size_t>(lj) * static_cast<std::size_t>(lw) +
+                                  static_cast<std::size_t>(li);
             cosT[n] = std::cos(t);
             sinT[n] = std::sin(t);
         }
@@ -196,7 +193,10 @@ void rotateToEarthRelative(WindField& w) {
             double c = cosT[n00] * w00 + cosT[n10] * w10 + cosT[n01] * w01 + cosT[n11] * w11;
             double s = sinT[n00] * w00 + sinT[n10] * w10 + sinT[n01] * w01 + sinT[n11] * w11;
             const double len = std::hypot(c, s);
-            if (len > 1e-12) { c /= len; s /= len; }  // renormalize to a rotation
+            if (len > 1e-12) {
+                c /= len;
+                s /= len;
+            }  // renormalize to a rotation
             rotateCell(i, j, c, s);
         }
     }

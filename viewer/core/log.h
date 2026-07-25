@@ -41,10 +41,9 @@ void logf(LogLevel level, fmt::format_string<Args...> format, Args&&... args) {
 
 // The level check happens inside logf() too, but repeating it here keeps the
 // argument evaluation (string building, what() calls) out of a disabled path.
-#define MET_LOG(level, ...)                             \
-    do {                                                \
-        if ((level) >= ::met::core::logLevel())         \
-            ::met::core::logf((level), __VA_ARGS__);    \
+#define MET_LOG(level, ...)                                                              \
+    do {                                                                                 \
+        if ((level) >= ::met::core::logLevel()) ::met::core::logf((level), __VA_ARGS__); \
     } while (false)
 
 #define MET_LOG_TRACE(...) MET_LOG(::met::core::LogLevel::Trace, __VA_ARGS__)

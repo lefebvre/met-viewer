@@ -42,8 +42,8 @@ private:
         QRectF rect;
         bool valid = false;
 
-        [[nodiscard]] double yOfP(double press) const;   // pressure (hPa) -> y
-        [[nodiscard]] double pOfY(double y) const;       // y -> pressure (hPa)
+        [[nodiscard]] double yOfP(double press) const;         // pressure (hPa) -> y
+        [[nodiscard]] double pOfY(double y) const;             // y -> pressure (hPa)
         [[nodiscard]] double xOfT(double tC, double y) const;  // temp (°C) at row y -> x
         [[nodiscard]] double tOfX(double x, double y) const;   // x at row y -> temp (°C)
     };

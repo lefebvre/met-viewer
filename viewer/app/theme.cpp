@@ -16,9 +16,12 @@ constexpr auto kSettingsKey = "theme/mode";
 
 QString modeToString(ThemeManager::Mode m) {
     switch (m) {
-        case ThemeManager::Mode::Light: return QStringLiteral("light");
-        case ThemeManager::Mode::Dark: return QStringLiteral("dark");
-        case ThemeManager::Mode::System: break;
+        case ThemeManager::Mode::Light:
+            return QStringLiteral("light");
+        case ThemeManager::Mode::Dark:
+            return QStringLiteral("dark");
+        case ThemeManager::Mode::System:
+            break;
     }
     return QStringLiteral("system");
 }
@@ -29,9 +32,7 @@ ThemeManager::Mode modeFromString(const QString& s) {
     return ThemeManager::Mode::System;
 }
 
-bool systemIsDark() {
-    return QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark;
-}
+bool systemIsDark() { return QApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark; }
 
 }  // namespace
 
@@ -67,9 +68,15 @@ void ThemeManager::apply() {
     QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
     QStyleHints* hints = QApplication::styleHints();
     switch (mode_) {
-        case Mode::Dark: hints->setColorScheme(Qt::ColorScheme::Dark); break;
-        case Mode::Light: hints->setColorScheme(Qt::ColorScheme::Light); break;
-        case Mode::System: hints->setColorScheme(Qt::ColorScheme::Unknown); break;
+        case Mode::Dark:
+            hints->setColorScheme(Qt::ColorScheme::Dark);
+            break;
+        case Mode::Light:
+            hints->setColorScheme(Qt::ColorScheme::Light);
+            break;
+        case Mode::System:
+            hints->setColorScheme(Qt::ColorScheme::Unknown);
+            break;
     }
     const bool dark = isDark();
     if (dark != lastDark_) {

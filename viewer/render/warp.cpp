@@ -41,7 +41,10 @@ float sampleBilinear(const core::Field2D& f, double x, double y, bool wrapX = fa
         if (!std::isnan(v)) {
             acc += weight * v;
             wsum += weight;
-            if (weight > bestW) { bestW = weight; best = v; }
+            if (weight > bestW) {
+                bestW = weight;
+                best = v;
+            }
         }
     };
     add(v00, (1 - fx) * (1 - fy));
@@ -58,8 +61,9 @@ inline void writePixel(QRgb* scan, int px, float v, const Colormap& cmap, double
     const Rgba c = cmap.map(v);
     if (c.a == 0) return;
     const double a = (c.a / 255.0) * alphaScale;
-    scan[px] = qRgba(static_cast<int>(std::lround(c.r * a)), static_cast<int>(std::lround(c.g * a)),
-                     static_cast<int>(std::lround(c.b * a)), static_cast<int>(std::lround(a * 255.0)));
+    scan[px] =
+        qRgba(static_cast<int>(std::lround(c.r * a)), static_cast<int>(std::lround(c.g * a)),
+              static_cast<int>(std::lround(c.b * a)), static_cast<int>(std::lround(a * 255.0)));
 }
 
 // Run `body(y0, y1)` over the row range, single- or multi-threaded.
@@ -118,10 +122,10 @@ void warpRegular(const core::Field2D& field, const RegularLatLonGrid& g, const C
             auto* scan = reinterpret_cast<QRgb*>(img.scanLine(py));
             for (int px = 0; px < view.width; ++px) {
                 if (!okCol[static_cast<std::size_t>(px)]) continue;
-                writePixel(scan, px,
-                           sampleBilinear(field, fxCol[static_cast<std::size_t>(px)], fy,
-                                          g.globalWrapLon),
-                           cmap, alphaScale);
+                writePixel(
+                    scan, px,
+                    sampleBilinear(field, fxCol[static_cast<std::size_t>(px)], fy, g.globalWrapLon),
+                    cmap, alphaScale);
             }
         }
     });
@@ -141,10 +145,12 @@ void warpProjected(const core::Field2D& field, const ProjectedGrid& g, const Col
     // Longitude depends only on column, latitude only on row: precompute both.
     std::vector<double> lonCol(static_cast<std::size_t>(view.width));
     for (int px = 0; px < view.width; ++px)
-        lonCol[static_cast<std::size_t>(px)] = tile::worldXToLon(view.topLeftWorldX + px + 0.5, view.zoom);
+        lonCol[static_cast<std::size_t>(px)] =
+            tile::worldXToLon(view.topLeftWorldX + px + 0.5, view.zoom);
     std::vector<double> latRow(static_cast<std::size_t>(view.height));
     for (int py = 0; py < view.height; ++py)
-        latRow[static_cast<std::size_t>(py)] = tile::worldYToLat(view.topLeftWorldY + py + 0.5, view.zoom);
+        latRow[static_cast<std::size_t>(py)] =
+            tile::worldYToLat(view.topLeftWorldY + py + 0.5, view.zoom);
 
     const std::size_t stride = static_cast<std::size_t>(view.width);
     runRows(view.height, threads, [&](int y0, int y1) {
@@ -190,8 +196,7 @@ QImage warpToMercator(const core::Field2D& field, const Colormap& cmap,
             using T = std::decay_t<decltype(grid)>;
             if constexpr (std::is_same_v<T, RegularLatLonGrid>)
                 warpRegular(field, grid, cmap, view, alphaScale, threads, img);
-            else
-                warpProjected(field, grid, cmap, view, alphaScale, threads, img);
+            else warpProjected(field, grid, cmap, view, alphaScale, threads, img);
         },
         field.grid);
     return img;

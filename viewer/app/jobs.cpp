@@ -53,11 +53,10 @@ private:
 
 }  // namespace
 
-void submitDecode(QThreadPool& pool, std::shared_ptr<readers::IDataset> dataset,
-                  core::FieldKey key, quint64 generation, QObject* context,
-                  std::function<void(DecodeOutcome)> cb) {
-    pool.start(new DecodeRunnable(std::move(dataset), std::move(key), generation, context,
-                                  std::move(cb)));
+void submitDecode(QThreadPool& pool, std::shared_ptr<readers::IDataset> dataset, core::FieldKey key,
+                  quint64 generation, QObject* context, std::function<void(DecodeOutcome)> cb) {
+    pool.start(
+        new DecodeRunnable(std::move(dataset), std::move(key), generation, context, std::move(cb)));
 }
 
 }  // namespace met::app

@@ -30,7 +30,7 @@ TEST(TimeController, SetStepsClampsCurrentIndex) {
 
 TEST(TimeController, PlaybackGatedByStepCount) {
     TimeController tc;
-    tc.setSteps({"only"}, 0);      // a single step
+    tc.setSteps({"only"}, 0);  // a single step
     tc.play();
     EXPECT_FALSE(tc.isPlaying());  // playback needs >= 2 steps
 
@@ -38,7 +38,7 @@ TEST(TimeController, PlaybackGatedByStepCount) {
     tc.play();
     EXPECT_TRUE(tc.isPlaying());
 
-    tc.setSteps({"x"}, 0);         // reducing to one step stops playback
+    tc.setSteps({"x"}, 0);  // reducing to one step stops playback
     EXPECT_FALSE(tc.isPlaying());
 }
 

@@ -75,7 +75,12 @@ TEST(Sample, NanAwareFallback) {
 // on ERA5 just west of the prime meridian, while the map drew data there.
 TEST(Sample, GlobalWrapSeamIsInterpolatedNotDropped) {
     RegularLatLonGrid g;
-    g.lat0 = 90; g.lon0 = 0; g.dlat = -1; g.dlon = 1; g.nlon = 360; g.nlat = 181;
+    g.lat0 = 90;
+    g.lon0 = 0;
+    g.dlat = -1;
+    g.dlon = 1;
+    g.nlon = 360;
+    g.nlat = 181;
     g.globalWrapLon = true;
     Field2D f;
     f.grid = g;
@@ -89,14 +94,19 @@ TEST(Sample, GlobalWrapSeamIsInterpolatedNotDropped) {
 
 TEST(Sample, GlobalWrapSeamBlendsTheTwoEdgeColumns) {
     RegularLatLonGrid g;
-    g.lat0 = 0; g.lon0 = 0; g.dlat = -1; g.dlon = 90; g.nlon = 4; g.nlat = 2;
+    g.lat0 = 0;
+    g.lon0 = 0;
+    g.dlat = -1;
+    g.dlon = 90;
+    g.nlon = 4;
+    g.nlat = 2;
     g.globalWrapLon = true;
     Field2D f;
     f.grid = g;
     // Columns 0..3 hold 0, 10, 20, 30; halfway past the last column is (30+0)/2.
     f.values = {0, 10, 20, 30, 0, 10, 20, 30};
     EXPECT_FLOAT_EQ(sampleBilinearIndex(f, 3.5, 0.0), 15.0f);
-    EXPECT_FLOAT_EQ(sampleBilinearIndex(f, 4.0, 0.0), 0.0f);  // full wrap to column 0
+    EXPECT_FLOAT_EQ(sampleBilinearIndex(f, 4.0, 0.0), 0.0f);    // full wrap to column 0
     EXPECT_TRUE(std::isnan(sampleBilinearIndex(f, 4.1, 0.0)));  // past the wrap
 }
 

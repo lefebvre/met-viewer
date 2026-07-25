@@ -50,8 +50,8 @@ namespace extractions {
 // `modelLevels` selects native model levels over pressure levels.
 void readWindStacks(readers::IDataset& ds, core::TimePoint time, int member,
                     std::vector<std::pair<double, core::Field2D>>& uStack,
-                    std::vector<std::pair<double, core::Field2D>>& vStack,
-                    bool modelLevels = false, const std::function<void()>& onRead = {});
+                    std::vector<std::pair<double, core::Field2D>>& vStack, bool modelLevels = false,
+                    const std::function<void()>& onRead = {});
 
 // Extract a sounding / cross-section, taking the pressure-level path when the
 // variable has isobaric levels and otherwise the native model-level path (whose

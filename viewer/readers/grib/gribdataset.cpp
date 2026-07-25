@@ -106,9 +106,10 @@ TimePoint mapTime(codes_handle* h) {
     // validityDate = YYYYMMDD, validityTime = HHMM (may be < 100 for HH only).
     const long date = getLong(h, "validityDate");  // YYYYMMDD
     const long time = getLong(h, "validityTime");  // HHMM
-    const std::int64_t secs = core::timegmUtc(
-        static_cast<int>(date / 10000), static_cast<int>((date / 100) % 100),
-        static_cast<int>(date % 100), static_cast<int>(time / 100), static_cast<int>(time % 100), 0);
+    const std::int64_t secs =
+        core::timegmUtc(static_cast<int>(date / 10000), static_cast<int>((date / 100) % 100),
+                        static_cast<int>(date % 100), static_cast<int>(time / 100),
+                        static_cast<int>(time % 100), 0);
     return TimePoint{secs};
 }
 
@@ -154,10 +155,14 @@ double earthRadius(codes_handle* h) {
     }
     const long shape = hasKey(h, "shapeOfTheEarth") ? getLong(h, "shapeOfTheEarth") : 6;
     switch (shape) {
-        case 0: return 6367470.0;
-        case 6: return 6371229.0;
-        case 8: return 6371200.0;
-        default: return 6371229.0;
+        case 0:
+            return 6367470.0;
+        case 6:
+            return 6371229.0;
+        case 8:
+            return 6371200.0;
+        default:
+            return 6371229.0;
     }
 }
 
@@ -179,13 +184,14 @@ GridDef buildProjected(codes_handle* h, const std::string& gridType) {
         const double latin2 = getDouble(h, "Latin2InDegrees");
         const double lad = getDouble(h, "LaDInDegrees");
         const double lov = getDouble(h, "LoVInDegrees");
-        proj = fmt::format("+proj=lcc +lat_1={} +lat_2={} +lat_0={} +lon_0={} +R={} +units=m +no_defs",
-                           latin1, latin2, lad, lov, R);
+        proj =
+            fmt::format("+proj=lcc +lat_1={} +lat_2={} +lat_0={} +lon_0={} +R={} +units=m +no_defs",
+                        latin1, latin2, lad, lov, R);
     } else {  // polar_stereographic
         const double lad = hasKey(h, "LaDInDegrees") ? getDouble(h, "LaDInDegrees") : 60.0;
         const double lov = getDouble(h, "orientationOfTheGridInDegrees");
-        const bool south = hasKey(h, "projectionCentreFlag") &&
-                           (getLong(h, "projectionCentreFlag") & 0x80) != 0;
+        const bool south =
+            hasKey(h, "projectionCentreFlag") && (getLong(h, "projectionCentreFlag") & 0x80) != 0;
         proj = fmt::format("+proj=stere +lat_0={} +lat_ts={} +lon_0={} +R={} +units=m +no_defs",
                            south ? -90.0 : 90.0, lad, lov, R);
     }
@@ -213,8 +219,7 @@ std::vector<float> readValues(codes_handle* h, std::size_t expected) {
     std::size_t len = 0;
     if (codes_get_size(h, "values", &len) != CODES_SUCCESS)
         throw ReadError("GRIB: cannot size values");
-    if (len != expected)
-        throw ReadError("GRIB: value count does not match grid dimensions");
+    if (len != expected) throw ReadError("GRIB: value count does not match grid dimensions");
 
     std::vector<double> raw(len);
     if (codes_get_double_array(h, "values", raw.data(), &len) != CODES_SUCCESS)
@@ -291,10 +296,8 @@ Field2D GribDataset::readField(const FieldKey& key) {
 
     Field2D field;
     const std::string gridType = getString(raw, "gridType");
-    if (gridType == "regular_ll")
-        field.grid = buildRegularLatLon(raw);
-    else
-        field.grid = buildProjected(raw, gridType);
+    if (gridType == "regular_ll") field.grid = buildRegularLatLon(raw);
+    else field.grid = buildProjected(raw, gridType);
     field.values = readValues(raw, core::gridCount(field.grid));
 
     field.meta.varName = key.varName;

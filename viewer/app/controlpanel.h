@@ -17,9 +17,9 @@ public:
     explicit ControlPanel(const QString& title, QWidget* parent = nullptr);
 
     void addRow(const QString& label, QWidget* w);  // labeled form row
-    void addRow(QWidget* label, QWidget* w);         // labeled form row, icon/widget label
-    void addRow(QWidget* w);                         // full-width row, no label
-    void addBlock(QWidget* w);                        // full-width widget below the form (e.g. a colorbar)
+    void addRow(QWidget* label, QWidget* w);        // labeled form row, icon/widget label
+    void addRow(QWidget* w);                        // full-width row, no label
+    void addBlock(QWidget* w);  // full-width widget below the form (e.g. a colorbar)
 
     void setCollapsed(bool collapsed);
     [[nodiscard]] bool isCollapsed() const;

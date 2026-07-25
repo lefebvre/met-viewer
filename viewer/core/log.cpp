@@ -13,12 +13,18 @@ std::atomic<LogLevel> g_level{LogLevel::Warn};
 
 const char* levelTag(LogLevel level) {
     switch (level) {
-        case LogLevel::Trace: return "trace";
-        case LogLevel::Debug: return "debug";
-        case LogLevel::Info: return "info";
-        case LogLevel::Warn: return "warn";
-        case LogLevel::Error: return "error";
-        case LogLevel::Off: break;
+        case LogLevel::Trace:
+            return "trace";
+        case LogLevel::Debug:
+            return "debug";
+        case LogLevel::Info:
+            return "info";
+        case LogLevel::Warn:
+            return "warn";
+        case LogLevel::Error:
+            return "error";
+        case LogLevel::Off:
+            break;
     }
     return "off";
 }

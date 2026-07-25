@@ -79,8 +79,14 @@ void CrossSectionView::applyAutoRange() {
     double lo = std::numeric_limits<double>::infinity(), hi = -lo;
     for (const auto& row : cs_.values)
         for (float x : row)
-            if (!std::isnan(x)) { lo = std::min(lo, double(x)); hi = std::max(hi, double(x)); }
-    if (!std::isfinite(lo) || lo == hi) { lo = 0; hi = 1; }
+            if (!std::isnan(x)) {
+                lo = std::min(lo, double(x));
+                hi = std::max(hi, double(x));
+            }
+    if (!std::isfinite(lo) || lo == hi) {
+        lo = 0;
+        hi = 1;
+    }
     min_ = lo;
     max_ = hi;
     cmap_.setRange(lo, hi);
@@ -122,8 +128,8 @@ CrossSectionView::Layout CrossSectionView::layout() const {
     lay.rect = QRectF(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
     if (cs_.pressures.size() < 2 || cs_.distancesKm.size() < 2) return lay;
     pressureExtent(cs_, lay.pTop, lay.pBot);
-    lay.valid = lay.pTop > 0.0 && lay.pBot > lay.pTop && lay.rect.width() >= 2 &&
-                lay.rect.height() >= 2;
+    lay.valid =
+        lay.pTop > 0.0 && lay.pBot > lay.pTop && lay.rect.width() >= 2 && lay.rect.height() >= 2;
     return lay;
 }
 
@@ -228,8 +234,8 @@ void CrossSectionView::mouseMoveEvent(QMouseEvent* event) {
     const double press = std::exp(logTop + (pos.y() - r.top()) / r.height() * (logBot - logTop));
 
     // Distance and position at this column, interpolated between path samples.
-    const std::size_t s0 = static_cast<std::size_t>(
-        std::clamp(std::floor(sampleF), 0.0, static_cast<double>(ns - 1)));
+    const std::size_t s0 =
+        static_cast<std::size_t>(std::clamp(std::floor(sampleF), 0.0, static_cast<double>(ns - 1)));
     const std::size_t s1 = std::min(s0 + 1, static_cast<std::size_t>(ns - 1));
     const double f = sampleF - static_cast<double>(s0);
     const double km = std::lerp(cs_.distancesKm[s0], cs_.distancesKm[s1], f);
