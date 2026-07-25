@@ -1,6 +1,10 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -39,19 +43,20 @@
     {
       "name": "dist-linux",
       "displayName": "Distribution (Linux, dynamic Qt)",
-      "description": "Release build with dynamically-linked Qt for redistributable installers (AppImage). Used by CI; triggers a full from-source dep rebuild the first time.",
+      "description": "Release build with dynamically-linked Qt for redistributable installers (AppImage). Used by CI. VCPKG_HOST_TRIPLET is pinned to the target triplet: left at its default (x64-linux) vcpkg treats this as a cross-build and produces a second, separate dependency set for host tools -- 42 extra packages including a whole second Qt carrying its default features (icu, sql-psql, testlib, dbus, xcb-sm). Nothing ships from that set, it doubled CI time, and its xcb-sm default needs libSM, which the CI container does not install, so it failed the build outright.",
       "inherits": "base",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "VCPKG_TARGET_TRIPLET": "x64-linux-dynamic",
         "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
-        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlay-ports"
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlay-ports",
+        "VCPKG_HOST_TRIPLET": "x64-linux-dynamic"
       }
     },
     {
       "name": "asan-dist",
       "displayName": "Sanitizers on the distribution dependency set (CI)",
-      "description": "What CI runs the sanitizer suite with. Inherits dist-linux so it shares that preset's triplet, and therefore the dependency set already built for it — configuring with the plain `asan` preset instead would fall back to the default x64-linux triplet and rebuild every dependency, static Qt included. RelWithDebInfo rather than Debug because the dist triplets are VCPKG_BUILD_TYPE=release and ship no debug dependency variants.",
+      "description": "What CI runs the sanitizer suite with. Inherits dist-linux so it shares that preset's triplet, and therefore the dependency set already built for it \u2014 configuring with the plain `asan` preset instead would fall back to the default x64-linux triplet and rebuild every dependency, static Qt included. RelWithDebInfo rather than Debug because the dist triplets are VCPKG_BUILD_TYPE=release and ship no debug dependency variants.",
       "inherits": "dist-linux",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
@@ -73,19 +78,73 @@
     }
   ],
   "buildPresets": [
-    { "name": "debug", "configurePreset": "debug" },
-    { "name": "release", "configurePreset": "release" },
-    { "name": "asan", "configurePreset": "asan" },
-    { "name": "asan-dist", "configurePreset": "asan-dist" },
-    { "name": "dist-linux", "configurePreset": "dist-linux" },
-    { "name": "dist-windows", "configurePreset": "dist-windows" }
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan"
+    },
+    {
+      "name": "asan-dist",
+      "configurePreset": "asan-dist"
+    },
+    {
+      "name": "dist-linux",
+      "configurePreset": "dist-linux"
+    },
+    {
+      "name": "dist-windows",
+      "configurePreset": "dist-windows"
+    }
   ],
   "testPresets": [
-    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
-    { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
-    { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } },
-    { "name": "asan-dist", "configurePreset": "asan-dist", "output": { "outputOnFailure": true } },
-    { "name": "dist-linux", "configurePreset": "dist-linux", "output": { "outputOnFailure": true } },
-    { "name": "dist-windows", "configurePreset": "dist-windows", "output": { "outputOnFailure": true } }
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan-dist",
+      "configurePreset": "asan-dist",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "dist-linux",
+      "configurePreset": "dist-linux",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "dist-windows",
+      "configurePreset": "dist-windows",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

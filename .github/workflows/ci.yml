@@ -13,16 +13,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # Cache vcpkg-built dependencies (Qt, PROJ, etc.) so Qt is compiled from source
-  # once and restored on later runs.
-  #
-  # This was `x-gha`, which vcpkg has since removed — it did not fail, it printed
-  # a warning and carried on with no cache at all, so every run rebuilt all 80
-  # packages and re-downloaded every tarball. `files` plus actions/cache (see the
-  # restore/save steps in each job) is the supported replacement.
-  VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/vcpkg_bincache,readwrite"
-
 jobs:
   # Formatting is its own job, deliberately not a step in the build: it needs no
   # dependencies, so it reports in well under a minute instead of after Qt has
@@ -107,6 +97,17 @@ jobs:
       # through vcpkg would otherwise cache nothing despite most packages having
       # built and downloaded fine, and the next run would repeat all of it —
       # which is exactly how one upstream hiccup became a hard block.
+      # VCPKG_BINARY_SOURCES is set here at runtime rather than in the workflow's
+      # env: block, because `${{ github.workspace }}` is expanded on the *host*.
+      # In a container job that yields /home/runner/work/... while the workspace
+      # is mounted at /__w/... inside — so vcpkg wrote its binaries somewhere
+      # actions/cache never looked, and the cache silently stayed empty.
+      # $GITHUB_WORKSPACE is evaluated inside the job, so it is correct on both.
+      - name: Point vcpkg at the workspace binary cache
+        shell: bash
+        run: |
+          echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/vcpkg_bincache,readwrite" >> "$GITHUB_ENV"
+
       - name: Restore vcpkg binary cache
         uses: actions/cache/restore@v4
         id: bincache
@@ -205,7 +206,10 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0
           # halt_on_error so a UB report fails the job instead of scrolling past.
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: ctest --preset asan-dist
+        # Same two timing tripwires excluded as on Windows, for a stronger reason:
+        # a sanitized build is several times slower by design, so a wall-clock
+        # budget measures the instrumentation rather than the code.
+        run: ctest --preset asan-dist -E 'Warp\.(Projected)?PerformanceTripwire'
 
   windows:
     name: Windows
@@ -220,6 +224,13 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
 
       # See the Linux job for why restore/save are split.
+      # Same runtime-set binary cache path as the Linux job; see there for why it
+      # is not set from `${{ github.workspace }}` in the workflow env: block.
+      - name: Point vcpkg at the workspace binary cache
+        shell: bash
+        run: |
+          echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/vcpkg_bincache,readwrite" >> "$GITHUB_ENV"
+
       - name: Restore vcpkg binary cache
         uses: actions/cache/restore@v4
         id: bincache
@@ -259,8 +270,43 @@ jobs:
 
       - name: Build
         run: cmake --build --preset dist-windows
-      # The build compiles the test targets too, so MSVC-specific errors in test
-      # code are still caught here. Executing the suite is left to the Linux job:
-      # the logic is platform-identical, and running the Qt test exes on Windows
-      # needs runtime Qt/plugin deployment that isn't worth maintaining in CI.
-      # Windows CI's job is to prove the code builds on MSVC and packages.
+
+      # The suite runs here, not just on Linux. The behaviour is *not*
+      # platform-identical: `long` is 32 bit on MSVC and 64 on Linux, which is
+      # why the ARL reader carries int64 record offsets and the GRIB reader a
+      # seek64 helper — a Linux-only suite cannot regress-test either.
+      #
+      # x64-windows is a dynamic triplet, so the test executables need the Qt and
+      # dependency DLLs on PATH, and met_app_tests needs a platform plugin for the
+      # QT_QPA_PLATFORM=minimal it sets. Both are pointed at the vcpkg tree
+      # explicitly rather than relying on vcpkg's applocal DLL copying, and both
+      # must be set before ctest, since gtest_discover_tests(PRE_TEST) runs the
+      # executables to enumerate the tests.
+      - name: Test
+        run: |
+          $bin = "$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows\bin"
+          $plugins = "$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows\Qt6\plugins"
+          if (-not (Test-Path "$plugins\platforms")) {
+            throw "Qt platform plugins not found at $plugins - met_app_tests cannot start"
+          }
+          $env:PATH = "$bin;$env:PATH"
+          $env:QT_PLUGIN_PATH = $plugins
+          # The two Warp tripwires assert wall-clock budgets. They are useful as
+          # regression detectors on the consistent Linux runner; on a shared
+          # Windows runner they would only add flakiness.
+          ctest --preset dist-windows -E 'Warp\.(Projected)?PerformanceTripwire'
+
+      # A self-contained tree to download and run: `cmake --install` triggers the
+      # windeployqt script from cmake/Packaging.cmake, which copies the Qt DLLs
+      # and plugins next to the executable, and PROJ's data lands in share/proj
+      # where main.cpp's executable-relative probe finds it.
+      - name: Stage portable build
+        run: cmake --install build/dist-windows --prefix "${{ github.workspace }}/dist/met-viewer"
+
+      - name: Upload portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: met-viewer-windows-${{ github.sha }}
+          path: dist/met-viewer
+          retention-days: 14
+          if-no-files-found: error

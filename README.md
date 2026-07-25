@@ -2,6 +2,10 @@
 
 C++20 desktop application for viewing and analyzing meteorological data (GRIB1/2, NetCDF4/CF, NOAA ARL). New here? Start with the [Getting Started tutorial](docs/getting-started.md). See [Design.md](Design.md) for architecture and roadmap.
 
+> **Compression note:** szip/AEC-compressed NetCDF-4 and AEC-packed GRIB2 are not
+> supported — such a file reports a decode error. ERA5 and NOAA NetCDF use
+> deflate, which is supported. See [Design.md](Design.md) for why.
+
 ## System prerequisites (RHEL/Alma 10)
 
 vcpkg builds Qt6, OpenSSL, and others from source, which need toolchain and X11/XCB
@@ -93,10 +97,26 @@ Tagged releases (`v*`) publish downloadable installers via GitHub Actions
 
 - **Linux** — a self-contained `.AppImage` built on AlmaLinux 9, so it runs on
   RHEL/Alma/Rocky 9 and 10 (glibc ≥ 2.34).
-- **Windows** — an NSIS `.exe` installer.
+- **Windows** — an NSIS `.exe` installer, and a portable
+  `met-viewer-<version>-windows-x64.zip` for when an installer is unwanted (no
+  admin rights, keeping versions side by side). Unzip and run
+  `met-viewer\bin\met_viewer.exe`. Both carry the same payload — they come from
+  the same `install()` rules and the same windeployqt step, and differ only in
+  how they are wrapped.
+
+Each platform job builds and uploads its artifact, and a final job collects them
+and creates a single **draft** release — so nothing is published until you review
+it, and a failed platform build yields no release rather than a half-populated one.
 
 Releases are currently **unsigned**: Windows SmartScreen may warn ("More info →
 Run anyway"), and Linux may require `chmod +x` on the AppImage.
+
+**Cutting a release:** bump `project(... VERSION x.y.z)` in
+[`CMakeLists.txt`](CMakeLists.txt) and `"version"` in [`vcpkg.json`](vcpkg.json),
+then tag `vx.y.z`. Everything else derives from those — the app's `--version`,
+the tile-server User-Agent, and all three asset filenames. The release workflow
+checks the tag against both files first and stops in seconds if they disagree,
+rather than after an hour of building.
 
 The distributable builds link Qt **dynamically** (LGPL-friendly) via dedicated
 presets that CI uses:
@@ -123,5 +143,19 @@ Windows `.ico` from the largest app PNG.
 Every push to `master` and every pull request is built and tested on Linux
 (AlmaLinux 9 container) and Windows via
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml), including a headless
-render smoke test on Linux. vcpkg dependencies are cached in the GitHub Actions
-cache so Qt is compiled from source only once.
+render smoke test and a sanitizer run on Linux. vcpkg dependencies are cached in
+the GitHub Actions cache so Qt is compiled from source only once.
+
+The suite runs on **both** platforms. That is not redundant: `long` is 32-bit on
+MSVC and 64-bit on Linux, which is exactly why the ARL reader uses int64 record
+offsets and the GRIB reader a `seek64` helper — neither is exercised by a
+Linux-only run. The two `Warp.*PerformanceTripwire` tests are Linux-only, since
+they assert wall-clock budgets that are only meaningful on a consistent machine.
+
+### Downloading a build
+
+Every Windows run uploads a **portable build** as a workflow artifact
+(`met-viewer-windows-<sha>`, kept 14 days). Download it from the run's summary
+page, unzip, and run `bin\met_viewer.exe` — Qt and PROJ's data are bundled, so
+nothing needs installing. Tagged releases additionally publish the signed-off
+AppImage and NSIS installer; see [Installers](#installers).

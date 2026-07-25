@@ -1,10 +1,18 @@
 name: Release
 
 # On a version tag (e.g. v0.1.0), build a distributable installer per platform
-# and attach it to a DRAFT GitHub Release for review before publishing:
+# and attach them to a DRAFT GitHub Release for review before publishing:
 #   - Linux:   AppImage (dynamic Qt bundled by linuxdeploy)
 #   - Windows: NSIS installer (dynamic Qt bundled by windeployqt via CPack)
 # Artifacts are UNSIGNED; see the release notes for SmartScreen/Gatekeeper hints.
+#
+# The platform jobs only *build* and upload their output as workflow artifacts; a
+# single final job creates the release. Having each platform attach its own asset
+# meant both jobs raced to create-or-update the same release, and a draft release
+# is not bound to its tag until published — so GitHub will hold two drafts for
+# one tag, each with half the assets, and publishing the one you happen to see
+# silently ships without the other platform. Collecting first also means a failed
+# platform build produces no release at all, rather than a half-populated draft.
 
 on:
   push:
@@ -14,17 +22,50 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  # `x-gha` was removed from vcpkg; it warned and silently cached nothing, so
-  # every run rebuilt every dependency from source. See ci.yml for the details.
-  VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}/vcpkg_bincache,readwrite"
-
+# Least privilege: only the final release job writes to the repository. The build
+# jobs just produce files and no longer need write access at all.
 permissions:
-  contents: write   # needed to create/update the GitHub Release
+  contents: read
 
 jobs:
+  # Runs first, in seconds, so a version mismatch fails here rather than after an
+  # hour of building. The AppImage and the portable zip are named from the tag,
+  # while CPack names the Windows installer from project(VERSION) and the app
+  # reports that same version via --version and its tile-server User-Agent. Those
+  # are only consistent if the tag agrees with the sources, so that is checked
+  # rather than assumed — the alternative, overriding CPack from the tag, would
+  # relocate the inconsistency into the app rather than remove it.
+  version-check:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must match project(VERSION) and vcpkg.json
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          cmake_ver=$(sed -nE 's/^project\([^)]*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)
+          vcpkg_ver=$(python3 -c "import json; print(json.load(open('vcpkg.json'))['version'])")
+          echo "tag:            $tag"
+          echo "CMakeLists.txt: $cmake_ver"
+          echo "vcpkg.json:     $vcpkg_ver"
+          if [ -z "$cmake_ver" ]; then
+            echo "::error::could not parse project(VERSION) from CMakeLists.txt"
+            exit 1
+          fi
+          if [ "$tag" != "$cmake_ver" ] || [ "$tag" != "$vcpkg_ver" ]; then
+            echo "::error::version mismatch — release assets would carry different" \
+                 "version numbers and the app's --version would disagree with its" \
+                 "own installer filename. Bump project(VERSION) in CMakeLists.txt" \
+                 "and \"version\" in vcpkg.json to $tag, or retag."
+            exit 1
+          fi
+          echo "all three agree at $tag"
+
   linux:
     name: Linux AppImage
+    needs: version-check
     runs-on: ubuntu-latest
     container: almalinux:9
     steps:
@@ -64,6 +105,17 @@ jobs:
 
       # Read-only: a release build consumes whatever CI already produced for this
       # dependency set but never writes, so a tag build cannot evict CI's caches.
+      # VCPKG_BINARY_SOURCES is set here at runtime rather than in the workflow's
+      # env: block, because `${{ github.workspace }}` is expanded on the *host*.
+      # In a container job that yields /home/runner/work/... while the workspace
+      # is mounted at /__w/... inside — so vcpkg wrote its binaries somewhere
+      # actions/cache never looked, and the cache silently stayed empty.
+      # $GITHUB_WORKSPACE is evaluated inside the job, so it is correct on both.
+      - name: Point vcpkg at the workspace binary cache
+        shell: bash
+        run: |
+          echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/vcpkg_bincache,readwrite" >> "$GITHUB_ENV"
+
       - name: Restore vcpkg binary cache
         uses: actions/cache/restore@v4
         with:
@@ -120,14 +172,16 @@ jobs:
             --desktop-file AppDir/usr/share/applications/met-viewer.desktop \
             --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/met-viewer.png
 
-      - name: Attach AppImage to release
-        uses: softprops/action-gh-release@v2
+      - name: Upload AppImage for the release job
+        uses: actions/upload-artifact@v4
         with:
-          draft: true
-          files: met-viewer-*-x86_64.AppImage
+          name: appimage
+          path: met-viewer-*-x86_64.AppImage
+          if-no-files-found: error
 
   windows:
     name: Windows installer
+    needs: version-check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -140,6 +194,13 @@ jobs:
         run: choco install nsis -y --no-progress
 
       # Read-only, as in the Linux job: consume CI's caches, never evict them.
+      # Same runtime-set binary cache path as the Linux job; see there for why it
+      # is not set from `${{ github.workspace }}` in the workflow env: block.
+      - name: Point vcpkg at the workspace binary cache
+        shell: bash
+        run: |
+          echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/vcpkg_bincache,readwrite" >> "$GITHUB_ENV"
+
       - name: Restore vcpkg binary cache
         uses: actions/cache/restore@v4
         with:
@@ -165,8 +226,60 @@ jobs:
         working-directory: build/dist-windows
         run: cpack
 
-      - name: Attach installer to release
+      - name: Upload installer for the release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: build/dist-windows/met-viewer-*.exe
+          if-no-files-found: error
+
+      # The same install tree CI publishes on every run, zipped, for people who
+      # would rather not run an installer (no admin rights, keeping versions side
+      # by side, or just trying a build). Same payload as the NSIS package: both
+      # come from the install() rules and the windeployqt script they invoke.
+      - name: Stage portable build
+        run: cmake --install build/dist-windows --prefix "${{ github.workspace }}/dist/met-viewer"
+
+      # Zipped here rather than left to upload-artifact, because the release job
+      # *downloads* artifacts before attaching them — an uploaded directory would
+      # arrive expanded, and a release asset has to be a single file.
+      # Named from the tag, matching the AppImage.
+      - name: Zip portable build
+        run: |
+          $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          Compress-Archive -Path dist/met-viewer `
+                           -DestinationPath "met-viewer-$version-windows-x64.zip"
+
+      - name: Upload portable build for the release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable
+          path: met-viewer-*-windows-x64.zip
+          if-no-files-found: error
+
+  # Single place where the release is created, after every platform has produced
+  # its asset. `needs` also gates it: if either build fails there is no release.
+  release:
+    name: Draft GitHub Release
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # the only job that needs it
+    steps:
+      # merge-multiple flattens every artifact into one directory, so the glob
+      # below picks up each platform's output regardless of how many there are.
+      - name: Collect platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Show what will be attached
+        run: ls -lh artifacts
+
+      - name: Create draft release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: build/dist-windows/met-viewer-*.exe
+          fail_on_unmatched_files: true
+          files: artifacts/*

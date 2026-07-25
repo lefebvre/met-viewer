@@ -1,22 +1,72 @@
 {
   "name": "met-viewer",
   "version": "0.1.0",
+  "$comment-hdf5": [
+    "hdf5 is requested with default-features off to drop `szip`, whose only",
+    "purpose here is to pull in libaec. libaec is fetched from gitlab.dkrz.de,",
+    "which rate-limits archive downloads (HTTP 429) hard enough to fail CI on",
+    "both platforms; a newer vcpkg does not help, since the 1.1.7 port only",
+    "renames the project path and stays on the same host. Nothing else wants",
+    "libaec: netcdf-c asks for exactly hdf5[hl,zlib], eccodes[aec] is opt-in",
+    "and we do not request it, and we never call HDF5 directly.",
+    "The cost is that szip/AEC-compressed HDF5 and NetCDF-4 cannot be read,",
+    "which matches what the app already did (eccodes[aec] was never enabled,",
+    "so AEC-packed GRIB2 was already unsupported) and ERA5/NOAA NetCDF use",
+    "deflate. Re-enabling szip is reverting this entry to a bare \"hdf5\"."
+  ],
+  "$comment-windeployqt": [
+    "qtbase's `windeployqt` feature is not on by default, so the tool was",
+    "simply absent and the Windows install had nothing to bundle the Qt DLLs",
+    "with. The port installs it at tools/Qt6/bin/windeployqt.exe, which is",
+    "where cmake/Packaging.cmake looks. Requested only on windows: the",
+    "feature declares \"supports\": \"windows\" and would not resolve elsewhere."
+  ],
   "builtin-baseline": "42e4e33e1505c9f47b58c21e0f557c1571b751ee",
   "dependencies": [
     {
       "name": "qtbase",
       "default-features": false,
-      "features": ["widgets", "gui", "network", "opengl", "png", "jpeg", "concurrent", "openssl", "freetype", "harfbuzz"]
+      "features": [
+        "widgets",
+        "gui",
+        "network",
+        "opengl",
+        "png",
+        "jpeg",
+        "concurrent",
+        "openssl",
+        "freetype",
+        "harfbuzz"
+      ]
     },
     {
       "name": "qtbase",
       "default-features": false,
       "platform": "linux",
-      "features": ["egl", "xcb", "fontconfig"]
+      "features": [
+        "egl",
+        "xcb",
+        "fontconfig"
+      ]
+    },
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "platform": "windows",
+      "features": [
+        "windeployqt"
+      ]
     },
     "eccodes",
     "netcdf-c",
-    "hdf5",
+    {
+      "name": "hdf5",
+      "default-features": false,
+      "features": [
+        "hl",
+        "zlib"
+      ]
+    },
     "proj",
     "fmt",
     {

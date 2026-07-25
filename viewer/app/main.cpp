@@ -96,7 +96,10 @@ int main(int argc, char** argv) {
 
     QApplication app(argc, argv);
     QApplication::setApplicationName("met-viewer");
-    QApplication::setApplicationVersion("0.1.0");
+    // MET_VERSION comes from project(VERSION) via viewer/app/CMakeLists.txt, so
+    // --version, the tile-server User-Agent and the installer filenames cannot
+    // disagree with each other.
+    QApplication::setApplicationVersion(QStringLiteral(MET_VERSION));
     QApplication::setOrganizationName("met-viewer");
     QApplication::setOrganizationDomain("met-viewer.local");
     QApplication::setWindowIcon(appWindowIcon(false));
@@ -106,17 +109,10 @@ int main(int argc, char** argv) {
     // installed (the package/AppImage does this).
     QApplication::setDesktopFileName(QStringLiteral("met-viewer"));
 
-    // Resolve PROJ data relative to the executable for installed/bundled builds.
-    locateBundledProjData();
-
-    met::app::MainWindow window;
-    // Swap the window-icon variant with the app theme (light art on dark title
-    // bars). Set it now for the resolved startup theme, then track changes.
-    QApplication::setWindowIcon(appWindowIcon(window.theme()->isDark()));
-    QObject::connect(window.theme(), &met::app::ThemeManager::effectiveSchemeChanged, &app,
-                     [](bool dark) { QApplication::setWindowIcon(appWindowIcon(dark)); });
-    window.show();
-
+    // Parsed before the main window is constructed. QCommandLineParser::process()
+    // terminates the program for --help and --version, and doing that with a live,
+    // shown QMainWindow skips its destructor while tearing down Qt's globals, which
+    // aborted after printing the correct output. Nothing below needs the window.
     QCommandLineParser parser;
     parser.setApplicationDescription(
         "met-viewer — view and analyze gridded meteorological data (GRIB, NetCDF, ARL).");
@@ -151,6 +147,17 @@ int main(int argc, char** argv) {
     // Set the log level before anything that might log (i.e. before opening files).
     if (parser.isSet("verbose"))
         met::core::setLogLevel(met::core::parseLogLevel(parser.value("verbose").toStdString()));
+
+    // Resolve PROJ data relative to the executable for installed/bundled builds.
+    locateBundledProjData();
+
+    met::app::MainWindow window;
+    // Swap the window-icon variant with the app theme (light art on dark title
+    // bars). Set it now for the resolved startup theme, then track changes.
+    QApplication::setWindowIcon(appWindowIcon(window.theme()->isDark()));
+    QObject::connect(window.theme(), &met::app::ThemeManager::effectiveSchemeChanged, &app,
+                     [](bool dark) { QApplication::setWindowIcon(appWindowIcon(dark)); });
+    window.show();
 
     if (parser.isSet("size")) {
         const QStringList wh = parser.value("size").split('x', Qt::SkipEmptyParts);

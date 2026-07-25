@@ -2,9 +2,10 @@
 # (AppImage / TGZ on Linux, NSIS on Windows). Included from the top-level
 # CMakeLists.txt after every target is defined so install(TARGETS ...) resolves.
 #
-# Deployment of the Qt runtime is NOT done here: it is handled per-platform in CI
-# by linuxdeploy (AppImage) and windeployqt (Windows), which copy the Qt shared
-# libraries and plugins next to the installed executable.
+# Deployment of the Qt runtime is per-platform: Windows runs windeployqt as part
+# of the install (below), so `cmake --install` and cpack both yield a
+# self-contained tree; Linux leaves it to linuxdeploy, which bundles Qt when it
+# assembles the AppImage in CI.
 
 include(GNUInstallDirs)
 
@@ -14,18 +15,47 @@ install(TARGETS met_viewer
 )
 
 # --- Qt runtime bundling ------------------------------------------------------
-# On Windows, let Qt's own deploy tooling (windeployqt) copy the required Qt
-# DLLs and plugins next to the installed executable so the NSIS package is
-# self-contained. On Linux the AppImage is assembled by linuxdeploy in CI, so we
-# skip Qt's deploy there (NO_UNSUPPORTED_PLATFORM_ERROR keeps configure quiet).
+# On Windows, windeployqt copies the Qt DLLs and plugins the executable needs next
+# to it in the install tree, so both the NSIS package and the portable build are
+# self-contained. Linux skips this: linuxdeploy does the equivalent when it builds
+# the AppImage.
+#
+# It is invoked directly rather than through
+# qt_generate_deploy_app_script(). Qt's wrapper ultimately just runs
+# `windeployqt <exe>` (Qt6CoreDeploySupport.cmake), but it locates the tool with
+# find_program hinted at ${QT6_INSTALL_PREFIX}/${QT6_INSTALL_BINS} — and vcpkg
+# sets QT6_INSTALL_BINS to "bin", which holds the Qt DLLs, while the tools live in
+# tools/Qt6/bin. The lookup therefore fails, and it fails during find_package, so
+# it cannot be corrected afterwards. Qt then aborts the install with "No Qt deploy
+# tool available for this target platform".
+#
+# Calling the tool ourselves does the same work, fails at configure time instead
+# of install time when it is missing, and does not depend on Qt internals or on
+# the order in which find_package(Qt6) happens to run.
 if(WIN32)
-    qt_generate_deploy_app_script(
-        TARGET met_viewer
-        OUTPUT_SCRIPT _met_deploy_script
-        NO_UNSUPPORTED_PLATFORM_ERROR
-        NO_TRANSLATIONS
-    )
-    install(SCRIPT "${_met_deploy_script}")
+    find_program(MET_WINDEPLOYQT
+        NAMES windeployqt windeployqt6
+        HINTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/Qt6/bin"
+              "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
+        DOC "windeployqt, used to bundle the Qt runtime next to the installed exe")
+    if(NOT MET_WINDEPLOYQT)
+        message(FATAL_ERROR
+            "windeployqt not found. Installers and portable builds would ship "
+            "without the Qt DLLs and fail to start on any machine without Qt.")
+    endif()
+
+    # Runs as part of `cmake --install` (and therefore of cpack), against the exe
+    # already placed in the install tree, so both the NSIS package and the
+    # portable build get the same self-contained payload.
+    install(CODE "
+        set(_met_exe \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/met_viewer.exe\")
+        message(STATUS \"Deploying Qt runtime with ${MET_WINDEPLOYQT}\")
+        execute_process(
+            COMMAND \"${MET_WINDEPLOYQT}\" --no-translations \"\${_met_exe}\"
+            RESULT_VARIABLE _met_deploy_result)
+        if(NOT _met_deploy_result EQUAL 0)
+            message(FATAL_ERROR \"windeployqt failed (\${_met_deploy_result})\")
+        endif()")
 endif()
 
 # --- PROJ runtime data (proj.db etc.) ----------------------------------------
