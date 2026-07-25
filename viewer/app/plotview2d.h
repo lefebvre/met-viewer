@@ -69,11 +69,24 @@ private:
     void rebuildImage();             // regenerate cached raster from field+cmap
     void autorange();                // fit cmap range to field
 
-    // Map a fractional grid index (col, row) to a screen point in the plot rect.
+    // The view draws the field in flat grid-index space (see indexToScreen), so
+    // index<->screen is the primitive and geography is derived from it via the
+    // grid. On a regular lat/lon grid index space *is* linear in lat/lon; on a
+    // projected grid it is not, and treating it as if it were misplaces a probe by
+    // hundreds of kilometres near the corners.
     QPointF indexToScreen(double col, double row, const QRectF& r) const;
+    // Inverse of indexToScreen. Returns false when the point is outside the grid.
+    bool screenToIndex(QPointF pos, const QRectF& r, double& col, double& row) const;
+    // True when the field's grid is a regular lat/lon one, whose index space maps
+    // linearly onto the lat/lon axes this view labels.
+    [[nodiscard]] bool isLatLonGrid() const;
+
+    // Lat/lon graticule traced through index space, for grids whose axes are not
+    // lat/lon (projected/ARL) and so cannot carry geography in straight ticks.
+    void drawGraticule(QPainter& p, const QRectF& r) const;
 
     // Badge lines for the cursor readout: position, value, and grid cell.
-    QStringList hoverTextAt(core::LatLon ll, float value) const;
+    QStringList hoverTextAt(core::LatLon ll, float value, double col, double row) const;
 
     std::shared_ptr<core::Field2D> field_;
     render::Colormap cmap_ = render::Colormap::builtin("viridis");

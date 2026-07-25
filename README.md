@@ -46,7 +46,16 @@ Once it's running, the [Getting Started tutorial](docs/getting-started.md) walks
 through opening data, colormaps, the GIS map, wind overlays, cross-sections,
 soundings, time series, and animation.
 
-Other presets: `debug`, `asan` (address/UB sanitizers — run before committing).
+Other presets: `debug`, `asan` (address/UB sanitizers **plus `-Werror`** — run before
+committing; CI runs it too). The sanitizer build needs the runtime libraries, which
+GCC does not install with the compiler:
+
+```sh
+sudo dnf install -y libasan libubsan
+```
+
+Pass `--verbose <level>` (`trace|debug|info|warn|error|off`) to see diagnostics on
+stderr — which reader claimed a file, why a slab was skipped, why a tile failed.
 
 The first configure builds Qt and other dependencies from source via vcpkg; expect this to take a while.
 

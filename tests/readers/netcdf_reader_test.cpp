@@ -122,3 +122,16 @@ TEST(Equivalence, GribAndNetcdfMatchAt500hPa) {
         for (int c = 0; c < gf.width(); ++c)
             EXPECT_NEAR(gf.at(c, r), nf.at(c, r), 2e-2) << "cell " << c << "," << r;
 }
+
+// RegularLatLonGrid models a uniform axis. A Gaussian latitude axis is not one,
+// and taking lat[1]-lat[0] as the spacing silently mis-places every row (worst
+// toward the poles) with no symptom except values appearing in the wrong place —
+// so the reader rejects it rather than pretending.
+TEST(CfReader, RejectsNonUniformLatitudeAxis) {
+    EXPECT_THROW((void)readers::openDataset(fixture("gaussian_lat.nc")), readers::ReadError);
+}
+
+TEST(CfReader, StillAcceptsTheUniformFixtures) {
+    EXPECT_NO_THROW((void)readers::openDataset(fixture("era5_t_pl.nc")));
+    EXPECT_NO_THROW((void)readers::openDataset(fixture("height_levels.nc")));
+}

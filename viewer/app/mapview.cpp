@@ -269,23 +269,55 @@ void MapView::contextMenuEvent(QContextMenuEvent* event) {
     menu.exec(event->globalPos());
 }
 
+// True when the cached raster was produced for exactly this field/colormap and
+// viewport, i.e. it can be blitted as-is.
+bool MapView::warpIsCurrent() const {
+    const double tlx = topLeftWorldX(), tly = topLeftWorldY();
+    return !warp_.isNull() && warpField_ == field_->id && warpZoom_ == zoom_ &&
+           warpW_ == width() && warpH_ == height() && warpTlx_ == tlx && warpTly_ == tly &&
+           warpOpacity_ == opacity_ && warpCmap_ == QString::fromStdString(cmap_.name()) &&
+           warpMin_ == cmap_.min() && warpMax_ == cmap_.max();
+}
+
+// True when the cached raster differs from what we want only by a translation, so
+// drawing it at an offset is a correct (if edge-incomplete) preview of the pan.
+bool MapView::warpIsPannable() const {
+    return !warp_.isNull() && warpField_ == field_->id && warpZoom_ == zoom_ &&
+           warpW_ == width() && warpH_ == height() && warpOpacity_ == opacity_ &&
+           warpCmap_ == QString::fromStdString(cmap_.name()) && warpMin_ == cmap_.min() &&
+           warpMax_ == cmap_.max();
+}
+
 void MapView::ensureWarp() {
     if (!field_) { warp_ = {}; return; }
-    const double tlx = topLeftWorldX(), tly = topLeftWorldY();
-    const bool same = warpField_ == field_.get() && warpZoom_ == zoom_ && warpW_ == width() &&
-                      warpH_ == height() && warpTlx_ == tlx && warpTly_ == tly &&
-                      warpOpacity_ == opacity_ && warpCmap_ == QString::fromStdString(cmap_.name()) &&
-                      warpMin_ == cmap_.min() && warpMax_ == cmap_.max();
-    if (same && !warp_.isNull()) return;
+    if (warpIsCurrent()) return;
 
+    const double tlx = topLeftWorldX(), tly = topLeftWorldY();
     render::MercatorViewport view{tlx, tly, zoom_, width(), height()};
     const int hw = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 1);
     warp_ = render::warpToMercator(*field_, cmap_, view, opacity_, hw);
-    warpField_ = field_.get();
+    warpField_ = field_->id;
     warpZoom_ = zoom_; warpW_ = width(); warpH_ = height();
     warpTlx_ = tlx; warpTly_ = tly; warpOpacity_ = opacity_;
     warpCmap_ = QString::fromStdString(cmap_.name());
     warpMin_ = cmap_.min(); warpMax_ = cmap_.max();
+}
+
+// Draw the field layer. While a drag is in progress the cached raster is blitted
+// at the pan offset instead of being rebuilt: a full re-warp costs ~27 ms for a
+// 1080p Lambert grid even multi-threaded, and it runs on the GUI thread, so
+// re-warping per mouse-move caps the pan frame rate at the warp cost. The strip
+// uncovered at the trailing edge stays empty until the drag ends, which is the
+// same trade every slippy map makes.
+void MapView::drawFieldLayer(QPainter& p) {
+    if (dragging_ && !warpIsCurrent() && warpIsPannable()) {
+        const double dx = warpTlx_ - topLeftWorldX();
+        const double dy = warpTly_ - topLeftWorldY();
+        p.drawImage(QPointF(dx, dy), warp_);
+        return;
+    }
+    ensureWarp();
+    if (!warp_.isNull()) p.drawImage(0, 0, warp_);
 }
 
 bool MapView::drawFieldGpu() {
@@ -296,7 +328,7 @@ bool MapView::drawFieldGpu() {
     // colormap, or the range changes. The colormap is applied on the CPU over
     // the small grid; the GPU does the per-pixel warp.
     const QString cname = QString::fromStdString(cmap_.name());
-    const bool dirty = uploadedField_ != field_.get() || uploadedCmap_ != cname ||
+    const bool dirty = uploadedField_ != field_->id || uploadedCmap_ != cname ||
                        uploadedMin_ != cmap_.min() || uploadedMax_ != cmap_.max();
     if (dirty) {
         const std::size_t n = static_cast<std::size_t>(g.nlon) * static_cast<std::size_t>(g.nlat);
@@ -310,7 +342,7 @@ bool MapView::drawFieldGpu() {
         }
         dilateColors(rgba, g.nlon, g.nlat);
         glField_.uploadField(g.nlon, g.nlat, rgba.data());
-        uploadedField_ = field_.get();
+        uploadedField_ = field_->id;
         uploadedCmap_ = cname;
         uploadedMin_ = cmap_.min();
         uploadedMax_ = cmap_.max();
@@ -367,10 +399,7 @@ void MapView::paintGL() {
             drewGpu = drawFieldGpu();
             p.endNativePainting();
         }
-        if (!drewGpu) {
-            ensureWarp();
-            if (!warp_.isNull()) p.drawImage(0, 0, warp_);
-        }
+        if (!drewGpu) drawFieldLayer(p);
     }
 
     // Graticule.
@@ -701,9 +730,12 @@ void MapView::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         const bool wasDragging = dragging_;
         dragging_ = false;
-        // A pan changed the visible extent; refresh the range if it tracks the view.
-        if (wasDragging && autoRange_ && viewRange_ && field_) {
-            autorange();
+        if (wasDragging) {
+            // A pan changed the visible extent; refresh the range if it tracks the view.
+            if (autoRange_ && viewRange_ && field_) autorange();
+            // Repaint unconditionally: during the drag the field layer was the
+            // previous raster blitted at an offset, so the edge strip it could not
+            // cover is only filled in by the full re-warp this triggers.
             update();
         }
     }

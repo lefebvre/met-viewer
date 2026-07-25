@@ -128,13 +128,16 @@ void warpRegular(const core::Field2D& field, const RegularLatLonGrid& g, const C
 }
 
 // Projected path: invert each output pixel's Mercator position to lon/lat (cheap
-// closed form), batch-project lon/lat to grid coordinates through PROJ once, then
+// closed form), batch-project lon/lat to grid coordinates through PROJ, then
 // gather. This is the per-viewport mapping cache for arbitrary projections.
+//
+// The PROJ batch is the dominant cost (roughly two thirds of the total on a
+// 1080p Lambert warp), so it runs inside the row-chunk parallel region rather
+// than once up front — Crs caches its PJ per thread, so each worker transforms
+// its own slice independently. Keeping the buffers per chunk also drops the peak
+// allocation from two viewport-sized double arrays (~33 MB at 1080p) to a slice.
 void warpProjected(const core::Field2D& field, const ProjectedGrid& g, const Colormap& cmap,
                    const MercatorViewport& view, double alphaScale, int threads, QImage& img) {
-    const std::size_t n = static_cast<std::size_t>(view.width) * static_cast<std::size_t>(view.height);
-    std::vector<double> a(n), b(n);  // lon/lat -> x/y in place
-
     // Longitude depends only on column, latitude only on row: precompute both.
     std::vector<double> lonCol(static_cast<std::size_t>(view.width));
     for (int px = 0; px < view.width; ++px)
@@ -143,18 +146,22 @@ void warpProjected(const core::Field2D& field, const ProjectedGrid& g, const Col
     for (int py = 0; py < view.height; ++py)
         latRow[static_cast<std::size_t>(py)] = tile::worldYToLat(view.topLeftWorldY + py + 0.5, view.zoom);
 
-    for (int py = 0; py < view.height; ++py) {
-        const std::size_t row = static_cast<std::size_t>(py) * static_cast<std::size_t>(view.width);
-        for (int px = 0; px < view.width; ++px) {
-            a[row + static_cast<std::size_t>(px)] = lonCol[static_cast<std::size_t>(px)];
-            b[row + static_cast<std::size_t>(px)] = latRow[static_cast<std::size_t>(py)];
-        }
-    }
-    g.crs.forwardBatch(a.data(), b.data(), n);  // now a=x, b=y (projected metres)
-
+    const std::size_t stride = static_cast<std::size_t>(view.width);
     runRows(view.height, threads, [&](int y0, int y1) {
+        const std::size_t rows = static_cast<std::size_t>(y1 - y0);
+        std::vector<double> a(rows * stride), b(rows * stride);  // lon/lat -> x/y in place
         for (int py = y0; py < y1; ++py) {
-            const std::size_t row = static_cast<std::size_t>(py) * static_cast<std::size_t>(view.width);
+            const std::size_t row = static_cast<std::size_t>(py - y0) * stride;
+            const double lat = latRow[static_cast<std::size_t>(py)];
+            for (int px = 0; px < view.width; ++px) {
+                a[row + static_cast<std::size_t>(px)] = lonCol[static_cast<std::size_t>(px)];
+                b[row + static_cast<std::size_t>(px)] = lat;
+            }
+        }
+        g.crs.forwardBatch(a.data(), b.data(), rows * stride);  // now a=x, b=y (metres)
+
+        for (int py = y0; py < y1; ++py) {
+            const std::size_t row = static_cast<std::size_t>(py - y0) * stride;
             auto* scan = reinterpret_cast<QRgb*>(img.scanLine(py));
             for (int px = 0; px < view.width; ++px) {
                 const double x = a[row + static_cast<std::size_t>(px)];

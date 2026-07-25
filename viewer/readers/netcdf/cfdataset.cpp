@@ -5,11 +5,16 @@
 #include <cmath>
 #include <cstring>
 #include <ctime>
+#include <cstddef>
+#include <filesystem>
 #include <limits>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include <netcdf.h>
 
+#include "viewer/core/log.h"
 #include "viewer/core/timeaxis.h"
 
 namespace met::readers::netcdf {
@@ -138,20 +143,53 @@ std::pair<double, std::int64_t> parseTimeUnits(const std::string& units) {
     return {perUnit, base};
 }
 
+// Reject a coordinate axis that is not evenly spaced, since RegularLatLonGrid can
+// only describe a uniform one. A small tolerance (1% of the step) absorbs the
+// rounding in a float32-stored axis without admitting a genuinely Gaussian or
+// stretched one, whose steps vary by whole percent toward the poles.
+void checkUniform(const std::vector<double>& axis, const char* what,
+                  const std::filesystem::path& path) {
+    if (axis.size() < 3) return;  // two points just define the spacing
+    const double step = axis[1] - axis[0];
+    if (step == 0.0)
+        throw ReadError(std::string("NetCDF: ") + what + " axis has a zero step in " +
+                        path.string());
+    const double tol = std::abs(step) * 0.01;
+    for (std::size_t i = 2; i < axis.size(); ++i) {
+        const double d = axis[i] - axis[i - 1];
+        if (std::abs(d - step) > tol) {
+            MET_LOG_ERROR("{}: {} axis is not evenly spaced (step {} at index {}, expected {})",
+                          path.string(), what, d, i, step);
+            throw ReadError(std::string("NetCDF: ") + what +
+                            " axis is not evenly spaced; irregular and Gaussian grids are "
+                            "not supported: " +
+                            path.string());
+        }
+    }
+}
+
 }  // namespace
 
+std::mutex& CfDataset::libraryMutex() {
+    static std::mutex m;
+    return m;
+}
+
 CfDataset::CfDataset(std::filesystem::path path) : path_(std::move(path)) {
+    std::lock_guard<std::mutex> lock(libraryMutex());
     if (nc_open(path_.string().c_str(), NC_NOWRITE, &ncid_) != NC_NOERR)
         throw ReadError("NetCDF: cannot open " + path_.string());
     try {
         scan();
     } catch (...) {
         nc_close(ncid_);
+        ncid_ = -1;
         throw;
     }
 }
 
 CfDataset::~CfDataset() {
+    std::lock_guard<std::mutex> lock(libraryMutex());
     if (ncid_ >= 0) nc_close(ncid_);
 }
 
@@ -245,7 +283,18 @@ void CfDataset::scan() {
         std::tie(timePerUnit, timeBase) = parseTimeUnits(tu);
     }
 
-    // Build the grid geometry from the coordinate arrays (assumed regular).
+    if (lat.empty() || lon.empty())
+        throw ReadError("NetCDF: empty latitude/longitude coordinate");
+
+    // Build the grid geometry from the coordinate arrays. RegularLatLonGrid is a
+    // uniform-spacing model, so verify the axes actually are uniform instead of
+    // extrapolating from the first two values: a Gaussian latitude axis (common
+    // when ERA5 GRIB is converted to NetCDF) would otherwise be silently
+    // mis-georeferenced by up to a grid cell toward the poles, with no symptom
+    // beyond values appearing at the wrong place.
+    checkUniform(lat, "latitude", path_);
+    checkUniform(lon, "longitude", path_);
+
     RegularLatLonGrid g;
     g.nlat = static_cast<int>(lat.size());
     g.nlon = static_cast<int>(lon.size());
@@ -314,7 +363,8 @@ void CfDataset::scan() {
 }
 
 core::Field2D CfDataset::readField(const core::FieldKey& key) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    // Process-wide: see the thread-safety note on the class.
+    std::lock_guard<std::mutex> lock(libraryMutex());
 
     const auto handle = catalog_.resolve(key);
     if (!handle) throw ReadError("NetCDF: field not in catalog");

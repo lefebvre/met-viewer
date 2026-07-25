@@ -30,8 +30,15 @@ class TileLayer : public QObject {
 public:
     explicit TileLayer(QObject* parent = nullptr);
 
-    // Built-in sources (OSM, Carto light/dark, Esri imagery, OpenTopoMap).
+    // Built-in sources (OSM, Carto light/dark, Esri imagery/shaded relief,
+    // OpenTopoMap). Any other XYZ service is reachable via setSource() with a
+    // user-supplied {z}/{x}/{y} template — see isValidUrlTemplate().
     static QList<TileSource> builtinSources();
+
+    // True when `t` is usable as a tile URL template: an http(s) URL carrying the
+    // {z}, {x} and {y} placeholders. Rejecting other schemes keeps a pasted
+    // "file:///..." from turning the basemap box into a local-file reader.
+    [[nodiscard]] static bool isValidUrlTemplate(const QString& t);
 
     void setSource(const TileSource& source);
     [[nodiscard]] const TileSource& source() const { return source_; }
@@ -57,6 +64,11 @@ private:
     QQueue<QString> pending_;             // keys waiting for a slot
     QHash<QString, QString> pendingUrls_; // key -> url
     QSet<QNetworkReply*> replies_;        // active replies (to abort on source switch)
+    // Keys whose fetch failed, with the number of consecutive failures. Without
+    // this a permanently-failing tile is re-requested by every repaint — and the
+    // cursor readout repaints on every mouse-move, so moving the pointer over the
+    // map would issue a request per tile per move. Cleared on setSource().
+    QHash<QString, int> failed_;
     unsigned sourceGen_ = 0;             // bumped on setSource; stale replies are dropped
     int maxInFlight_ = 6;
 };

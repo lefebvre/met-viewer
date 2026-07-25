@@ -2,24 +2,48 @@
 
 #include <cmath>
 #include <limits>
+#include <variant>
 
 namespace met::analysis {
 namespace {
 constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
 }
 
+namespace {
+// True when the field's columns span the globe, so column nlon-1 is adjacent to
+// column 0. latlonToIndex() returns x in [0, nlon) for such a grid, which means
+// the last cell (x between nlon-1 and nlon) has its east neighbour at column 0.
+bool wrapsLongitude(const core::GridDef& grid) {
+    const auto* g = std::get_if<core::RegularLatLonGrid>(&grid);
+    return g != nullptr && g->globalWrapLon;
+}
+}  // namespace
+
 float sampleBilinearIndex(const core::Field2D& field, double x, double y) {
     const int w = field.width();
     const int h = field.height();
     if (w <= 0 || h <= 0) return kNaN;
-    if (x < 0.0 || y < 0.0 || x > w - 1.0 || y > h - 1.0) return kNaN;
+    const bool wrapX = wrapsLongitude(field.grid);
+    // Without wrapping, x past the last column is off-grid. With it, x runs up to
+    // nlon and the final cell interpolates back onto column 0 — rejecting it here
+    // would punch a dlon-wide NaN stripe through an otherwise global field (the
+    // map warp already wraps, so the probe would disagree with what is drawn).
+    const double maxX = wrapX ? static_cast<double>(w) : w - 1.0;
+    if (x < 0.0 || y < 0.0 || x > maxX || y > h - 1.0) return kNaN;
 
-    const int x0 = static_cast<int>(std::floor(x));
-    const int y0 = static_cast<int>(std::floor(y));
-    const int x1 = std::min(x0 + 1, w - 1);
+    // Take the fractional parts before wrapping the cell index — wrapping first
+    // and then subtracting would leave fx measured from the wrong column.
+    const double xFloor = std::floor(x);
+    const double yFloor = std::floor(y);
+    const double fx = x - xFloor;
+    const double fy = y - yFloor;
+
+    int x0 = static_cast<int>(xFloor);
+    const int y0 = static_cast<int>(yFloor);
+    if (x0 >= w) x0 = wrapX ? x0 - w : w - 1;  // x exactly == nlon is column 0 again
+    int x1 = x0 + 1;
+    if (x1 >= w) x1 = wrapX ? 0 : w - 1;
     const int y1 = std::min(y0 + 1, h - 1);
-    const double fx = x - x0;
-    const double fy = y - y0;
 
     const float v00 = field.at(x0, y0);
     const float v10 = field.at(x1, y0);

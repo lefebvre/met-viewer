@@ -16,8 +16,11 @@ namespace met::readers::netcdf {
 // standard_name / name; packed data (scale_factor / add_offset / _FillValue) is
 // unpacked to float with missing values normalized to NaN.
 //
-// Thread-safety: netcdf-c/HDF5 are not thread-safe here, so every library call
-// is serialized behind an internal mutex.
+// Thread-safety: the HDF5 we link is built without H5_HAVE_THREADSAFE, so the
+// library is not merely non-reentrant per file — no two threads may be inside it
+// at once, on any file. The lock is therefore a single process-wide mutex shared
+// by every CfDataset, not a per-instance one: MultiDataset deliberately reads
+// different sources in parallel, which a per-instance lock would not serialize.
 class CfDataset : public IDataset {
 public:
     explicit CfDataset(std::filesystem::path path);
@@ -50,12 +53,14 @@ private:
 
     void scan();
 
+    // The one lock guarding all netcdf-c/HDF5 entry points, process-wide.
+    static std::mutex& libraryMutex();
+
     std::filesystem::path path_;
     int ncid_ = -1;
     core::DatasetCatalog catalog_;
     core::GridDef grid_{core::RegularLatLonGrid{}};
     std::map<std::string, VarInfo> vars_;  // by canonical variable name
-    std::mutex mutex_;
 };
 
 }  // namespace met::readers::netcdf

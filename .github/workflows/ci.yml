@@ -34,6 +34,7 @@ jobs:
           dnf config-manager --set-enabled crb
           dnf install -y \
             git cmake ninja-build gcc-c++ make perl zip file which tar \
+            libasan libubsan \
             libxcb-devel libX11-devel mesa-libGLU-devel libXrender-devel \
             libXi-devel libxkbcommon-devel libxkbcommon-x11-devel mesa-libEGL-devel \
             gperf fontconfig-devel freetype-devel \
@@ -70,7 +71,10 @@ jobs:
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
 
       - name: Configure
-        run: cmake --preset dist-linux
+        # -Werror here rather than only in the asan preset: the warning set
+        # (-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow) is
+        # only a gate if something actually fails on it, and the tree is clean.
+        run: cmake --preset dist-linux -DMET_WERROR=ON
 
       - name: Dump vcpkg logs on failure
         if: failure()
@@ -98,6 +102,27 @@ jobs:
           sleep 2
           ./build/dist-linux/viewer/app/met_viewer --grab /tmp/smoke.png
           test -s /tmp/smoke.png
+
+      # The suite runs in ~3 s, so running it a second time under
+      # address/undefined sanitizers is nearly free and is the only thing that
+      # covers the reader/threading paths for memory errors. Reuses the vcpkg
+      # install the dist-linux configure already populated. Needs libasan /
+      # libubsan (installed above) — GCC only ships the compiler side.
+      - name: Configure (asan)
+        run: cmake --preset asan
+
+      - name: Build (asan)
+        run: cmake --build --preset asan
+
+      - name: Test (asan)
+        env:
+          # Leak detection is off: the value here is catching use-after-free, OOB
+          # and UB in our own code, and the statically-linked Qt/PROJ/ecCodes
+          # globals produce leak reports we neither own nor can suppress usefully.
+          ASAN_OPTIONS: detect_leaks=0
+          # halt_on_error so a UB report fails the job instead of scrolling past.
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: ctest --preset asan
 
   windows:
     name: Windows

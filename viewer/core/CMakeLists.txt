@@ -3,14 +3,18 @@ find_package(fmt CONFIG REQUIRED)
 
 add_library(met_core STATIC
     crs.cpp
+    field.cpp
     grid.cpp
+    log.cpp
     timeaxis.cpp
     catalog.cpp
     units.cpp
 )
 
 target_include_directories(met_core PUBLIC ${CMAKE_SOURCE_DIR})
-target_link_libraries(met_core PUBLIC met_options PRIVATE PROJ::proj fmt::fmt)
+# fmt is PUBLIC because log.h exposes fmt::format_string in its interface, so
+# every layer that logs needs fmt's headers on its include path.
+target_link_libraries(met_core PUBLIC met_options fmt::fmt PRIVATE PROJ::proj)
 
 # Bake in the PROJ data directory so proj.db is found without PROJ_DATA set.
 if(DEFINED VCPKG_INSTALLED_DIR)

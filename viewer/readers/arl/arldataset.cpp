@@ -222,7 +222,7 @@ void ArlDataset::scan() {
     // parses: a bad header would otherwise yield a degenerate grid / record size.
     if (nx_ <= 0 || ny_ <= 0 || nz <= 0) throw ReadError("ARL: invalid INDX grid dimensions");
     grid_ = buildGrid(gf, nx_, ny_);
-    recLen_ = static_cast<long>(nx_) * static_cast<long>(ny_) + 50;
+    recLen_ = static_cast<std::int64_t>(nx_) * static_cast<std::int64_t>(ny_) + 50;
 
     // Per-level heights (index 0 = surface). Used to assign level values.
     std::vector<double> levelHeight(static_cast<std::size_t>(nz), 0.0);
@@ -252,14 +252,16 @@ void ArlDataset::scan() {
         }
     }
 
-    // Scan every record's 50-byte label to build the catalog.
+    // Scan every record's 50-byte label to build the catalog. Offsets are int64
+    // throughout: a multi-day ARL meteorology file runs past 2 GB, and `long` is
+    // 32-bit on the Windows build we ship an installer for.
     in.clear();
     in.seekg(0, std::ios::end);
-    const long fileSize = static_cast<long>(in.tellg());
-    const long nrec = fileSize / recLen_;
-    for (long r = 0; r < nrec; ++r) {
-        const long base = r * recLen_;
-        in.seekg(base, std::ios::beg);
+    const std::int64_t fileSize = static_cast<std::int64_t>(in.tellg());
+    const std::int64_t nrec = fileSize / recLen_;
+    for (std::int64_t r = 0; r < nrec; ++r) {
+        const std::int64_t base = r * recLen_;
+        in.seekg(static_cast<std::streamoff>(base), std::ios::beg);
         if (!in.read(label, 50)) break;
         Label lab = parseLabel(label);
         if (lab.kvar == "INDX") continue;
