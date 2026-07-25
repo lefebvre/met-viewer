@@ -47,8 +47,12 @@ through opening data, colormaps, the GIS map, wind overlays, cross-sections,
 soundings, time series, and animation.
 
 Other presets: `debug`, `asan` (address/UB sanitizers **plus `-Werror`** — run before
-committing; CI runs it too). The sanitizer build needs the runtime libraries, which
-GCC does not install with the compiler:
+committing). CI runs the equivalent as `asan-dist`, which differs only in inheriting
+`dist-linux`: same triplet, so it reuses the dependency set that job already built
+instead of compiling a second one. Locally, `asan` is the one you want.
+
+The sanitizer build needs the runtime libraries, which GCC does not install with
+the compiler:
 
 ```sh
 sudo dnf install -y libasan libubsan
