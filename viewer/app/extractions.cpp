@@ -1,10 +1,15 @@
 #include "viewer/app/extractions.h"
 
+#include "viewer/analysis/heights.h"
 #include "viewer/analysis/wind.h"
 #include "viewer/core/log.h"
 
 namespace met::app::extractions {
 namespace {
+
+// What every read* returns: levels (pressure or model-level index) paired with the
+// decoded slab.
+using Stack = std::vector<std::pair<double, core::Field2D>>;
 
 // Count a variable's levels of the given kind, for sizing a progress bar without
 // any I/O.
@@ -61,6 +66,12 @@ std::vector<std::pair<double, core::Field2D>> readLevels(readers::IDataset& ds,
         if (onRead) onRead();
     }
     return stack;
+}
+
+// The dataset's geopotential-height variable, or "" when it has none. Empty
+// reads as "no height axis" everywhere below, since readLevels("") finds nothing.
+std::string heightVar(const readers::IDataset& ds) {
+    return analysis::findHeightVariable(ds.catalog().variables()).value_or(std::string{});
 }
 
 bool isPressure(const core::VerticalLevel& lvl) {
@@ -127,13 +138,15 @@ analysis::Sounding computeSounding(readers::IDataset& ds, core::TimePoint time, 
     const auto onRead = readTick(progress);
     // Isobaric path: temperature required; relative humidity (dewpoint) and U/V
     // (wind profile) optional.
+    const std::string zVar = heightVar(ds);
     const auto tStack = readLevelStack(ds, "t", time, member, onRead);
     if (tStack.size() >= 2) {
         const auto rhStack = readLevelStack(ds, "r", time, member, onRead);
         std::vector<std::pair<double, core::Field2D>> uStack, vStack;
         readWindStacks(ds, time, member, uStack, vStack, /*modelLevels=*/false, onRead);
+        const auto zStack = readLevelStack(ds, zVar, time, member, onRead);
         markGenerating(progress);
-        return analysis::extractSounding(tStack, rhStack, point, uStack, vStack);
+        return analysis::extractSounding(tStack, rhStack, point, uStack, vStack, zStack);
     }
     // Native model-level path: pressure comes from the `pres` field, dewpoint from
     // specific humidity `q`.
@@ -147,8 +160,10 @@ analysis::Sounding computeSounding(readers::IDataset& ds, core::TimePoint time, 
     const auto qStack = readModelLevelStack(ds, "q", time, member, onRead);
     std::vector<std::pair<double, core::Field2D>> uStack, vStack;
     readWindStacks(ds, time, member, uStack, vStack, /*modelLevels=*/true, onRead);
+    const auto zStack = readModelLevelStack(ds, zVar, time, member, onRead);
     markGenerating(progress);
-    return analysis::extractSoundingModelLevels(tModel, presStack, qStack, point, uStack, vStack);
+    return analysis::extractSoundingModelLevels(tModel, presStack, qStack, point, uStack, vStack,
+                                                zStack);
 }
 
 analysis::CrossSection computeCrossSection(readers::IDataset& ds, const std::string& var,
@@ -156,10 +171,18 @@ analysis::CrossSection computeCrossSection(readers::IDataset& ds, const std::str
                                            const std::vector<core::LatLon>& path, int nSamples,
                                            std::shared_ptr<JobProgress> progress) {
     const auto onRead = readTick(progress);
+    // Height for the isopleth overlay. Sectioning the height field itself is a
+    // reasonable thing to do, and re-reading the same slabs to overlay them on
+    // themselves would double the I/O for nothing.
+    const std::string zVar = heightVar(ds);
     const auto pres = readLevelStack(ds, var, time, member, onRead);
     if (pres.size() >= 2) {
+        // Bound by reference either way: the stack holds every decoded slab, and
+        // copying it to alias it under a second name would double the memory.
+        const auto zRead = zVar == var ? Stack{} : readLevelStack(ds, zVar, time, member, onRead);
+        const Stack& zStack = zVar == var ? pres : zRead;
         markGenerating(progress);
-        return analysis::extractCrossSection(pres, path, nSamples);
+        return analysis::extractCrossSection(pres, path, nSamples, zStack);
     }
     // Native model-level path with a terrain-following pressure axis.
     const auto model = readModelLevelStack(ds, var, time, member, onRead);
@@ -169,8 +192,10 @@ analysis::CrossSection computeCrossSection(readers::IDataset& ds, const std::str
                       var, pres.size(), model.size(), presStack.size());
         return analysis::CrossSection{};
     }
+    const auto zRead = zVar == var ? Stack{} : readModelLevelStack(ds, zVar, time, member, onRead);
+    const Stack& zStack = zVar == var ? model : zRead;
     markGenerating(progress);
-    return analysis::extractCrossSectionModelLevels(model, presStack, path, nSamples);
+    return analysis::extractCrossSectionModelLevels(model, presStack, path, nSamples, zStack);
 }
 
 int estimateSoundingReads(readers::IDataset& ds) {
@@ -179,18 +204,23 @@ int estimateSoundingReads(readers::IDataset& ds) {
     const auto wind = analysis::findWindPair(names);
     const std::string uName = wind ? wind->uName : std::string{};
     const std::string vName = wind ? wind->vName : std::string{};
+    const std::string zName = heightVar(ds);
     if (countPressureLevels(ds, "t") >= 2) {  // isobaric path
         return countPressureLevels(ds, "t") + countPressureLevels(ds, "r") +
-               countPressureLevels(ds, uName) + countPressureLevels(ds, vName);
+               countPressureLevels(ds, uName) + countPressureLevels(ds, vName) +
+               countPressureLevels(ds, zName);
     }
     return countModelLevels(ds, "t") + countModelLevels(ds, "pres") + countModelLevels(ds, "q") +
-           countModelLevels(ds, uName) + countModelLevels(ds, vName);
+           countModelLevels(ds, uName) + countModelLevels(ds, vName) + countModelLevels(ds, zName);
 }
 
 int estimateCrossSectionReads(readers::IDataset& ds, const std::string& var) {
+    const std::string zName = heightVar(ds);
+    const int zPl = zName == var ? 0 : countPressureLevels(ds, zName);  // reused, not re-read
     const int pl = countPressureLevels(ds, var);
-    if (pl >= 2) return pl;
-    return countModelLevels(ds, var) + countModelLevels(ds, "pres");
+    if (pl >= 2) return pl + zPl;
+    const int zMl = zName == var ? 0 : countModelLevels(ds, zName);
+    return countModelLevels(ds, var) + countModelLevels(ds, "pres") + zMl;
 }
 
 }  // namespace met::app::extractions

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <limits>
 
 namespace met::core {
 namespace {
@@ -22,12 +23,14 @@ std::string canon(const std::string& units) {
     if (u == "hpa" || u == "millibar" || u == "mb" || u == "mbar") return "hPa";
     if (u == "m/s" || u == "m s-1" || u == "m s**-1" || u == "meter/second") return "m/s";
     if (u == "kt" || u == "knot" || u == "knots") return "kt";
-    if (u == "gpm" || u == "geopotential meter" || u == "gpdm") return "gpm";
+    if (u == "gpm" || u == "geopotential meter" || u == "gpmeter") return "gpm";
     // Geopotential is NOT geopotential height: Phi [m2/s2] = g * z [gpm]. Keeping
     // them as distinct canonical units means a value in m2/s2 is divided by g on
     // the way to gpm/dam instead of being silently mislabelled by a factor of ~9.81.
     if (u == "m2/s2" || u == "m**2 s**-2" || u == "m2 s-2" || u == "m^2/s^2") return "m2/s2";
-    if (u == "dam" || u == "decameter" || u == "dm") return "dam";
+    // "gpdm" is a geopotential *decametre* — the unit 500 hPa charts are drawn in.
+    // It belongs with dam, not gpm: reading it as gpm is a silent factor of ten.
+    if (u == "dam" || u == "decameter" || u == "dm" || u == "gpdm") return "dam";
     // Deliberately no "1" here: a dimensionless unit is used for mixing ratios,
     // fractional RH, land-sea masks and more, so mapping it to kg/kg would offer a
     // bogus x1000 conversion on unrelated fields.
@@ -76,6 +79,15 @@ std::optional<double> convert(double value, const std::string& from, const std::
 double toHpa(double value, const std::string& units) {
     if (const auto c = convert(value, units, "hPa")) return *c;
     return value > 2000.0 ? value * 1e-2 : value;  // ~Pa vs hPa
+}
+
+double toGeopotentialMeters(double value, const std::string& units) {
+    if (const auto c = convert(value, units, "gpm")) return *c;
+    // Geometric metres are not geopotential metres, but the difference is under
+    // 0.5% below 30 km — irrelevant next to a height label on a log-p axis, and
+    // NetCDF geopotential-height fields routinely ship as plain "m".
+    if (canon(units) == "m") return value;
+    return std::numeric_limits<double>::quiet_NaN();
 }
 
 std::optional<std::string> preferredDisplayUnit(const std::string& units) {

@@ -1148,6 +1148,46 @@ ViewFrame* MainWindow::buildMapFrame() {
 ViewFrame* MainWindow::wrapCrossSection(CrossSectionView* view) {
     auto* panel = new ControlPanel(tr("Cross-section"));
     addColormapControls(panel, view, icons_);  // colormap + range + legend, wired to the section
+
+    // Height isopleths. Disabled — not hidden — when the dataset has no height
+    // field, so the reason the lines are missing is visible rather than guessable.
+    auto* heights = new QCheckBox(panel);
+    heights->setChecked(view->heightContoursEnabled());
+    heights->setAccessibleName(tr("Height contours"));
+    icons_->applyToggleButton(heights, "render-contours");
+    auto describe = [heights](bool available) {
+        heights->setEnabled(available);
+        heights->setToolTip(available ? tr("Overlay lines of equal geopotential height.")
+                                      : tr("This dataset carries no geopotential height field."));
+    };
+    describe(view->hasHeights());
+    connect(view, &CrossSectionView::heightsAvailableChanged, heights, describe);
+    connect(heights, &QCheckBox::toggled, view, &CrossSectionView::setHeightContoursEnabled);
+    panel->addRow(toggleStrip(panel, {heights}));
+
+    return new ViewFrame(view, panel);
+}
+
+ViewFrame* MainWindow::wrapSkewT(SkewTView* view) {
+    auto* panel = new ControlPanel(tr("Skew-T"));
+
+    // Altitude labels on the pressure axis. Disabled — not hidden — when the
+    // dataset has no height field, so the reason the labels are missing is
+    // visible rather than guessable.
+    auto* heights = new QCheckBox(panel);
+    heights->setChecked(view->heightLabelsEnabled());
+    heights->setAccessibleName(tr("Height labels"));
+    icons_->applyToggleButton(heights, "axis-level");
+    auto describe = [heights](bool available) {
+        heights->setEnabled(available);
+        heights->setToolTip(available ? tr("Label the standard isobars with geopotential height.")
+                                      : tr("This dataset carries no geopotential height field."));
+    };
+    describe(view->hasHeights());
+    connect(view, &SkewTView::heightsAvailableChanged, heights, describe);
+    connect(heights, &QCheckBox::toggled, view, &SkewTView::setHeightLabelsEnabled);
+    panel->addRow(toggleStrip(panel, {heights}));
+
     return new ViewFrame(view, panel);
 }
 
@@ -1316,15 +1356,16 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
             }
             auto* view = new SkewTView;
             view->setCoordPrecision(currentCoordPrecision());
-            view->setSounding(s);
-            addAnalysisDock(view, tr("Skew-T"));
+            auto* frame = wrapSkewT(view);  // panel wired first: setSounding tells
+            view->setSounding(s);           // the toggle whether heights exist
+            addAnalysisDock(frame, tr("Skew-T"));
             statusBar()->clearMessage();
             // Follow the time slider via a coalesced + cached re-extraction. Seed the
             // cache with this initial sounding so revisiting this time is instant.
             auto tab = std::make_shared<SoundingTab>();
             tab->epoch = datasetEpoch_;
             tab->cache[std::make_pair(static_cast<std::int64_t>(time.epochSeconds), member)] = s;
-            analyses_.push_back({view,
+            analyses_.push_back({frame,
                                  [this, v = QPointer<SkewTView>(view), point, tab]() {
                                      refreshSoundingTab(v, point, tab);
                                  },
@@ -1437,8 +1478,8 @@ QDockWidget* MainWindow::addAnalysisDock(QWidget* frame, const QString& title) {
                 a->raise();
                 b->show();
                 b->raise();
-                // Even the split — otherwise the cross-section (which carries a control
-                // panel) claims most of the width and squeezes the skew-T.
+                // Even the split — otherwise whichever view asks for more width
+                // claims most of it and squeezes the other.
                 const int half = viewArea_->width() / 2;
                 viewArea_->resizeDocks({a, b}, {half, half}, Qt::Horizontal);
             });

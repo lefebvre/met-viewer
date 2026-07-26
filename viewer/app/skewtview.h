@@ -17,6 +17,13 @@ class SkewTView : public QWidget {
 public:
     explicit SkewTView(QWidget* parent = nullptr);
     void setSounding(const analysis::Sounding& s);
+    // Label each standard isobar with the altitude this sounding puts it at.
+    // No-op for a sounding with no height data.
+    void setHeightLabelsEnabled(bool on);
+    [[nodiscard]] bool heightLabelsEnabled() const { return showHeights_; }
+    // Whether the sounding carries geopotential height at all, i.e. whether the
+    // labels toggle has anything to show.
+    [[nodiscard]] bool hasHeights() const;
     // Decimals for the point's lat/lon in the title, from the source grid spacing
     // (see app::coordPrecision). The sounding carries no grid, so MainWindow sets it.
     void setCoordPrecision(int digits) { coordPrec_ = digits; }
@@ -28,6 +35,12 @@ public:
     }
 
     [[nodiscard]] QSize sizeHint() const override { return {480, 560}; }
+
+signals:
+    // Emitted on every setSounding with whether that sounding carries geopotential
+    // height. The control panel is built before the first sounding arrives, so the
+    // height-labels toggle learns whether it has anything to show from here.
+    void heightsAvailableChanged(bool available);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
@@ -51,6 +64,7 @@ private:
 
     analysis::Sounding s_;
     int coordPrec_ = 2;  // lat/lon decimals in the title
+    bool showHeights_ = true;
 
     // Cursor readout state; cleared when the cursor leaves.
     bool hoverActive_ = false;

@@ -19,8 +19,11 @@ namespace met::app {
 namespace {
 constexpr int kML = 44, kMR = 58, kMT = 24, kMB = 30;  // wide right margin: wind column
 constexpr double kPtop = 100.0, kPbot = 1050.0;        // pressure axis (hPa)
-constexpr double kTmin = -40.0, kTmax = 40.0;          // temperature at the bottom (°C)
-constexpr double kSkew = 0.85;                         // px of x per px of height
+// The isobars that get a line and a label — and, when the sounding carries
+// heights, the pressures whose altitude is labelled inside the diagram.
+constexpr double kIsobars[] = {1000.0, 850.0, 700.0, 500.0, 300.0, 200.0, 100.0};
+constexpr double kTmin = -40.0, kTmax = 40.0;  // temperature at the bottom (°C)
+constexpr double kSkew = 0.85;                 // px of x per px of height
 
 // Inverse Magnus: dewpoint/temperature (°C) whose saturation vapour pressure is es (hPa).
 double tempForEs(double es) {
@@ -48,9 +51,49 @@ bool soundingAt(const analysis::Sounding& s, double press, analysis::SoundingLev
         out.dewpointK = mix(a.dewpointK, b.dewpointK);
         out.windU = mix(a.windU, b.windU);
         out.windV = mix(a.windV, b.windV);
+        // Height interpolates in log-p like everything else here, which is exactly
+        // the hypsometric relation for a layer of constant mean temperature.
+        out.heightGpm = mix(a.heightGpm, b.heightGpm);
         return true;
     }
     return false;
+}
+
+// One legend entry: a line sample and its label.
+struct LegendItem {
+    QColor color;
+    Qt::PenStyle style;
+    double w;
+    QString label;
+};
+
+// The legend's entries and the box they occupy. The box is wanted before the
+// legend is drawn — the height labels down the left edge check it so a label
+// cannot end up hidden underneath — so sizing lives here rather than inline.
+struct Legend {
+    std::vector<LegendItem> items;
+    QRectF box;
+    int textW = 0;
+    int rowH = 0;
+    static constexpr int kSample = 22, kPad = 6, kGap = 6;
+};
+
+Legend legendFor(const QFontMetrics& fm, const QRectF& r) {
+    Legend leg;
+    leg.items = {
+        {QColor(200, 40, 40), Qt::SolidLine, 2.0, SkewTView::tr("Temperature")},
+        {QColor(30, 140, 60), Qt::SolidLine, 2.0, SkewTView::tr("Dewpoint")},
+        {QColor(120, 160, 120), Qt::SolidLine, 0.8, SkewTView::tr("Dry adiabat")},
+        {QColor(120, 140, 170), Qt::DashLine, 0.8, SkewTView::tr("Mixing ratio")},
+        {QColor(200, 120, 120), Qt::SolidLine, 0.8, SkewTView::tr("Isotherm")},
+    };
+    for (const auto& it : leg.items)
+        leg.textW = std::max(leg.textW, fm.horizontalAdvance(it.label));
+    leg.rowH = fm.height() + 2;
+    leg.box = QRectF(r.left() + 6, r.top() + 6,
+                     Legend::kPad * 2 + Legend::kSample + Legend::kGap + leg.textW,
+                     Legend::kPad * 2 + leg.rowH * static_cast<int>(leg.items.size()));
+    return leg;
 }
 }  // namespace
 
@@ -93,7 +136,19 @@ SkewTView::SkewTView(QWidget* parent) : QWidget(parent) {
 
 void SkewTView::setSounding(const analysis::Sounding& s) {
     s_ = s;
+    emit heightsAvailableChanged(hasHeights());
     update();
+}
+
+void SkewTView::setHeightLabelsEnabled(bool on) {
+    if (showHeights_ == on) return;
+    showHeights_ = on;
+    update();
+}
+
+bool SkewTView::hasHeights() const {
+    return std::any_of(s_.levels.begin(), s_.levels.end(),
+                       [](const auto& l) { return !std::isnan(l.heightGpm); });
 }
 
 void SkewTView::paintEvent(QPaintEvent*) {
@@ -152,7 +207,7 @@ void SkewTView::paintEvent(QPaintEvent*) {
     // Isobars.
     p.setClipping(false);
     p.setPen(QColor(120, 120, 120));
-    for (double press : {1000.0, 850.0, 700.0, 500.0, 300.0, 200.0, 100.0}) {
+    for (double press : kIsobars) {
         const double y = yOfP(press);
         p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
         p.drawText(QRectF(0, y - 8, kML - 4, 16), Qt::AlignRight | Qt::AlignVCenter,
@@ -160,6 +215,26 @@ void SkewTView::paintEvent(QPaintEvent*) {
     }
     p.setPen(palette().color(QPalette::Text));
     p.drawRect(r);
+
+    // Geopotential height against the pressure axis: each labelled isobar also
+    // gets the altitude this sounding puts it at, just inside the diagram. Drawn
+    // only when the dataset carried a height field — an altitude inferred from
+    // the temperature trace alone would need a surface height nobody supplied.
+    const Legend leg = legendFor(QFontMetrics(p.font()), r);
+    if (showHeights_ && hasHeights()) {
+        p.setPen(QColor(95, 125, 170));
+        for (double press : kIsobars) {
+            analysis::SoundingLevel lvl{};
+            if (!soundingAt(s_, press, lvl) || std::isnan(lvl.heightGpm)) continue;
+            const double y = yOfP(press);
+            // Sit on top of the isobar, except at the top of the diagram where that
+            // would put the label outside the frame; step aside for the legend
+            // rather than dropping the label it happens to land behind.
+            QRectF box(r.left() + 4, y - 16 < r.top() ? y + 1 : y - 16, 60, 15);
+            if (box.intersects(leg.box)) box.moveLeft(leg.box.right() + 6);
+            p.drawText(box, Qt::AlignLeft | Qt::AlignVCenter, formatHeight(lvl.heightGpm));
+        }
+    }
 
     // Temperature-axis labels along the bottom.
     for (double t = kTmin; t <= kTmax; t += 20) {
@@ -228,43 +303,24 @@ void SkewTView::paintEvent(QPaintEvent*) {
 
     // Legend (top-left, translucent so it stays readable over the background grid).
     if (!s_.levels.empty()) {
-        struct Item {
-            QColor color;
-            Qt::PenStyle style;
-            double w;
-            QString label;
-        };
-        const std::vector<Item> items = {
-            {QColor(200, 40, 40), Qt::SolidLine, 2.0, tr("Temperature")},
-            {QColor(30, 140, 60), Qt::SolidLine, 2.0, tr("Dewpoint")},
-            {QColor(120, 160, 120), Qt::SolidLine, 0.8, tr("Dry adiabat")},
-            {QColor(120, 140, 170), Qt::DashLine, 0.8, tr("Mixing ratio")},
-            {QColor(200, 120, 120), Qt::SolidLine, 0.8, tr("Isotherm")},
-        };
-        const QFontMetrics fm(p.font());
-        int textW = 0;
-        for (const auto& it : items) textW = std::max(textW, fm.horizontalAdvance(it.label));
-        const int rowH = fm.height() + 2;
-        const int sample = 22, padX = 6, gap = 6;
-        const QRectF box(r.left() + 6, r.top() + 6, padX * 2 + sample + gap + textW,
-                         padX * 2 + rowH * static_cast<int>(items.size()));
         QColor bg = palette().color(QPalette::Base);
         bg.setAlpha(215);
         p.setPen(QPen(palette().color(QPalette::Mid), 1.0));
         p.setBrush(bg);
-        p.drawRect(box);
+        p.drawRect(leg.box);
         p.setBrush(Qt::NoBrush);
-        double yy = box.top() + padX + rowH / 2.0;
-        for (const auto& it : items) {
+        double yy = leg.box.top() + Legend::kPad + leg.rowH / 2.0;
+        for (const auto& it : leg.items) {
             QPen pen(it.color, it.w);
             pen.setStyle(it.style);
             p.setPen(pen);
-            const double lx = box.left() + padX;
-            p.drawLine(QPointF(lx, yy), QPointF(lx + sample, yy));
+            const double lx = leg.box.left() + Legend::kPad;
+            p.drawLine(QPointF(lx, yy), QPointF(lx + Legend::kSample, yy));
             p.setPen(palette().color(QPalette::Text));
-            p.drawText(QRectF(lx + sample + gap, yy - rowH / 2.0, textW + 2, rowH),
+            p.drawText(QRectF(lx + Legend::kSample + Legend::kGap, yy - leg.rowH / 2.0,
+                              leg.textW + 2, leg.rowH),
                        Qt::AlignLeft | Qt::AlignVCenter, it.label);
-            yy += rowH;
+            yy += leg.rowH;
         }
     }
 
@@ -303,6 +359,8 @@ void SkewTView::mouseMoveEvent(QMouseEvent* event) {
 
     analysis::SoundingLevel lvl{};
     if (soundingAt(s_, press, lvl)) {
+        if (!std::isnan(lvl.heightGpm))
+            lines << QStringLiteral("Z %1 m").arg(lvl.heightGpm, 0, 'f', 0);
         if (!std::isnan(lvl.tempK)) {
             QString s = QStringLiteral("T %1 °C").arg(lvl.tempK - 273.15f, 0, 'f', 1);
             if (!std::isnan(lvl.dewpointK))

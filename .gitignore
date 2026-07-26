@@ -8,6 +8,8 @@
 *.obj
 compile_commands.json
 .cache/
+# Per-developer configure/build/test presets; CMakePresets.json is the shared set.
+/CMakeUserPresets.json
 
 # Claude Code runtime
 /.claude/

@@ -7,10 +7,15 @@
  *           time (hours since 1900-01-01)
  *   t : NC_SHORT packed (scale_factor/add_offset, _FillValue) as ERA5 ships.
  *   r : NC_FLOAT relative humidity (%), unpacked.
+ *   z : NC_FLOAT geopotential (m2/s2) — ERA5 ships the height axis this way,
+ *       one factor of g away from geopotential metres.
  *
  *   base(lat,lon) = 273.15 + 0.1*lon - 0.2*lat
  *   t = base + 0.06*(plev - 500) + timeIndex   [t@500,time0 == the GRIB fixture]
  *   r = 40 + 40*(plev/1000)                     [higher RH lower down]
+ *   z = g * H(plev) * (1 - 0.0025*(lat - 63))   [ISA height, tilted poleward-low
+ *                                                so a section shows sloping
+ *                                                isopleths rather than flat ones]
  * One t cell at (850 hPa, time 1, j=0, i=0) is set to _FillValue.
  */
 #include <math.h>
@@ -47,7 +52,7 @@ int main(int argc, char** argv) {
     CHECK(nc_def_dim(ncid, "latitude", NLAT, &dlat));
     CHECK(nc_def_dim(ncid, "longitude", NLON, &dlon));
 
-    int vtime, vlev, vlat, vlon, vt, vr;
+    int vtime, vlev, vlat, vlon, vt, vr, vz;
     CHECK(nc_def_var(ncid, "time", NC_DOUBLE, 1, &dt, &vtime));
     CHECK(nc_def_var(ncid, "pressure_level", NC_DOUBLE, 1, &dl, &vlev));
     CHECK(nc_def_var(ncid, "latitude", NC_DOUBLE, 1, &dlat, &vlat));
@@ -55,6 +60,7 @@ int main(int argc, char** argv) {
     const int tdims[4] = {dt, dl, dlat, dlon};
     CHECK(nc_def_var(ncid, "t", NC_SHORT, 4, tdims, &vt));
     CHECK(nc_def_var(ncid, "r", NC_FLOAT, 4, tdims, &vr));
+    CHECK(nc_def_var(ncid, "z", NC_FLOAT, 4, tdims, &vz));
 
     CHECK(nc_put_att_text(ncid, vtime, "units", 33, "hours since 1900-01-01 00:00:00.0"));
     CHECK(nc_put_att_text(ncid, vtime, "calendar", 9, "gregorian"));
@@ -82,6 +88,10 @@ int main(int argc, char** argv) {
     CHECK(nc_put_att_text(ncid, vr, "long_name", 17, "Relative humidity"));
     CHECK(nc_put_att_text(ncid, vr, "standard_name", 17, "relative_humidity"));
 
+    CHECK(nc_put_att_text(ncid, vz, "units", 10, "m**2 s**-2"));
+    CHECK(nc_put_att_text(ncid, vz, "long_name", 12, "Geopotential"));
+    CHECK(nc_put_att_text(ncid, vz, "standard_name", 12, "geopotential"));
+
     CHECK(nc_enddef(ncid));
 
     double lat[NLAT], lon[NLON];
@@ -97,8 +107,12 @@ int main(int argc, char** argv) {
     const size_t n = (size_t)NT * NL * NLAT * NLON;
     short* tdata = (short*)malloc(sizeof(short) * n);
     float* rdata = (float*)malloc(sizeof(float) * n);
+    float* zdata = (float*)malloc(sizeof(float) * n);
+    const double g = 9.80665;
     for (int t = 0; t < NT; ++t) {
         for (int l = 0; l < NL; ++l) {
+            /* ISA height of this pressure surface, in geopotential metres. */
+            const double hIsa = 44330.77 * (1.0 - pow(lev[l] / 1013.25, 0.190263));
             for (int j = 0; j < NLAT; ++j) {
                 for (int i = 0; i < NLON; ++i) {
                     const size_t idx = ((size_t)t * NL + l) * NLAT * NLON + (size_t)j * NLON + i;
@@ -108,16 +122,19 @@ int main(int argc, char** argv) {
                     if (t == 1 && l == 2 && j == 0 && i == 0) packed = fill;
                     tdata[idx] = packed;
                     rdata[idx] = (float)(40.0 + 40.0 * (lev[l] / 1000.0));
+                    zdata[idx] = (float)(g * hIsa * (1.0 - 0.0025 * (lat[j] - 63.0)));
                 }
             }
         }
     }
     CHECK(nc_put_var_short(ncid, vt, tdata));
     CHECK(nc_put_var_float(ncid, vr, rdata));
+    CHECK(nc_put_var_float(ncid, vz, zdata));
     free(tdata);
     free(rdata);
+    free(zdata);
 
     CHECK(nc_close(ncid));
-    printf("wrote %s (t,r: %dx%dx%dx%d)\n", argv[1], NT, NL, NLAT, NLON);
+    printf("wrote %s (t,r,z: %dx%dx%dx%d)\n", argv[1], NT, NL, NLAT, NLON);
     return 0;
 }

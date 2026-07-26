@@ -144,6 +144,8 @@ private:
     ViewFrame* buildMapFrame();
     // Wrap a cross-section view in a ViewFrame with its own colormap/range/legend.
     ViewFrame* wrapCrossSection(CrossSectionView* view);
+    // Wrap a skew-T view in a ViewFrame with its display toggles.
+    ViewFrame* wrapSkewT(SkewTView* view);
     // Add an analysis view as a closable, dockable, floatable panel in the view
     // area (drag its tab to split/tab/float). Deleted on close. Returns the dock.
     QDockWidget* addAnalysisDock(QWidget* frame, const QString& title);
