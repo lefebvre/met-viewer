@@ -10,13 +10,15 @@
 namespace met::analysis {
 
 // One level of a sounding: pressure (hPa), temperature and dewpoint (K, dewpoint
-// NaN if no humidity data), and the earth-relative wind (m/s, NaN if no U/V data).
+// NaN if no humidity data), the earth-relative wind (m/s, NaN if no U/V data),
+// and the geopotential height (gpm, NaN if the dataset carries no height field).
 struct SoundingLevel {
     double pressure;
     float tempK;
     float dewpointK;
-    float windU = std::numeric_limits<float>::quiet_NaN();  // eastward (m/s)
-    float windV = std::numeric_limits<float>::quiet_NaN();  // northward (m/s)
+    float windU = std::numeric_limits<float>::quiet_NaN();      // eastward (m/s)
+    float windV = std::numeric_limits<float>::quiet_NaN();      // northward (m/s)
+    float heightGpm = std::numeric_limits<float>::quiet_NaN();  // geopotential height
 };
 
 struct Sounding {
@@ -36,23 +38,27 @@ struct Sounding {
 // used to derive dewpoint. uStack/vStack (optional) pair pressure with the wind
 // components; when both are present the level's earth-relative wind is filled in
 // (grid-relative components on a projected grid are rotated to east/north).
+// zStack (optional) pairs pressure with a geopotential-height or geopotential
+// field, converted to gpm through the field's own units.
 [[nodiscard]] Sounding extractSounding(
     const std::vector<std::pair<double, core::Field2D>>& tStack,
     const std::vector<std::pair<double, core::Field2D>>& rhStack, core::LatLon point,
     const std::vector<std::pair<double, core::Field2D>>& uStack = {},
-    const std::vector<std::pair<double, core::Field2D>>& vStack = {});
+    const std::vector<std::pair<double, core::Field2D>>& vStack = {},
+    const std::vector<std::pair<double, core::Field2D>>& zStack = {});
 
 // Extract a sounding at `point` from native model-level (hybrid/sigma) data. Each
 // stack is keyed by the model-level index (not pressure); the true pressure at the
 // point is read from `presStack` (the `pres` field on the same levels). Temperature
 // comes from `tStack`; dewpoint from `qStack` (specific humidity) when present.
-// uStack/vStack (optional) fill the earth-relative wind. Levels are returned sorted
-// top (low p) to bottom (high p).
+// uStack/vStack (optional) fill the earth-relative wind, zStack (optional) the
+// geopotential height. Levels are returned sorted top (low p) to bottom (high p).
 [[nodiscard]] Sounding extractSoundingModelLevels(
     const std::vector<std::pair<double, core::Field2D>>& tStack,
     const std::vector<std::pair<double, core::Field2D>>& presStack,
     const std::vector<std::pair<double, core::Field2D>>& qStack, core::LatLon point,
     const std::vector<std::pair<double, core::Field2D>>& uStack = {},
-    const std::vector<std::pair<double, core::Field2D>>& vStack = {});
+    const std::vector<std::pair<double, core::Field2D>>& vStack = {},
+    const std::vector<std::pair<double, core::Field2D>>& zStack = {});
 
 }  // namespace met::analysis

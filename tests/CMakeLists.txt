@@ -15,6 +15,7 @@ add_executable(met_tests
     analysis/sample_test.cpp
     analysis/wind_test.cpp
     analysis/analysis_tools_test.cpp
+    analysis/heights_test.cpp
     analysis/derived_test.cpp
     readers/grib_reader_test.cpp
     readers/grib1_test.cpp
@@ -65,6 +66,7 @@ add_executable(met_app_tests
     app/fieldcache_test.cpp
     app/hoverreadout_test.cpp
     app/plotview2d_test.cpp
+    app/crosssectionview_test.cpp
     app/skewtview_test.cpp
     app/timecontroller_test.cpp
 )

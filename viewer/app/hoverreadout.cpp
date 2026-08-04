@@ -132,4 +132,10 @@ QString formatValueWithUnits(double value, const QString& units) {
     return s;
 }
 
+QString formatHeight(double gpm) {
+    if (std::isnan(gpm)) return QStringLiteral("—");
+    if (std::abs(gpm) < 1000.0) return QStringLiteral("%1 m").arg(gpm, 0, 'f', 0);
+    return QStringLiteral("%1 km").arg(gpm / 1000.0, 0, 'f', 1);
+}
+
 }  // namespace met::app

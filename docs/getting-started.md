@@ -49,7 +49,7 @@ QT_QPA_PLATFORM=xcb ./build/release/viewer/app/met_viewer tests/fixtures/era5_t_
 
 | Fixture | What it is | Good for |
 | --- | --- | --- |
-| `era5_t_pl.nc` | ERA5-shaped NetCDF: temperature `t` + humidity `r` on 9 pressure levels, 2 times | levels, contours, cross-sections, soundings |
+| `era5_t_pl.nc` | ERA5-shaped NetCDF: temperature `t`, humidity `r`, geopotential `z` on 9 pressure levels, 2 times | levels, contours, cross-sections, soundings, height labels |
 | `wind_uv_850.grib2` | GRIB2 U/V wind at 850 hPa | wind barbs / streamlines, derived wind quantities |
 | `lambert_sfc.grib2` | GRIB2 surface field on a **Lambert** projected grid | projected-grid warp over a basemap |
 | `small_latlon.arl` | NOAA **ARL** packed file (surface + 1000 hPa), over N. America | the ARL reader |
@@ -270,7 +270,14 @@ A new **Section** tab opens: your path along the x-axis, a log-pressure y-axis, 
 the field colormapped through the section's own color controls (with its own
 colorbar). It re-extracts as you scrub time.
 
-![A vertical cross-section of temperature with a log-pressure y-axis](images/13-cross-section.png)
+When the file carries geopotential height (`gh`, or ERA5's geopotential `z`), the
+section is overlaid with **labelled isopleths of height** — the contour toggle in
+its control panel turns them off. Height cannot be a second y-axis here: a pressure
+surface tilts along the path, so its altitude is a field over the section, not a
+ladder beside it. The cursor readout adds the height at the cursor. The toggle is
+greyed out, not hidden, for a dataset with no height field.
+
+![A vertical cross-section of temperature with a log-pressure y-axis and labelled geopotential-height isopleths](images/13-cross-section.png)
 
 ### Skew-T sounding
 
@@ -285,7 +292,13 @@ adiabats, and mixing-ratio lines in the background; the **temperature** (red) an
 **dewpoint** (green) traces; a **legend**; and — when the file has wind — a column
 of **wind barbs** down the right margin. It follows the time slider.
 
-![A skew-T log-p sounding with temperature, dewpoint, and a wind-barb column](images/14-skewt-sounding.png)
+If the file carries geopotential height (`gh`, or ERA5's geopotential `z`), each
+labelled isobar also gets the **altitude** the sounding puts it at, down the left
+edge of the diagram, and the cursor readout adds a `Z` line in metres. Heights are
+read from the file, never inferred from the temperature trace, so a file without
+them simply shows none.
+
+![A skew-T log-p sounding with temperature, dewpoint, a wind-barb column, and geopotential-height labels on the pressure axis](images/14-skewt-sounding.png)
 
 ### Time series
 

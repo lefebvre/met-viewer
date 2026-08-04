@@ -19,6 +19,15 @@ namespace met::core {
 // Convenience for readers/analysis that receive pressure in Pa or hPa.
 [[nodiscard]] double toHpa(double value, const std::string& units);
 
+// Convert a height/geopotential sample to geopotential metres (gpm), for the
+// height axis of a sounding or cross-section. Handles gpm/dam and geopotential
+// (m2/s2, divided by g); geometric metres are taken as gpm, which they match to
+// better than 0.5% through the whole troposphere — far below what a plot shows.
+// Returns NaN for units it cannot place, so a mislabelled field reads as "no
+// height" rather than as a wrong altitude. There is deliberately no magnitude
+// heuristic here: 5000 is a plausible sample in gpm *and* in m2/s2.
+[[nodiscard]] double toGeopotentialMeters(double value, const std::string& units);
+
 // A friendlier display alternative for a native unit, if one exists (e.g. "K"
 // -> "Cel"). Returns nullopt when the native unit is already the sensible one.
 [[nodiscard]] std::optional<std::string> preferredDisplayUnit(const std::string& units);

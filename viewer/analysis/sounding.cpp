@@ -25,6 +25,16 @@ const core::Field2D* fieldAtKey(const std::vector<std::pair<double, core::Field2
         if (std::abs(k - key) < 1e-6) return &f;
     return nullptr;
 }
+
+// Geopotential height (gpm) sampled from `zfield` at `point`, converted through
+// the field's own units so geopotential (m2/s2) lands on the same axis as a
+// height in gpm. NaN when there is no field, no data, or unplaceable units.
+float heightAt(const core::Field2D* zfield, core::LatLon point) {
+    if (!zfield) return std::numeric_limits<float>::quiet_NaN();
+    const float raw = sampleBilinear(*zfield, point);
+    if (std::isnan(raw)) return std::numeric_limits<float>::quiet_NaN();
+    return static_cast<float>(core::toGeopotentialMeters(raw, zfield->meta.units));
+}
 }  // namespace
 
 float dewpointFromRH(float tempK, float rhPercent) {
@@ -57,7 +67,8 @@ Sounding extractSounding(const std::vector<std::pair<double, core::Field2D>>& tS
                          const std::vector<std::pair<double, core::Field2D>>& rhStack,
                          core::LatLon point,
                          const std::vector<std::pair<double, core::Field2D>>& uStack,
-                         const std::vector<std::pair<double, core::Field2D>>& vStack) {
+                         const std::vector<std::pair<double, core::Field2D>>& vStack,
+                         const std::vector<std::pair<double, core::Field2D>>& zStack) {
     Sounding s;
     s.point = point;
     for (const auto& [pressure, tfield] : tStack) {
@@ -79,6 +90,7 @@ Sounding extractSounding(const std::vector<std::pair<double, core::Field2D>>& tS
             lvl.windU = uv.u;
             lvl.windV = uv.v;
         }
+        lvl.heightGpm = heightAt(fieldAtPressure(zStack, pressure), point);
         s.levels.push_back(std::move(lvl));
     }
     // Sort top (low pressure) to bottom (high pressure).
@@ -93,7 +105,8 @@ Sounding extractSoundingModelLevels(const std::vector<std::pair<double, core::Fi
                                     const std::vector<std::pair<double, core::Field2D>>& qStack,
                                     core::LatLon point,
                                     const std::vector<std::pair<double, core::Field2D>>& uStack,
-                                    const std::vector<std::pair<double, core::Field2D>>& vStack) {
+                                    const std::vector<std::pair<double, core::Field2D>>& vStack,
+                                    const std::vector<std::pair<double, core::Field2D>>& zStack) {
     Sounding s;
     s.point = point;
     for (const auto& [levelKey, tfield] : tStack) {
@@ -116,6 +129,7 @@ Sounding extractSoundingModelLevels(const std::vector<std::pair<double, core::Fi
             lvl.windU = uv.u;
             lvl.windV = uv.v;
         }
+        lvl.heightGpm = heightAt(fieldAtKey(zStack, levelKey), point);
         s.levels.push_back(lvl);
     }
     std::sort(s.levels.begin(), s.levels.end(), [](const SoundingLevel& a, const SoundingLevel& b) {

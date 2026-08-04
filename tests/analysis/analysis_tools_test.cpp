@@ -133,6 +133,85 @@ TEST(Sounding, ExtractsWindProfileWhenUVPresent) {
     }
 }
 
+TEST(Sounding, ReadsGeopotentialHeightThroughItsOwnUnits) {
+    std::vector<std::pair<double, core::Field2D>> t = {{850.0, linearField(21.0)},
+                                                       {500.0, linearField(0.0)}};
+    const std::vector<std::pair<double, core::Field2D>> rh;
+
+    // Geopotential (m2/s2), as ERA5 ships it: 5500 gpm at 500 hPa, 1500 at 850.
+    core::Field2D z500 = linearField(0.0), z850 = linearField(0.0);
+    z500.meta.units = z850.meta.units = "m**2 s**-2";
+    z500.values.assign(z500.values.size(), static_cast<float>(5500.0 * 9.80665));
+    z850.values.assign(z850.values.size(), static_cast<float>(1500.0 * 9.80665));
+    const std::vector<std::pair<double, core::Field2D>> z = {{850.0, z850}, {500.0, z500}};
+
+    const auto s = analysis::extractSounding(t, rh, {64, 12}, {}, {}, z);
+    ASSERT_EQ(s.levels.size(), 2u);
+    EXPECT_NEAR(s.levels.front().heightGpm, 5500.0f, 0.5f);  // 500 hPa
+    EXPECT_NEAR(s.levels.back().heightGpm, 1500.0f, 0.5f);   // 850 hPa
+
+    // No height stack -> no height, rather than a guess from the temperature trace.
+    const auto noZ = analysis::extractSounding(t, rh, {64, 12});
+    for (const auto& lvl : noZ.levels) EXPECT_TRUE(std::isnan(lvl.heightGpm));
+}
+
+TEST(Sounding, ModelLevelsCarryHeight) {
+    core::Field2D pres = linearField(0.0);
+    pres.meta.units = "hPa";
+    core::Field2D p1 = pres, p2 = pres;
+    p1.values.assign(p1.values.size(), 500.0f);
+    p2.values.assign(p2.values.size(), 850.0f);
+    const std::vector<std::pair<double, core::Field2D>> presStack = {{1.0, p1}, {2.0, p2}};
+    const std::vector<std::pair<double, core::Field2D>> t = {{1.0, linearField(0.0)},
+                                                             {2.0, linearField(21.0)}};
+
+    core::Field2D z1 = linearField(0.0), z2 = linearField(0.0);
+    z1.meta.units = z2.meta.units = "gpm";
+    z1.values.assign(z1.values.size(), 5500.0f);
+    z2.values.assign(z2.values.size(), 1500.0f);
+    const std::vector<std::pair<double, core::Field2D>> z = {{1.0, z1}, {2.0, z2}};
+
+    const auto s = analysis::extractSoundingModelLevels(t, presStack, {}, {64, 12}, {}, {}, z);
+    ASSERT_EQ(s.levels.size(), 2u);
+    EXPECT_NEAR(s.levels.front().heightGpm, 5500.0f, 0.5f);  // sorted top-down: 500 hPa
+    EXPECT_NEAR(s.levels.back().heightGpm, 1500.0f, 0.5f);
+}
+
+TEST(CrossSection, HeightsFollowTheLevelOrderAndConvertToGpm) {
+    std::vector<std::pair<double, core::Field2D>> stack = {{850.0, linearField(21.0)},
+                                                           {500.0, linearField(0.0)}};
+    core::Field2D z500 = linearField(0.0), z850 = linearField(0.0);
+    z500.meta.units = z850.meta.units = "dam";  // decametres, as height charts are drawn
+    z500.values.assign(z500.values.size(), 550.0f);
+    z850.values.assign(z850.values.size(), 150.0f);
+    const std::vector<std::pair<double, core::Field2D>> z = {{850.0, z850}, {500.0, z500}};
+
+    const auto cs = analysis::extractCrossSection(stack, {{68, 4}, {58, 26}}, 20, z);
+    ASSERT_EQ(cs.heights.size(), 2u);
+    ASSERT_EQ(cs.heights.front().size(), 20u);
+    // Levels are sorted top-first, and heights ride along with them.
+    EXPECT_DOUBLE_EQ(cs.pressures.front().front(), 500.0);
+    EXPECT_NEAR(cs.heights.front().front(), 5500.0, 1e-6);
+    EXPECT_NEAR(cs.heights.back().front(), 1500.0, 1e-6);
+
+    // A section built without a height stack reports none at all, so a view can
+    // check one condition instead of scanning for finite values.
+    const auto noZ = analysis::extractCrossSection(stack, {{68, 4}, {58, 26}}, 20);
+    EXPECT_TRUE(noZ.heights.empty());
+}
+
+TEST(CrossSection, HeightsInUnplaceableUnitsAreDroppedNotGuessed) {
+    std::vector<std::pair<double, core::Field2D>> stack = {{500.0, linearField(0.0)},
+                                                           {850.0, linearField(21.0)}};
+    core::Field2D bogus = linearField(0.0);
+    bogus.meta.units = "furlong";
+    bogus.values.assign(bogus.values.size(), 5500.0f);
+    const std::vector<std::pair<double, core::Field2D>> z = {{500.0, bogus}, {850.0, bogus}};
+
+    const auto cs = analysis::extractCrossSection(stack, {{68, 4}, {58, 26}}, 20, z);
+    EXPECT_TRUE(cs.heights.empty());
+}
+
 TEST(TimeSeries, SamplesEachTime) {
     core::TimePoint t0{100}, t1{200}, t2{300};
     std::vector<std::pair<core::TimePoint, core::Field2D>> stack = {

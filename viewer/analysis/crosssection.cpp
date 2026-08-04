@@ -21,6 +21,37 @@ float sampleAt(const core::Field2D& field, const core::GridIndex& gi) {
                        : std::numeric_limits<float>::quiet_NaN();
 }
 
+// The field in `stack` whose key matches `key`, or null if none. Keys are level
+// pressures on the isobaric path and model-level indices on the native path.
+const core::Field2D* fieldAtKey(const std::vector<std::pair<double, core::Field2D>>& stack,
+                                double key) {
+    for (const auto& [k, f] : stack)
+        if (std::abs(k - key) < 1e-6) return &f;
+    return nullptr;
+}
+
+// One row of geopotential heights (gpm) sampled along the path, converted through
+// the field's own units. All-NaN when the level has no height field.
+std::vector<double> heightRow(const core::Field2D* zfield,
+                              const std::vector<core::GridIndex>& pathIdx) {
+    std::vector<double> row(pathIdx.size(), std::numeric_limits<double>::quiet_NaN());
+    if (!zfield) return row;
+    for (std::size_t i = 0; i < pathIdx.size(); ++i) {
+        const float raw = sampleAt(*zfield, pathIdx[i]);
+        if (!std::isnan(raw)) row[i] = core::toGeopotentialMeters(raw, zfield->meta.units);
+    }
+    return row;
+}
+
+// Drop a height field that came out entirely NaN, so views can treat "no heights"
+// as one condition (an empty vector) instead of two.
+void dropIfAllNaN(std::vector<std::vector<double>>& heights) {
+    for (const auto& row : heights)
+        for (double h : row)
+            if (std::isfinite(h)) return;
+    heights.clear();
+}
+
 // Mean of the finite entries, or +inf if none (sorts such a level to the bottom).
 double finiteMean(const std::vector<double>& v) {
     double sum = 0.0;
@@ -36,7 +67,8 @@ double finiteMean(const std::vector<double>& v) {
 }  // namespace
 
 CrossSection extractCrossSection(const std::vector<std::pair<double, core::Field2D>>& levelStack,
-                                 const std::vector<core::LatLon>& vertices, int nSamples) {
+                                 const std::vector<core::LatLon>& vertices, int nSamples,
+                                 const std::vector<std::pair<double, core::Field2D>>& zStack) {
     CrossSection cs;
     if (levelStack.empty() || vertices.size() < 2 || nSamples < 2) return cs;
 
@@ -71,14 +103,19 @@ CrossSection extractCrossSection(const std::vector<std::pair<double, core::Field
         for (const core::GridIndex& gi : pathIdx) row.push_back(sampleAt(field, gi));
         cs.values.push_back(std::move(row));
         cs.pressures.emplace_back(cs.points.size(), pressure);  // broadcast isobaric level
+        // The pressure is one number per level; the height of that surface is not,
+        // so it is sampled column by column like the value itself.
+        if (!zStack.empty()) cs.heights.push_back(heightRow(fieldAtKey(zStack, pressure), pathIdx));
     }
+    dropIfAllNaN(cs.heights);
     return cs;
 }
 
 CrossSection extractCrossSectionModelLevels(
     const std::vector<std::pair<double, core::Field2D>>& levelStack,
     const std::vector<std::pair<double, core::Field2D>>& presStack,
-    const std::vector<core::LatLon>& vertices, int nSamples) {
+    const std::vector<core::LatLon>& vertices, int nSamples,
+    const std::vector<std::pair<double, core::Field2D>>& zStack) {
     CrossSection cs;
     if (levelStack.empty() || presStack.empty() || vertices.size() < 2 || nSamples < 2) return cs;
 
@@ -93,6 +130,7 @@ CrossSection extractCrossSectionModelLevels(
     struct Row {
         std::vector<float> values;
         std::vector<double> pressures;
+        std::vector<double> heights;
         double meanP;
     };
     // Project the path to grid indices once — every level shares the same grid.
@@ -104,12 +142,7 @@ CrossSection extractCrossSectionModelLevels(
     std::vector<Row> rows;
     rows.reserve(levelStack.size());
     for (const auto& [levelKey, vfield] : levelStack) {
-        const core::Field2D* pfield = nullptr;
-        for (const auto& [k, f] : presStack)
-            if (std::abs(k - levelKey) < 1e-6) {
-                pfield = &f;
-                break;
-            }
+        const core::Field2D* pfield = fieldAtKey(presStack, levelKey);
         if (!pfield) continue;  // no pressure at this level
 
         Row row;
@@ -121,6 +154,7 @@ CrossSection extractCrossSectionModelLevels(
             row.pressures.push_back(std::isnan(rawP) ? std::numeric_limits<double>::quiet_NaN()
                                                      : core::toHpa(rawP, pfield->meta.units));
         }
+        if (!zStack.empty()) row.heights = heightRow(fieldAtKey(zStack, levelKey), pathIdx);
         row.meanP = finiteMean(row.pressures);
         rows.push_back(std::move(row));
     }
@@ -133,7 +167,9 @@ CrossSection extractCrossSectionModelLevels(
     for (auto& r : rows) {
         cs.values.push_back(std::move(r.values));
         cs.pressures.push_back(std::move(r.pressures));
+        if (!zStack.empty()) cs.heights.push_back(std::move(r.heights));
     }
+    dropIfAllNaN(cs.heights);
     return cs;
 }
 

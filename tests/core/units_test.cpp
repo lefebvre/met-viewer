@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 #include "viewer/core/units.h"
 
 using namespace met::core;
@@ -39,6 +41,24 @@ TEST(Units, GeopotentialIsDistinctFromGeopotentialHeight) {
     // Geopotential reads naturally as a height, so offer that as the display unit.
     ASSERT_TRUE(preferredDisplayUnit("m2/s2").has_value());
     EXPECT_EQ(*preferredDisplayUnit("m2/s2"), "gpm");
+}
+
+// Everything a height axis can be spelled as lands in geopotential metres, and
+// anything else lands nowhere rather than at a plausible wrong altitude.
+TEST(Units, ToGeopotentialMeters) {
+    EXPECT_NEAR(toGeopotentialMeters(5500.0, "gpm"), 5500.0, 1e-9);
+    EXPECT_NEAR(toGeopotentialMeters(5500.0, "m"), 5500.0, 1e-9);  // geometric ~ geopotential
+    EXPECT_NEAR(toGeopotentialMeters(550.0, "dam"), 5500.0, 1e-9);
+    EXPECT_NEAR(toGeopotentialMeters(5500.0 * 9.80665, "m**2 s**-2"), 5500.0, 1e-6);
+    EXPECT_TRUE(std::isnan(toGeopotentialMeters(5500.0, "K")));
+    EXPECT_TRUE(std::isnan(toGeopotentialMeters(5500.0, "")));
+}
+
+// "gpdm" is a geopotential decametre — the unit a 500 hPa height chart is drawn
+// in. Reading it as gpm puts the 500 hPa surface at 550 m.
+TEST(Units, GeopotentialDecametresAreDecametres) {
+    EXPECT_NEAR(*convert(550.0, "gpdm", "gpm"), 5500.0, 1e-9);
+    EXPECT_NEAR(toGeopotentialMeters(550.0, "gpdm"), 5500.0, 1e-9);
 }
 
 // A dimensionless "1" is used for masks, fractions and ratios alike, so it must

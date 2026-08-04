@@ -49,6 +49,11 @@ void paintHoverReadout(QPainter& p, const QRectF& plotRect, QPointF at, const QS
 // exists (see core::preferredDisplayUnit). Empty `units` yields just the number.
 [[nodiscard]] QString formatValueWithUnits(double value, const QString& units);
 
+// "5.4 km" — a geopotential height for a compact axis or contour label: metres up
+// to a kilometre, then kilometres, which is how the number is read off a chart.
+// Cursor readouts print the plain metres instead, where the precision is wanted.
+[[nodiscard]] QString formatHeight(double gpm);
+
 // Decimal places for a lat/lon readout, chosen from the source grid spacing
 // (core::gridSpacingDeg): 2 (~1 km) for synoptic-scale grids, 3 (~0.1 km) for
 // high-resolution convection-allowing data finer than ~5 km. `spacingDeg <= 0`
