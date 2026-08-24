@@ -167,6 +167,25 @@ page, unzip, and run `bin\met_viewer.exe` — Qt and PROJ's data are bundled, so
 nothing needs installing. Tagged releases additionally publish the signed-off
 AppImage and NSIS installer; see [Installers](#installers).
 
+## Fuzzing
+
+The ARL reader is the only hand-rolled format decoder in the tree — everything
+else delegates to ecCodes or netcdf-c/HDF5 — so it carries a libFuzzer harness
+over the open + decode path:
+
+```sh
+cmake --preset fuzz -DCMAKE_CXX_COMPILER=clang++
+cmake --build --preset fuzz
+./build/fuzz/tests/fuzz/arl_fuzz -max_total_time=300 tests/fuzz/corpus
+```
+
+Clang-only (libFuzzer has no GCC or MSVC equivalent), so it is opt-in via
+`MET_ENABLE_FUZZING` and is not part of the CI matrix; a 10-second smoke run over
+the seed corpus is registered with ctest so the harness cannot rot. A `ReadError`
+is the *expected* result for a malformed input — findings are crashes, hangs, and
+sanitizer reports. See [`tests/fuzz/corpus/README.md`](tests/fuzz/corpus/README.md)
+for what belongs in the corpus.
+
 ## License
 
 met-viewer is released under the [BSD 3-Clause License](LICENSE).

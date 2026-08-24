@@ -85,3 +85,8 @@ target_compile_definitions(met_app_tests PRIVATE
 )
 qt_import_plugins(met_app_tests INCLUDE Qt6::QMinimalIntegrationPlugin)
 gtest_discover_tests(met_app_tests DISCOVERY_MODE PRE_TEST)
+
+# Fuzz harnesses are Clang-only and opt-in; see tests/fuzz/CMakeLists.txt.
+if(MET_ENABLE_FUZZING)
+    add_subdirectory(fuzz)
+endif()

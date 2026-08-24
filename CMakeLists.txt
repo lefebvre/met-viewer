@@ -14,6 +14,9 @@ include(cmake/Sanitizers.cmake)
 include(cmake/Format.cmake)
 
 option(MET_BUILD_TESTS "Build unit tests" ON)
+# Clang-only (libFuzzer), so it is opt-in rather than part of the default build or
+# of CI's GCC/MSVC matrix. See tests/fuzz/ and the `fuzz` preset.
+option(MET_ENABLE_FUZZING "Build the libFuzzer harnesses (requires Clang)" OFF)
 
 add_subdirectory(viewer/core)
 add_subdirectory(viewer/readers)
