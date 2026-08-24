@@ -159,3 +159,14 @@ Every Windows run uploads a **portable build** as a workflow artifact
 page, unzip, and run `bin\met_viewer.exe` — Qt and PROJ's data are bundled, so
 nothing needs installing. Tagged releases additionally publish the signed-off
 AppImage and NSIS installer; see [Installers](#installers).
+
+## License
+
+met-viewer is released under the [BSD 3-Clause License](LICENSE).
+
+The dependencies it links keep their own terms. Qt6 is linked **dynamically** in
+the distributed builds specifically so that the LGPL-3.0 relinking right is
+preserved for anyone who receives an AppImage or installer; ecCodes is Apache-2.0,
+PROJ and netcdf-c are MIT-style, and HDF5 carries its own BSD-style license.
+Basemap tiles are not redistributed — they are fetched at runtime from the source
+the user selects, under that source's terms.
