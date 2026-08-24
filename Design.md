@@ -20,14 +20,19 @@ Strict layering; Qt only in the top layers so core/readers/analysis are testable
 viewer/
 ├── core/       met_core     (PROJ, fmt)      grid.h field.h catalog.h crs.h units.h timeaxis.h geo.h log.h
 ├── readers/    met_readers  (+eccodes, netcdf-c)  ireader.h detect.cpp grib/ netcdf/ arl/
-├── analysis/   met_analysis (met_core)       sample, crosssection, wind, streamline
-├── render/     met_render   (Qt6::Gui ONLY)  colormap, warp, contour, tilemath, vectoroverlay
+├── analysis/   met_analysis (met_core)       analysis, sample, crosssection, sounding,
+│                                            timeseries, wind (barbs + streamlines),
+│                                            derived, heights
+├── render/     met_render   (Qt6::Gui ONLY)  colormap, fieldimage, warp, contour, tilemath, windbarb
 └── app/        met_viewer   (Widgets/Network/OpenGLWidgets)
-                mainwindow mapview plotview2d tilelayer layermodel datasetdock
-                timecontroller colorbarwidget crosssection/skewt/timeseries tabs
+                mainwindow mapview plotview2d tilelayer controlpanel datasetdock
+                timecontroller colorbarwidget hoverreadout coastlines theme icons
+                crosssectionview skewtview timeseriesview  fieldcache (LRU + prefetch)
+                glfieldrenderer (opt-in GPU path, off by default)
                 jobs (pooled work) extractions (slab reads + analysis, Qt-free)
 resources/      Natural Earth coastlines/borders as compact binary polylines, icons
-tools/          gen_colormaps.py  ne_convert.py  make_fixtures.sh  arl_writer.py
+tools/          gen_colormaps.py  ne_convert.py  make_fixtures.sh  make_arl_fixture.py
+                make_*_fixture.c (GRIB/NetCDF fixture generators)
 tests/          GoogleTest, fixtures generated at build time
 ```
 
@@ -98,6 +103,8 @@ GoogleTest (+ GMock) via vcpkg, `gtest_discover_tests` + CTest; ritual: `cmake -
 - **M6 — Analysis tools**: cross-section tab, **skew-T log-p sounding tab** (background adiabat/isotherm/mixing-ratio lines, T/Td traces, margin barbs), time-series extraction. *Done: section through a front shows coherent thermal structure; a sounding renders as a proper skew-T.*
 - **M7 — Animation & polish** *(risk #3)* — DONE: FieldCache (LRU, user-set byte budget, decode-ahead prefetch of upcoming timesteps) + in-app playback (TimeController play/pause + fps QTimer stepping the time axis, cache-backed so frames are instant) + QSettings persistence (window state, colormap/basemap/opacity/overlays, cache size, fps) + Preferences dialog. MP4/GIF export deferred (the `--grab` frame capture exists for stills).
 - **GPU fast path** (post-v1) — IMPLEMENTED, opt-in: MapView is a `QOpenGLWidget`; a fragment shader inverts Web Mercator and colormaps a regular lat/lon field per pixel (the CPU pre-applies the colormap to the small grid → RGBA8 texture; the GPU does the expensive warp + hardware bilinear). Needs qtbase built with the `egl` feature (added to vcpkg.json) so the xcb plugin can create a GL context. **Defaults OFF** ("GPU render (experimental)" toggle): on the dev box's AMD Raphael iGPU (radeonsi, Mesa 25.2.7, GL 4.6 Core) the shader samples a correctly-uploaded RGBA8 texture wrongly in part of the field (a driver artifact — verified the CPU-side texel bytes are correct, ruled out float textures, LUT, discard, MSAA, VAO, pixel-store, sampler objects, upload sync). The CPU warp (~38 ms/1080p + FieldCache) is the robust default and renders correctly inside the same QOpenGLWidget.
+
+  **Test coverage is deliberately partial.** `tests/app/mapview_gpu_test.cpp` runs under the headless `minimal` plugin, which has no GL context, so `glReady_` is false and the shader itself never executes. Those tests pin the fallback contract only: enabling the path must not crash, and with GL unavailable it must produce a raster byte-identical to the CPU warp. **The shader path is verified by hand, not by CI** — after touching `glfieldrenderer` or its shader, run the app on a real GPU with the toggle on and compare against the CPU render. Nothing in the automated suite will catch a shader regression.
 
 ## Top risks
 

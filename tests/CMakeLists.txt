@@ -70,6 +70,7 @@ add_executable(met_app_tests
     app/crosssectionview_test.cpp
     app/skewtview_test.cpp
     app/timecontroller_test.cpp
+    app/mapview_gpu_test.cpp
     app/openpipeline_test.cpp
 )
 target_include_directories(met_app_tests PRIVATE ${CMAKE_SOURCE_DIR})
