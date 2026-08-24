@@ -9,6 +9,7 @@
 #include <ctime>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <string>
 
 #include <fmt/format.h>
@@ -27,20 +28,45 @@ using core::TimePoint;
 using core::VerticalLevel;
 
 // Fixed-width ASCII field parsers (ARL headers are Fortran-formatted text).
-long fInt(const char* p, int off, int w) {
-    std::string s(p + off, static_cast<std::size_t>(w));
+//
+// These return nullopt rather than 0 on a bad parse, and callers are expected to
+// turn that into a ReadError for any field they actually consume. Coercing to 0
+// was the one quiet failure in this reader: `nexp` feeds the unpack scale and the
+// date fields feed the time axis, so a silently zeroed field yields a
+// plausible-looking grid full of wrong numbers instead of a refusal. That matters
+// most for the exact bug this reader has already hit once — a misaligned record
+// offset, where every field lands on the wrong bytes and the only signal that
+// anything is wrong is that they stop parsing as numbers.
+//
+// A trailing-garbage check is part of that signal: Fortran writes these fields as
+// digits padded with spaces, so anything else after the number means the offset,
+// not just the value, is suspect.
+[[nodiscard]] bool restIsBlank(const std::string& s, std::size_t pos) {
+    return s.find_first_not_of(" \t", pos) == std::string::npos;
+}
+
+std::optional<long> fInt(const char* p, int off, int w) {
+    const std::string s(p + off, static_cast<std::size_t>(w));
     try {
-        return std::stol(s);
+        std::size_t pos = 0;
+        const long v = std::stol(s, &pos);
+        if (!restIsBlank(s, pos)) return std::nullopt;
+        return v;
     } catch (...) {
-        return 0;
+        return std::nullopt;
     }
 }
-double fDbl(const char* p, int off, int w) {
-    std::string s(p + off, static_cast<std::size_t>(w));
+
+std::optional<double> fDbl(const char* p, int off, int w) {
+    const std::string s(p + off, static_cast<std::size_t>(w));
     try {
-        return std::stod(s);
+        std::size_t pos = 0;
+        const double v = std::stod(s, &pos);
+        if (!restIsBlank(s, pos)) return std::nullopt;
+        if (!std::isfinite(v)) return std::nullopt;
+        return v;
     } catch (...) {
-        return 0.0;
+        return std::nullopt;
     }
 }
 
@@ -51,25 +77,50 @@ struct Label {
     double prec, var1;
 };
 
-Label parseLabel(const char* p) {
+// Returns nullopt if any field the decoder consumes is unparseable, or if the
+// date fields are out of range. `ic`, `kg` and `prec` are read for completeness
+// but nothing downstream uses them, so they stay tolerant — a blank there is not
+// a reason to refuse a record whose data is fine.
+std::optional<Label> parseLabel(const char* p) {
+    const auto iy = fInt(p, 0, 2);
+    const auto im = fInt(p, 2, 2);
+    const auto id = fInt(p, 4, 2);
+    const auto ih = fInt(p, 6, 2);
+    const auto ll = fInt(p, 10, 2);
+    const auto nexp = fInt(p, 18, 4);
+    const auto var1 = fDbl(p, 36, 14);
+    if (!iy || !im || !id || !ih || !ll || !nexp || !var1) return std::nullopt;
+
+    // Range-check the calendar fields. timegmUtc would happily normalize month 47
+    // into some other year, which is exactly the kind of plausible-looking wrong
+    // answer this reader is trying not to produce.
+    if (*iy < 0 || *iy > 99) return std::nullopt;
+    if (*im < 1 || *im > 12) return std::nullopt;
+    if (*id < 1 || *id > 31) return std::nullopt;
+    if (*ih < 0 || *ih > 23) return std::nullopt;
+
     Label l;
-    l.iy = static_cast<int>(fInt(p, 0, 2));
-    l.im = static_cast<int>(fInt(p, 2, 2));
-    l.id = static_cast<int>(fInt(p, 4, 2));
-    l.ih = static_cast<int>(fInt(p, 6, 2));
-    l.ic = static_cast<int>(fInt(p, 8, 2));
-    l.ll = static_cast<int>(fInt(p, 10, 2));
-    l.kg = static_cast<int>(fInt(p, 12, 2));
+    l.iy = static_cast<int>(*iy);
+    l.im = static_cast<int>(*im);
+    l.id = static_cast<int>(*id);
+    l.ih = static_cast<int>(*ih);
+    l.ll = static_cast<int>(*ll);
+    l.nexp = static_cast<int>(*nexp);
+    l.var1 = *var1;
+    l.ic = static_cast<int>(fInt(p, 8, 2).value_or(0));
+    l.kg = static_cast<int>(fInt(p, 12, 2).value_or(0));
+    l.prec = fDbl(p, 22, 14).value_or(0.0);
     l.kvar.assign(p + 14, 4);
     // trim trailing spaces
     while (!l.kvar.empty() && l.kvar.back() == ' ') l.kvar.pop_back();
-    l.nexp = static_cast<int>(fInt(p, 18, 4));
-    l.prec = fDbl(p, 22, 14);
-    l.var1 = fDbl(p, 36, 14);
     return l;
 }
 
 TimePoint labelTime(const Label& l) {
+    // ARL stores a two-digit year with no century. The split at 48 is a HYSPLIT-era
+    // convention: the archive begins in 1948 (the NCEP/NCAR reanalysis epoch), so
+    // 48-99 is 20th century and 00-47 is 21st. Data outside 1948-2047 cannot be
+    // represented in this format at all — do not "fix" this by moving the pivot.
     const int year = l.iy >= 48 ? 1900 + l.iy : 2000 + l.iy;
     return TimePoint{core::timegmUtc(year, l.im, l.id, l.ih, 0, 0)};
 }
@@ -196,8 +247,9 @@ void ArlDataset::scan() {
     // Read the first label + INDX header.
     char label[50];
     if (!in.read(label, 50)) throw ReadError("ARL: file too short");
-    Label first = parseLabel(label);
-    if (first.kvar != "INDX") throw ReadError("ARL: first record is not INDX");
+    const std::optional<Label> first = parseLabel(label);
+    if (!first) throw ReadError("ARL: unparseable first record label");
+    if (first->kvar != "INDX") throw ReadError("ARL: first record is not INDX");
 
     // Read a generous prefix of the INDX data section: enough for the fixed
     // header plus the variable-length level table. (A fixed 1500-byte buffer
@@ -208,19 +260,34 @@ void ArlDataset::scan() {
     if (hdr.size() < 102) throw ReadError("ARL: INDX header too short");
     const char* p = hdr.data();
 
+    // The 12 grid parameters. Indices 0, 1 and 5 (pole lat/lon and the grid
+    // rotation angle) are not consumed by buildGrid, so they stay tolerant; the
+    // rest define the projection and anchor and must parse.
+    static constexpr std::array<bool, 12> kGridFieldRequired = {
+        false, false, true, true, true, false, true, true, true, true, true, false};
     std::array<double, 12> gf{};
-    for (int k = 0; k < 12; ++k) gf[static_cast<std::size_t>(k)] = fDbl(p, 9 + 7 * k, 7);
-    nx_ = static_cast<int>(fInt(p, 93, 3));
-    ny_ = static_cast<int>(fInt(p, 96, 3));
-    const int nz = static_cast<int>(fInt(p, 99, 3));
+    for (int k = 0; k < 12; ++k) {
+        const auto v = fDbl(p, 9 + 7 * k, 7);
+        if (!v && kGridFieldRequired[static_cast<std::size_t>(k)])
+            throw ReadError(fmt::format("ARL: unparseable INDX grid parameter {}", k));
+        gf[static_cast<std::size_t>(k)] = v.value_or(0.0);
+    }
+
+    const auto nxField = fInt(p, 93, 3);
+    const auto nyField = fInt(p, 96, 3);
+    const auto nzField = fInt(p, 99, 3);
+    if (!nxField || !nyField || !nzField) throw ReadError("ARL: unparseable INDX grid dimensions");
+    nx_ = static_cast<int>(*nxField);
+    ny_ = static_cast<int>(*nyField);
+    const int nz = static_cast<int>(*nzField);
     // Grids larger than 999 in either dimension (e.g. HRRR at 1799x1059) store
     // only the low three digits in the I3 header field; the two grid-ID chars in
     // the label carry the thousands. Without this the record length is wrong and
     // every post-INDX record is read from a misaligned offset -> all-garbage data.
     nx_ = decodeGridDim(nx_, static_cast<unsigned char>(label[12]));
     ny_ = decodeGridDim(ny_, static_cast<unsigned char>(label[13]));
-    // Validate the critical dimensions rather than trusting silently-zeroed
-    // parses: a bad header would otherwise yield a degenerate grid / record size.
+    // Range-check on top of the parse check above: a header that parses cleanly
+    // can still be nonsense, and a degenerate dimension yields a bad record size.
     if (nx_ <= 0 || ny_ <= 0 || nz <= 0) throw ReadError("ARL: invalid INDX grid dimensions");
     grid_ = buildGrid(gf, nx_, ny_);
     recLen_ = static_cast<std::int64_t>(nx_) * static_cast<std::int64_t>(ny_) + 50;
@@ -230,9 +297,16 @@ void ArlDataset::scan() {
     int off = 108;
     for (int l = 0; l < nz; ++l) {
         if (off + 8 > static_cast<int>(hdr.size())) break;
-        levelHeight[static_cast<std::size_t>(l)] = fDbl(p, off, 6);
-        const int nvar = static_cast<int>(fInt(p, off + 6, 2));
-        off += 8 + nvar * 8;
+        const auto height = fDbl(p, off, 6);
+        // nvar walks the cursor to the next level entry, so a bad parse here does
+        // not just lose one height — it desynchronizes the rest of the table and
+        // every level below reads from the wrong offset.
+        const auto nvar = fInt(p, off + 6, 2);
+        if (!height || !nvar)
+            throw ReadError(fmt::format("ARL: unparseable INDX level table at level {}", l));
+        if (*nvar < 0) throw ReadError("ARL: negative variable count in INDX level table");
+        levelHeight[static_cast<std::size_t>(l)] = *height;
+        off += 8 + static_cast<int>(*nvar) * 8;
     }
 
     // Infer the vertical coordinate type from the level values. ARL stores
@@ -264,7 +338,17 @@ void ArlDataset::scan() {
         const std::int64_t base = r * recLen_;
         in.seekg(static_cast<std::streamoff>(base), std::ios::beg);
         if (!in.read(label, 50)) break;
-        Label lab = parseLabel(label);
+        // Every record counted by nrec is a whole record, so a label that does not
+        // parse here means the stride is wrong and the whole file is being read at
+        // the wrong offsets — the failure mode the grid-ID decode above exists to
+        // prevent. Refuse the file rather than cataloguing garbage records.
+        const std::optional<Label> parsed = parseLabel(label);
+        if (!parsed)
+            throw ReadError(fmt::format(
+                "ARL: unparseable record label at offset {} (record {} of {}); record stride "
+                "{} is probably wrong",
+                base, r, nrec, recLen_));
+        const Label& lab = *parsed;
         if (lab.kvar == "INDX") continue;
 
         VerticalLevel level;
@@ -293,7 +377,13 @@ Field2D ArlDataset::readField(const core::FieldKey& key) {
 
     char label[50];
     if (!in.read(label, 50)) throw ReadError("ARL: cannot read record label");
-    const Label lab = parseLabel(label);
+    // nexp and var1 from this label set the unpack scale and the running-difference
+    // seed, so decoding with zeroed stand-ins would produce a full field of wrong
+    // values that looks entirely reasonable on a colormap.
+    const std::optional<Label> parsed = parseLabel(label);
+    if (!parsed)
+        throw ReadError(fmt::format("ARL: unparseable record label at offset {}", *handle));
+    const Label& lab = *parsed;
 
     std::vector<unsigned char> cpack(static_cast<std::size_t>(nx_) * static_cast<std::size_t>(ny_));
     if (!in.read(reinterpret_cast<char*>(cpack.data()), static_cast<std::streamsize>(cpack.size())))
