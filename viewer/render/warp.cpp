@@ -2,7 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <limits>
+#include <mutex>
 #include <thread>
 #include <variant>
 #include <vector>
@@ -66,24 +70,115 @@ inline void writePixel(QRgb* scan, int px, float v, const Colormap& cmap, double
               static_cast<int>(std::lround(c.b * a)), static_cast<int>(std::lround(a * 255.0)));
 }
 
+// A process-wide pool of parked worker threads for row chunks.
+//
+// This used to spawn and join a fresh std::thread per warp call. That is correct,
+// and invisible at release rate, but a warp runs on every zoom step, every pan
+// that leaves the blit region, and every colormap or field change — so during a
+// fast zoom the create/join cost lands over and over in the interactive path.
+// Parking the threads moves that cost to the first warp of the process.
+//
+// The pool is deliberately never destroyed. Joining workers from a static
+// destructor buys nothing at process exit and risks racing the rest of static
+// teardown; parked threads are reclaimed when the process goes away.
+class RowPool {
+public:
+    static RowPool& instance() {
+        static RowPool* pool = new RowPool();
+        return *pool;
+    }
+
+    // Runs body(i) for i in [0, count). Chunk 0 runs on the calling thread, the
+    // rest on workers; returns once every chunk has finished.
+    void run(int count, const std::function<void(int)>& body) {
+        // A warp invoked from inside a pool worker runs serially rather than
+        // waiting on the pool: a nested batch could otherwise wait on workers that
+        // are themselves blocked waiting on it.
+        if (count <= 1 || workers_.empty() || isWorker_) {
+            for (int i = 0; i < count; ++i) body(i);
+            return;
+        }
+
+        Batch batch{&body, count - 1, {}, {}};
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (int i = 1; i < count; ++i) queue_.push_back(Task{&batch, i});
+        }
+        cv_.notify_all();
+
+        body(0);
+
+        std::unique_lock<std::mutex> lock(batch.mutex);
+        batch.cv.wait(lock, [&batch] { return batch.remaining == 0; });
+    }
+
+private:
+    struct Batch {
+        const std::function<void(int)>* body;
+        int remaining;
+        std::mutex mutex;
+        std::condition_variable cv;
+    };
+    struct Task {
+        Batch* batch;
+        int index;
+    };
+
+    RowPool() {
+        const unsigned hw = std::thread::hardware_concurrency();
+        const int n = static_cast<int>(hw > 1 ? hw - 1 : 1u);
+        workers_.reserve(static_cast<std::size_t>(n));
+        for (int i = 0; i < n; ++i) workers_.emplace_back([this] { workerLoop(); });
+    }
+
+    void workerLoop() {
+        isWorker_ = true;
+        for (;;) {
+            Task task{};
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                cv_.wait(lock, [this] { return !queue_.empty(); });
+                task = queue_.front();
+                queue_.pop_front();
+            }
+            try {
+                (*task.batch->body)(task.index);
+            } catch (...) {
+                // A chunk that throws still has to release its batch or the caller
+                // waits forever. Warp bodies do not throw; this is the backstop.
+            }
+            {
+                std::lock_guard<std::mutex> lock(task.batch->mutex);
+                --task.batch->remaining;
+            }
+            task.batch->cv.notify_one();
+        }
+    }
+
+    std::vector<std::thread> workers_;
+    std::deque<Task> queue_;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    static thread_local bool isWorker_;
+};
+
+thread_local bool RowPool::isWorker_ = false;
+
 // Run `body(y0, y1)` over the row range, single- or multi-threaded.
 template <typename F>
 void runRows(int height, int threads, F&& body) {
-    if (threads <= 1) {
+    if (threads <= 1 || height <= 1) {
         body(0, height);
         return;
     }
     const int n = std::min(threads, height);
-    std::vector<std::thread> pool;
-    pool.reserve(static_cast<std::size_t>(n));
     const int chunk = (height + n - 1) / n;
-    for (int t = 0; t < n; ++t) {
+    const std::function<void(int)> chunkBody = [&body, chunk, height](int t) {
         const int y0 = t * chunk;
         const int y1 = std::min(y0 + chunk, height);
-        if (y0 >= y1) break;
-        pool.emplace_back([&body, y0, y1] { body(y0, y1); });
-    }
-    for (auto& th : pool) th.join();
+        if (y0 < y1) body(y0, y1);
+    };
+    RowPool::instance().run(n, chunkBody);
 }
 
 // Regular lat/lon path: fractional column depends only on x, row only on y, so
