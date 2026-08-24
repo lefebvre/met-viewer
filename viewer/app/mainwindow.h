@@ -13,6 +13,8 @@
 #include "viewer/analysis/wind.h"
 #include "viewer/app/fieldcache.h"
 #include "viewer/app/jobs.h"
+#include "viewer/app/openpipeline.h"
+#include "viewer/app/preferences.h"
 #include "viewer/core/field.h"
 #include "viewer/core/geo.h"
 #include "viewer/readers/ireader.h"
@@ -35,6 +37,7 @@ struct CrossSection;
 
 namespace met::app {
 
+class AnalysisDockFactory;
 class DatasetDock;
 class PlotView2D;
 class MapView;
@@ -44,6 +47,7 @@ class TimeController;
 class ThemeManager;
 class IconThemer;
 class CrossSectionView;
+class JobMonitor;
 class SkewTView;
 class ViewFrame;
 
@@ -207,41 +211,29 @@ private:
     void loadSettings();
     void saveSettings();
     void openPreferences();
+    // Push prefs_ into the objects that act on it. One place, so the dialog and the
+    // settings restore cannot apply a preference differently (or forget one).
+    void applyPreferences();
     // Ask for an XYZ URL template (the basemap combo's "Custom URL…" entry) and
     // apply it, reverting the combo if the user cancels or the URL is unusable.
     void promptCustomBasemap();
     void addRecentFile(const QString& path);  // record a successfully opened file
     void updateRecentMenu();                  // rebuild the "Open Recent" submenu
 
-    // A batch of opened files: the successfully opened (path, dataset) pairs in
-    // order, plus paths that failed to open (skipped, not fatal).
-    struct OpenBatch {
-        std::vector<std::pair<std::filesystem::path, std::shared_ptr<readers::IDataset>>> opened;
-        QStringList skipped;
-        // Each opened dataset's grid, sampled on the worker thread (nullopt when no
-        // field could be read). Determining this needs a real slab decode, so it is
-        // done here rather than in installBatch, which runs on the GUI thread.
-        std::vector<std::optional<core::GridDef>> grids;
-    };
-    // Open each path, catching per-file failures; bumps progress->done per file if
-    // given. Static + touches no window state so it can run on a worker thread.
-    static OpenBatch openBatch(const std::vector<std::filesystem::path>& paths,
-                               JobProgress* progress);
+    // Choosing what to open and opening it live in app/openpipeline.h as free
+    // functions over plain data — no window state, testable without a widget.
     // Install an opened batch on the GUI thread: merge it into the current set (or
     // replace the set), rebuild the catalog view, and show or preserve the field.
     void installBatch(OpenBatch batch, bool replace);
-    // The paths a request should actually open: for an add, drops any already in
-    // the current set and de-dupes; sorted for deterministic order.
-    std::vector<std::filesystem::path> pathsToOpen(const QStringList& paths, bool replace) const;
 
     // The multi-slab reads and the sounding/cross-section/time-series extractions
     // built on them live in app/extractions.h — they touch no window state, run on
     // the thread pool, and are unit-testable on their own.
 
-    // Background-job progress: show/hide a shared status-bar bar as jobs come and go.
+    // Background-job progress is aggregated by JobMonitor (app/jobmonitor.h); these
+    // forward to it and exist so call sites read the same as before.
     void beginJob(const QString& text, std::shared_ptr<JobProgress> progress);
     void endJob(const std::shared_ptr<JobProgress>& progress);
-    void pollProgress();
 
     std::shared_ptr<readers::IDataset> dataset_;
     // The currently loaded set: the leaf datasets (kept so "Add files" only scans
@@ -260,10 +252,8 @@ private:
     std::vector<std::function<void(bool)>> windWaiters_;
     quint64 datasetEpoch_ = 0;  // bumped on dataset *replace*; invalidates per-tab analysis caches
     bool fieldReadyForStep_ = false;  // current frame's field has settled (for playback gating)
-    FieldCache fieldCache_{1024ull * 1024 * 1024};  // 1 GB default
-    int cacheBudgetMB_ = 1024;
-    int animationFps_ = 6;
-    int prefetchAhead_ = 4;
+    Preferences prefs_;
+    FieldCache fieldCache_{Preferences{}.cacheBudgetBytes()};
 
     // Current selection state.
     std::string currentVar_;
@@ -276,11 +266,9 @@ private:
     core::LatLon demoPoint_{64.0, 12.0};         // sample point for the --demo triggers
     int derivedMode_ = 0;                        // 0 = none; see the Derived combo
     bool showingDerived_ = false;                // a derived quantity is actually on screen
-    int analysisSeq_ = 0;                        // unique object-name counter for analysis docks
-    // --tile: the analysis docks are created asynchronously, so collect the next
-    // `tilePending_` of them and, once the second arrives, split them side by side.
-    int tilePending_ = 0;
-    QDockWidget* tileFirst_ = nullptr;
+    // Creating, naming and arranging the analysis docks (including the --tile
+    // side-by-side split) belongs to AnalysisDockFactory (app/analysisdocks.h).
+    AnalysisDockFactory* analysisDocks_ = nullptr;
 
     // Center is a nested QMainWindow whose dock widgets are the views; users drag a
     // view's tab/title to split the area, tab views together, or float them out.
@@ -331,10 +319,10 @@ private:
     QMenu* recentMenu_ = nullptr;  // File > Open Recent
     QThreadPool* pool_ = nullptr;
 
-    // Background-job progress bar (status bar) and the jobs currently feeding it.
+    // Background-job progress bar (status bar) and the monitor that drives it.
     QProgressBar* progressBar_ = nullptr;
     QTimer* progressTimer_ = nullptr;
-    std::vector<std::shared_ptr<JobProgress>> activeJobs_;
+    JobMonitor* jobMonitor_ = nullptr;
 };
 
 }  // namespace met::app

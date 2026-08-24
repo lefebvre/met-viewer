@@ -70,8 +70,17 @@ add_executable(met_app_tests
     app/crosssectionview_test.cpp
     app/skewtview_test.cpp
     app/timecontroller_test.cpp
+    app/openpipeline_test.cpp
 )
 target_include_directories(met_app_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(met_app_tests PRIVATE met_options met_app GTest::gtest)
+
+# The open-pipeline tests read real fixtures through the reader stack, so this
+# target needs the same fixture/ecCodes paths as met_tests.
+target_compile_definitions(met_app_tests PRIVATE
+    MET_FIXTURE_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
+    MET_ECCODES_DEFINITION_PATH="${_met_vcpkg_installed}/${VCPKG_TARGET_TRIPLET}/share/eccodes/definitions"
+    MET_ECCODES_SAMPLES_PATH="${_met_vcpkg_installed}/${VCPKG_TARGET_TRIPLET}/share/eccodes/samples"
+)
 qt_import_plugins(met_app_tests INCLUDE Qt6::QMinimalIntegrationPlugin)
 gtest_discover_tests(met_app_tests DISCOVERY_MODE PRE_TEST)

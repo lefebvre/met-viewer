@@ -51,6 +51,7 @@
 #include "viewer/analysis/derived.h"
 #include "viewer/analysis/sounding.h"
 #include "viewer/analysis/timeseries.h"
+#include "viewer/app/analysisdocks.h"
 #include "viewer/app/coastlines.h"
 #include "viewer/app/colorbarwidget.h"
 #include "viewer/app/controlpanel.h"
@@ -59,8 +60,10 @@
 #include "viewer/app/extractions.h"
 #include "viewer/app/hoverreadout.h"
 #include "viewer/app/icons.h"
+#include "viewer/app/jobmonitor.h"
 #include "viewer/app/jobs.h"
 #include "viewer/app/mapview.h"
+#include "viewer/app/openpipeline.h"
 #include "viewer/app/plotview2d.h"
 #include "viewer/app/skewtview.h"
 #include "viewer/app/theme.h"
@@ -76,35 +79,6 @@
 
 namespace met::app {
 namespace {
-
-// A FieldKey for the first available record of a catalog (first variable, first
-// level/time/member), or nullopt if the catalog is empty. Used to fetch one
-// representative field cheaply.
-std::optional<core::FieldKey> firstFieldKey(const core::DatasetCatalog& cat) {
-    const auto& vars = cat.variables();
-    if (vars.empty() || vars.front().levels.empty()) return std::nullopt;
-    const auto& v = vars.front();
-    core::FieldKey k;
-    k.varName = v.varName;
-    k.level = v.levels.front();
-    k.validTime = v.times.empty() ? core::TimePoint{} : v.times.front();
-    k.member = v.members.empty() ? -1 : v.members.front();
-    return k;
-}
-
-// The grid of a dataset's first field, or nullopt if it has no readable field.
-// Datasets don't expose a grid directly (a GRIB file may even hold several), so
-// we read one representative field and take its grid. Best-effort: a decode error
-// yields nullopt and the caller treats compatibility as unknown.
-std::optional<core::GridDef> representativeGrid(readers::IDataset& ds) {
-    const auto key = firstFieldKey(ds.catalog());
-    if (!key) return std::nullopt;
-    try {
-        return ds.readField(*key).grid;
-    } catch (const std::exception&) {
-        return std::nullopt;
-    }
-}
 
 // Size a combo to its widest item so its reported sizeHint reflects the width the
 // control actually needs. The control panel is then given that width (see
@@ -232,6 +206,9 @@ void MainWindow::buildUi() {
     // Tab icons for the base views (a tabified dock shows its windowIcon).
     icons_->applyWindowIcon(plotDock_, "view-plot2d");
     icons_->applyWindowIcon(mapDock_, "view-map");
+
+    // New analysis panels tab onto the Map dock and, for --tile, split beside it.
+    analysisDocks_ = new AnalysisDockFactory(viewArea_, mapDock_, plotDock_, this);
 
     connect(plot_, &PlotView2D::probeMoved, this, &MainWindow::onProbeMoved);
     connect(plot_, &PlotView2D::probeLeft, this, &MainWindow::onProbeLeft);
@@ -441,48 +418,22 @@ void MainWindow::buildUi() {
     statusBar()->addPermanentWidget(progressBar_);
     progressTimer_ = new QTimer(this);
     progressTimer_->setInterval(100);
-    connect(progressTimer_, &QTimer::timeout, this, &MainWindow::pollProgress);
+    jobMonitor_ = new JobMonitor(
+        progressBar_, progressTimer_,
+        [this](const QString& msg) {
+            if (msg.isEmpty()) statusBar()->clearMessage();
+            else statusBar()->showMessage(msg);
+        },
+        this);
+    connect(progressTimer_, &QTimer::timeout, jobMonitor_, &JobMonitor::poll);
 }
 
 void MainWindow::beginJob(const QString& text, std::shared_ptr<JobProgress> progress) {
-    activeJobs_.push_back(std::move(progress));
-    if (!text.isEmpty()) statusBar()->showMessage(text);
-    progressBar_->show();
-    if (!progressTimer_->isActive()) progressTimer_->start();
-    pollProgress();
+    jobMonitor_->begin(text, std::move(progress));
 }
 
 void MainWindow::endJob(const std::shared_ptr<JobProgress>& progress) {
-    std::erase(activeJobs_, progress);
-    if (activeJobs_.empty()) {
-        progressTimer_->stop();
-        progressBar_->hide();
-        statusBar()->clearMessage();
-    } else {
-        pollProgress();
-    }
-}
-
-void MainWindow::pollProgress() {
-    if (activeJobs_.empty()) return;
-    long long done = 0, total = 0;
-    bool anyBusy = false;
-    for (const auto& j : activeJobs_) {
-        const int t = j->total.load(std::memory_order_relaxed);
-        // total 0 = opaque decode; generating = slabs loaded, now extracting/rendering.
-        if (t <= 0 || j->generating.load(std::memory_order_relaxed)) {
-            anyBusy = true;
-            continue;
-        }
-        total += t;
-        done += std::min(j->done.load(std::memory_order_relaxed), t);
-    }
-    if (anyBusy || total <= 0) {
-        progressBar_->setRange(0, 0);  // indeterminate / busy
-    } else {
-        progressBar_->setRange(0, static_cast<int>(total));
-        progressBar_->setValue(static_cast<int>(done));
-    }
+    jobMonitor_->end(progress);
 }
 
 void MainWindow::scheduleGrabAndQuit(const QString& pngPath, int delayMs) {
@@ -533,51 +484,9 @@ void MainWindow::onOpenFolderTriggered() {
 
 void MainWindow::openFile(const QString& path) { openFiles({path}, /*replace=*/true); }
 
-std::vector<std::filesystem::path> MainWindow::pathsToOpen(const QStringList& paths,
-                                                           bool replace) const {
-    // For an add, skip files already in the set. De-dupe the request and sort so the
-    // load order is deterministic (HRRR hourly names sort chronologically).
-    std::set<std::filesystem::path> existing;
-    if (!replace)
-        for (const auto& p : loadedPaths_) existing.insert(p);
-
-    std::set<std::filesystem::path> seen;
-    std::vector<std::filesystem::path> out;
-    for (const QString& p : paths) {
-        if (p.isEmpty()) continue;
-        std::filesystem::path fp(p.toStdString());
-        if (existing.count(fp) || !seen.insert(fp).second) continue;
-        out.push_back(std::move(fp));
-    }
-    std::sort(out.begin(), out.end());
-    return out;
-}
-
-MainWindow::OpenBatch MainWindow::openBatch(const std::vector<std::filesystem::path>& paths,
-                                            JobProgress* progress) {
-    OpenBatch batch;
-    for (const auto& path : paths) {
-        try {
-            auto ds = std::shared_ptr<readers::IDataset>(readers::openDataset(path));
-            // Sample the grid here, on the worker thread: it costs a full slab
-            // decode per file, which is exactly what should not happen on the GUI
-            // thread while installing a batch.
-            batch.grids.push_back(representativeGrid(*ds));
-            batch.opened.emplace_back(path, std::move(ds));
-        } catch (const std::exception& e) {
-            // Keep the reason (e.g. "no reader recognizes file") so the skipped list
-            // tells the user why, not just which.
-            MET_LOG_WARN("could not open {}: {}", path.string(), e.what());
-            batch.skipped << (QString::fromStdString(path.filename().string()) + ": " +
-                              QString::fromUtf8(e.what()));
-        }
-        if (progress) progress->done.fetch_add(1, std::memory_order_relaxed);
-    }
-    return batch;
-}
-
 void MainWindow::openFiles(const QStringList& paths, bool replace) {
-    const std::vector<std::filesystem::path> newPaths = pathsToOpen(paths, replace);
+    const std::vector<std::filesystem::path> newPaths =
+        app::pathsToOpen(paths, loadedPaths_, replace);
     if (newPaths.empty()) return;
 
     // Scan the files on the thread pool with a determinate progress bar so a
@@ -588,7 +497,7 @@ void MainWindow::openFiles(const QStringList& paths, bool replace) {
     beginJob(tr("Opening %n file(s)…", nullptr, static_cast<int>(newPaths.size())), progress);
 
     submitCompute<OpenBatch>(
-        *pool_, this, [newPaths, progress]() { return openBatch(newPaths, progress.get()); },
+        *pool_, this, [newPaths, progress]() { return app::openBatch(newPaths, progress.get()); },
         [this, gen, replace, progress](OpenBatch batch) {
             endJob(progress);
             if (gen != openGeneration_) return;  // a newer open superseded this one
@@ -597,10 +506,11 @@ void MainWindow::openFiles(const QStringList& paths, bool replace) {
 }
 
 void MainWindow::openFilesBlocking(const QStringList& paths) {
-    const std::vector<std::filesystem::path> newPaths = pathsToOpen(paths, /*replace=*/true);
+    const std::vector<std::filesystem::path> newPaths =
+        app::pathsToOpen(paths, loadedPaths_, /*replace=*/true);
     if (newPaths.empty()) return;
     ++openGeneration_;  // supersede any in-flight async open
-    installBatch(openBatch(newPaths, nullptr), /*replace=*/true);
+    installBatch(app::openBatch(newPaths, nullptr), /*replace=*/true);
 }
 
 void MainWindow::installBatch(OpenBatch batch, bool replace) {
@@ -997,7 +907,7 @@ void MainWindow::updateShowingLabel() {
 void MainWindow::prefetchAhead() {
     if (!dataset_ || currentTimes_.size() < 2) return;
     const int n = static_cast<int>(currentTimes_.size());
-    for (int step = 1; step <= prefetchAhead_ && step < n; ++step) {
+    for (int step = 1; step <= prefs_.prefetchAhead && step < n; ++step) {
         core::FieldKey key;
         key.varName = currentVar_;
         key.level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
@@ -1433,59 +1343,15 @@ void MainWindow::demoSounding() { onSoundingRequested(demoPoint_); }
 void MainWindow::demoTimeSeries() { onTimeSeriesRequested(demoPoint_); }
 
 void MainWindow::demoTiledLayout() {
-    // Build a cross-section and a skew-T; addAnalysisDock() tiles them side by side
+    // Build a cross-section and a skew-T; the dock factory tiles them side by side
     // once both have been created (the extractions run asynchronously).
-    tilePending_ = 2;
-    tileFirst_ = nullptr;
+    analysisDocks_->tileNext(2);
     demoCrossSection();
     demoSounding();
 }
 
 QDockWidget* MainWindow::addAnalysisDock(QWidget* frame, const QString& title) {
-    auto* dock = new QDockWidget(title, viewArea_);
-    dock->setObjectName(QStringLiteral("analysisDock%1").arg(analysisSeq_++));  // for saveState()
-    dock->setWidget(frame);
-    dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable |
-                      QDockWidget::DockWidgetClosable);
-    dock->setAttribute(Qt::WA_DeleteOnClose);  // closing deletes the dock + its view
-    viewArea_->addDockWidget(Qt::LeftDockWidgetArea, dock);
-    viewArea_->tabifyDockWidget(mapDock_, dock);  // tab with the existing views; drag to split
-    dock->show();
-    dock->raise();
-    // Closed docks are pruned lazily: the QPointer in analyses_ nulls when the dock
-    // is deleted, and refreshAnalyses() drops null entries.
-
-    // --tile: tile the next two analysis docks side by side once both exist.
-    if (tilePending_ > 0) {
-        --tilePending_;
-        if (!tileFirst_) {
-            tileFirst_ = dock;  // wait for the second one
-        } else {
-            // Defer to the next tick so we're not rearranging docks reentrantly from
-            // inside this dock's own creation. Hide the base 2D Plot/Map, leave `a` as
-            // the sole in-layout dock (splitDockWidget only splits a non-tabbed
-            // reference), then split `b` beside it.
-            QDockWidget* a = tileFirst_;
-            QDockWidget* b = dock;
-            tileFirst_ = nullptr;
-            QTimer::singleShot(0, this, [this, a, b]() {
-                // Empty the area, then re-dock `a` (removing its tab-siblings leaves it
-                // floating, so add it back explicitly) and split `b` beside it.
-                for (QDockWidget* d : {plotDock_, mapDock_, a, b}) viewArea_->removeDockWidget(d);
-                viewArea_->addDockWidget(Qt::LeftDockWidgetArea, a);
-                viewArea_->splitDockWidget(a, b, Qt::Horizontal);
-                a->show();
-                a->raise();
-                b->show();
-                b->raise();
-                // Even the split — otherwise whichever view asks for more width
-                // claims most of it and squeezes the other.
-                const int half = viewArea_->width() / 2;
-                viewArea_->resizeDocks({a, b}, {half, half}, Qt::Horizontal);
-            });
-        }
-    }
-    return dock;
+    return analysisDocks_->add(frame, title);
 }
 
 void MainWindow::setContoursChecked(bool on) {
@@ -1718,10 +1584,14 @@ void MainWindow::loadSettings() {
     mapGraticuleCheck_->setChecked(s.value("graticule", true).toBool());
     mapCoastlineCheck_->setChecked(s.value("coastlines", true).toBool());
 
-    cacheBudgetMB_ = s.value("cacheBudgetMB", 1024).toInt();
-    fieldCache_.setBudgetBytes(static_cast<std::size_t>(cacheBudgetMB_) * 1024 * 1024);
-    animationFps_ = s.value("animationFps", 6).toInt();
-    timeController_->setFps(animationFps_);
+    prefs_.cacheBudgetMB = s.value("cacheBudgetMB", Preferences{}.cacheBudgetMB).toInt();
+    prefs_.animationFps = s.value("animationFps", Preferences{}.animationFps).toInt();
+    applyPreferences();
+}
+
+void MainWindow::applyPreferences() {
+    fieldCache_.setBudgetBytes(prefs_.cacheBudgetBytes());
+    timeController_->setFps(prefs_.animationFps);
 }
 
 void MainWindow::saveSettings() {
@@ -1734,8 +1604,8 @@ void MainWindow::saveSettings() {
     s.setValue("opacity", mapOpacitySlider_->value());
     s.setValue("graticule", mapGraticuleCheck_->isChecked());
     s.setValue("coastlines", mapCoastlineCheck_->isChecked());
-    s.setValue("cacheBudgetMB", cacheBudgetMB_);
-    s.setValue("animationFps", animationFps_);
+    s.setValue("cacheBudgetMB", prefs_.cacheBudgetMB);
+    s.setValue("animationFps", prefs_.animationFps);
 }
 
 void MainWindow::addRecentFile(const QString& path) {
@@ -1819,15 +1689,15 @@ void MainWindow::openPreferences() {
     auto* form = new QFormLayout(&dlg);
 
     auto* cacheSpin = new QSpinBox(&dlg);
-    cacheSpin->setRange(16, 16384);
+    cacheSpin->setRange(Preferences::kMinCacheMB, Preferences::kMaxCacheMB);
     cacheSpin->setSuffix(tr(" MB"));
-    cacheSpin->setValue(cacheBudgetMB_);
+    cacheSpin->setValue(prefs_.cacheBudgetMB);
     form->addRow(tr("Field cache budget"), cacheSpin);
 
     auto* fpsSpin = new QSpinBox(&dlg);
-    fpsSpin->setRange(1, 30);
+    fpsSpin->setRange(Preferences::kMinFps, Preferences::kMaxFps);
     fpsSpin->setSuffix(tr(" fps"));
-    fpsSpin->setValue(animationFps_);
+    fpsSpin->setValue(prefs_.animationFps);
     form->addRow(tr("Animation speed"), fpsSpin);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -1836,10 +1706,9 @@ void MainWindow::openPreferences() {
     connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 
     if (dlg.exec() == QDialog::Accepted) {
-        cacheBudgetMB_ = cacheSpin->value();
-        fieldCache_.setBudgetBytes(static_cast<std::size_t>(cacheBudgetMB_) * 1024 * 1024);
-        animationFps_ = fpsSpin->value();
-        timeController_->setFps(animationFps_);
+        prefs_.cacheBudgetMB = cacheSpin->value();
+        prefs_.animationFps = fpsSpin->value();
+        applyPreferences();
     }
 }
 

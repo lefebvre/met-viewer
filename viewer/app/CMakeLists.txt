@@ -11,6 +11,13 @@ add_library(met_app STATIC
     controlpanel.h
     mainwindow.cpp
     mainwindow.h
+    openpipeline.cpp
+    openpipeline.h
+    jobmonitor.cpp
+    jobmonitor.h
+    analysisdocks.cpp
+    analysisdocks.h
+    preferences.h
     plotview2d.cpp
     plotview2d.h
     mapview.cpp
