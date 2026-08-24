@@ -7,6 +7,7 @@ add_executable(met_tests
     core/units_test.cpp
     core/catalog_test.cpp
     core/projected_grid_test.cpp
+    core/crs_sphere_test.cpp
     core/timeaxis_test.cpp
     render/colormap_test.cpp
     render/contour_test.cpp
