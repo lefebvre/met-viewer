@@ -397,9 +397,15 @@ core::Field2D CfDataset::readField(const core::FieldKey& key) {
     const std::size_t li = static_cast<std::size_t>(*handle >> 24);
     const std::size_t ti = static_cast<std::size_t>(*handle & 0xFFFFFF);
 
-    const auto& grid = std::get<RegularLatLonGrid>(grid_);
-    const std::size_t nlat = static_cast<std::size_t>(grid.nlat);
-    const std::size_t nlon = static_cast<std::size_t>(grid.nlon);
+    // Open-time validation rejects anything but a regular lat/lon grid, so this
+    // alternative always holds today. Checked rather than asserted via std::get
+    // so that if that invariant ever weakens, the failure arrives as the
+    // ReadError this interface documents instead of a bad_variant_access that
+    // escapes every `catch (const ReadError&)` in the app.
+    const auto* gridPtr = std::get_if<RegularLatLonGrid>(&grid_);
+    if (!gridPtr) throw ReadError("NetCDF: field is not on a regular lat/lon grid");
+    const std::size_t nlat = static_cast<std::size_t>(gridPtr->nlat);
+    const std::size_t nlon = static_cast<std::size_t>(gridPtr->nlon);
 
     std::vector<std::size_t> start(static_cast<std::size_t>(info.ndims), 0);
     std::vector<std::size_t> count(static_cast<std::size_t>(info.ndims), 1);

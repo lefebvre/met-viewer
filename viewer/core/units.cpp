@@ -3,6 +3,11 @@
 #include <algorithm>
 #include <cctype>
 #include <limits>
+#include <mutex>
+#include <set>
+#include <utility>
+
+#include "viewer/core/log.h"
 
 namespace met::core {
 namespace {
@@ -78,7 +83,27 @@ std::optional<double> convert(double value, const std::string& from, const std::
 
 double toHpa(double value, const std::string& units) {
     if (const auto c = convert(value, units, "hPa")) return *c;
-    return value > 2000.0 ? value * 1e-2 : value;  // ~Pa vs hPa
+
+    // Fallback: guess Pa vs hPa from magnitude. The guess is defensible in a way
+    // the geopotential one is not — no realistic pressure sample is ambiguous
+    // between Pa and hPa at 2000, whereas 5000 is plausible in both gpm and
+    // m2/s2, which is why toGeopotentialMeters below refuses to guess at all.
+    // Still a guess, though, so it announces itself rather than silently deciding
+    // what a pressure axis means.
+    const bool assumePa = value > 2000.0;
+
+    // Once per (unit, assumption), not once per call: a cross-section runs this
+    // per path point per level, and a warning per sample would bury the message
+    // it is trying to deliver.
+    static std::mutex warnedMutex;
+    static std::set<std::pair<std::string, bool>> warned;
+    {
+        std::lock_guard<std::mutex> lock(warnedMutex);
+        if (warned.emplace(units, assumePa).second)
+            logf(LogLevel::Warn, "toHpa: unrecognized pressure unit '{}'; assuming {}", units,
+                 assumePa ? "Pa" : "hPa");
+    }
+    return assumePa ? value * 1e-2 : value;
 }
 
 double toGeopotentialMeters(double value, const std::string& units) {
