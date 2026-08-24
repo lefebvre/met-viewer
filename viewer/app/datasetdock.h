@@ -12,8 +12,9 @@ class QTreeWidgetItem;
 namespace met::app {
 
 // A tree of variables and their levels. Selecting a level emits fieldChosen()
-// with a fully-formed FieldKey (using the variable's first available time for
-// M1; a time controller drives time selection in a later milestone).
+// with a fully-formed FieldKey carrying the variable's first available time; the
+// dock does not track the current time, so whoever owns the time axis is
+// expected to substitute it before the key is used.
 class DatasetDock : public QWidget {
     Q_OBJECT
 public:

@@ -207,7 +207,9 @@ GridDef buildProjected(codes_handle* h, const std::string& gridType) {
     return g;
 }
 
-// Reject scan modes we do not normalize in M1.
+// Reject the scan modes the row normalizer below does not handle. Decoding one
+// of these would silently transpose or interleave the grid, so it is refused
+// rather than approximated.
 void checkSupportedScan(codes_handle* h) {
     if (hasKey(h, "alternativeRowScanning") && getLong(h, "alternativeRowScanning") != 0)
         throw ReadError("GRIB: alternating row scanning not supported");
