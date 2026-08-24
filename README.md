@@ -146,6 +146,13 @@ Every push to `master` and every pull request is built and tested on Linux
 render smoke test and a sanitizer run on Linux. vcpkg dependencies are cached in
 the GitHub Actions cache so Qt is compiled from source only once.
 
+A **ThreadSanitizer** pass over the same suite runs weekly (and on demand via
+*Run workflow*) rather than on every push: it is several times slower, and it
+covers what ASan cannot — the warp's row chunks across the shared worker pool, the
+pooled decode jobs, and the process-wide netcdf-c mutex, where a race yields wrong
+values instead of a crash. Third-party noise goes in
+[`.tsan-suppressions`](.tsan-suppressions); a race in `met_*` code is a bug to fix.
+
 The suite runs on **both** platforms. That is not redundant: `long` is 32-bit on
 MSVC and 64-bit on Linux, which is exactly why the ARL reader uses int64 record
 offsets and the GRIB reader a `seek64` helper — neither is exercised by a
