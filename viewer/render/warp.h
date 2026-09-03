@@ -25,8 +25,11 @@ struct MercatorViewport {
 // once per output row (latitude is constant along a Mercator row), so the inner
 // loop is a bilinear gather + LUT lookup.
 //
-// `threads` <= 1 runs single-threaded; otherwise output rows are split across
-// that many worker threads.
+// `threads` <= 1 runs single-threaded; otherwise output rows are split into that
+// many chunks and spread over a process-wide pool of parked workers (the calling
+// thread takes one chunk itself). The pool is created on the first multi-threaded
+// warp and lives for the process, so `threads` sets the split, not a thread count
+// to create per call.
 [[nodiscard]] QImage warpToMercator(const core::Field2D& field, const Colormap& cmap,
                                     const MercatorViewport& view, double opacity = 1.0,
                                     int threads = 1);

@@ -65,6 +65,28 @@
       }
     },
     {
+      "name": "fuzz",
+      "displayName": "libFuzzer harnesses (Clang)",
+      "description": "Builds the fuzz targets in tests/fuzz. Clang-only: libFuzzer has no GCC or MSVC equivalent, which is why this is a separate preset rather than a flag on the CI presets. Configure with -DCMAKE_CXX_COMPILER=clang++ (or set CXX) -- the toolchain is not pinned here so the preset stays usable with whatever Clang is installed.",
+      "inherits": "dist-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "MET_ENABLE_FUZZING": "ON",
+        "MET_WERROR": "ON"
+      }
+    },
+    {
+      "name": "tsan-dist",
+      "displayName": "ThreadSanitizer on the distribution dependency set (CI)",
+      "description": "Thread sanitizer over the same dependency set as asan-dist, and separate from it because ASan and TSan cannot be linked into one binary. Covers what ASan cannot: the warp's row-chunk fan-out across the parked worker pool, the pooled decode/section jobs with queued delivery, and the process-wide netcdf-c mutex -- races there corrupt values rather than crashing. Run on a schedule rather than per-push: TSan slows the suite several-fold and the threading surface changes rarely.",
+      "inherits": "dist-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "MET_ENABLE_TSAN": "ON",
+        "MET_WERROR": "ON"
+      }
+    },
+    {
       "name": "dist-windows",
       "displayName": "Distribution (Windows, dynamic Qt)",
       "description": "Release build with dynamically-linked Qt for the NSIS installer. Requires the MSVC toolchain in the environment (CI provides it).",
@@ -93,6 +115,14 @@
     {
       "name": "asan-dist",
       "configurePreset": "asan-dist"
+    },
+    {
+      "name": "tsan-dist",
+      "configurePreset": "tsan-dist"
+    },
+    {
+      "name": "fuzz",
+      "configurePreset": "fuzz"
     },
     {
       "name": "dist-linux",
@@ -128,6 +158,13 @@
     {
       "name": "asan-dist",
       "configurePreset": "asan-dist",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "tsan-dist",
+      "configurePreset": "tsan-dist",
       "output": {
         "outputOnFailure": true
       }

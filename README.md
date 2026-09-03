@@ -146,6 +146,13 @@ Every push to `master` and every pull request is built and tested on Linux
 render smoke test and a sanitizer run on Linux. vcpkg dependencies are cached in
 the GitHub Actions cache so Qt is compiled from source only once.
 
+A **ThreadSanitizer** pass over the same suite runs weekly (and on demand via
+*Run workflow*) rather than on every push: it is several times slower, and it
+covers what ASan cannot — the warp's row chunks across the shared worker pool, the
+pooled decode jobs, and the process-wide netcdf-c mutex, where a race yields wrong
+values instead of a crash. Third-party noise goes in
+[`.tsan-suppressions`](.tsan-suppressions); a race in `met_*` code is a bug to fix.
+
 The suite runs on **both** platforms. That is not redundant: `long` is 32-bit on
 MSVC and 64-bit on Linux, which is exactly why the ARL reader uses int64 record
 offsets and the GRIB reader a `seek64` helper — neither is exercised by a
@@ -159,3 +166,33 @@ Every Windows run uploads a **portable build** as a workflow artifact
 page, unzip, and run `bin\met_viewer.exe` — Qt and PROJ's data are bundled, so
 nothing needs installing. Tagged releases additionally publish the signed-off
 AppImage and NSIS installer; see [Installers](#installers).
+
+## Fuzzing
+
+The ARL reader is the only hand-rolled format decoder in the tree — everything
+else delegates to ecCodes or netcdf-c/HDF5 — so it carries a libFuzzer harness
+over the open + decode path:
+
+```sh
+cmake --preset fuzz -DCMAKE_CXX_COMPILER=clang++
+cmake --build --preset fuzz
+./build/fuzz/tests/fuzz/arl_fuzz -max_total_time=300 tests/fuzz/corpus
+```
+
+Clang-only (libFuzzer has no GCC or MSVC equivalent), so it is opt-in via
+`MET_ENABLE_FUZZING` and is not part of the CI matrix; a 10-second smoke run over
+the seed corpus is registered with ctest so the harness cannot rot. A `ReadError`
+is the *expected* result for a malformed input — findings are crashes, hangs, and
+sanitizer reports. See [`tests/fuzz/corpus/README.md`](tests/fuzz/corpus/README.md)
+for what belongs in the corpus.
+
+## License
+
+met-viewer is released under the [BSD 3-Clause License](LICENSE).
+
+The dependencies it links keep their own terms. Qt6 is linked **dynamically** in
+the distributed builds specifically so that the LGPL-3.0 relinking right is
+preserved for anyone who receives an AppImage or installer; ecCodes is Apache-2.0,
+PROJ and netcdf-c are MIT-style, and HDF5 carries its own BSD-style license.
+Basemap tiles are not redistributed — they are fetched at runtime from the source
+the user selects, under that source's terms.

@@ -25,18 +25,23 @@ struct BBox {
 };
 
 // Wrap a longitude into [-180, 180).
+//
+// fmod rather than a subtract-until-in-range loop: the loop is O(|lon|/360), so
+// a nonsense input (an uninitialized coordinate, a corrupt header field) turns a
+// wrap into an effectively unbounded spin instead of a bad number.
 [[nodiscard]] inline double wrapLon180(double lon) {
-    double x = lon;
-    while (x >= 180.0) x -= 360.0;
-    while (x < -180.0) x += 360.0;
-    return x;
+    double x = std::fmod(lon + 180.0, 360.0);
+    if (x < 0.0) x += 360.0;
+    return x - 180.0;
 }
 
 // Wrap a longitude into [0, 360).
 [[nodiscard]] inline double wrapLon360(double lon) {
-    double x = lon;
-    while (x >= 360.0) x -= 360.0;
-    while (x < 0.0) x += 360.0;
+    double x = std::fmod(lon, 360.0);
+    if (x < 0.0) x += 360.0;
+    // A tiny negative input rounds to exactly 360.0 when 360 is added back, which
+    // would sit outside the half-open range this promises.
+    if (x >= 360.0) x = 0.0;
     return x;
 }
 

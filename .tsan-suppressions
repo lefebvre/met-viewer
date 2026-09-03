@@ -1,0 +1,14 @@
+# ThreadSanitizer suppressions for the scheduled `tsan-dist` CI run.
+#
+# The rule for this file: it is for races inside third-party libraries we link but
+# do not control (Qt, PROJ, HDF5/netcdf-c, ecCodes). A race reported in met_* code
+# is a bug to fix, not an entry to add here — suppressing one would defeat the only
+# job in the pipeline that can see it.
+#
+# Every entry must say what was investigated and why it is not ours. An entry with
+# no reason is indistinguishable from a race someone silenced to get CI green.
+#
+# Format: https://github.com/google/sanitizers/wiki/ThreadSanitizerSuppressions
+#
+# The file is intentionally empty: the run has not yet reported third-party noise,
+# and adding speculative entries would hide real findings on the first pass.

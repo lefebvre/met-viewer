@@ -1,0 +1,5 @@
+# Fuzz seeds are packed binary that happens to contain no NUL bytes, so git's
+# binary heuristic misses them and treats them as text. Under core.autocrlf a
+# seed carrying a 0x0A data byte would be rewritten on checkout and stop being
+# the input that found the bug.
+tests/fuzz/corpus/** -text

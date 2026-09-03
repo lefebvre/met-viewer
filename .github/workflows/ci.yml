@@ -8,6 +8,13 @@ on:
   push:
     branches: [master]
   pull_request:
+  # ThreadSanitizer runs on a schedule rather than per-push. It is several times
+  # slower than the plain suite and the threading surface changes rarely, so a
+  # weekly pass is the right cadence; workflow_dispatch is there for the run
+  # right after a change to the pool, the job plumbing or the reader locking.
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -64,7 +71,7 @@ jobs:
           dnf config-manager --set-enabled crb
           dnf install -y \
             git cmake ninja-build gcc-c++ make perl zip file which tar \
-            libasan libubsan \
+            libasan libubsan libtsan \
             libxcb-devel libX11-devel mesa-libGLU-devel libXrender-devel \
             libXi-devel libxkbcommon-devel libxkbcommon-x11-devel mesa-libEGL-devel \
             gperf fontconfig-devel freetype-devel \
@@ -210,6 +217,35 @@ jobs:
         # a sanitized build is several times slower by design, so a wall-clock
         # budget measures the instrumentation rather than the code.
         run: ctest --preset asan-dist -E 'Warp\.(Projected)?PerformanceTripwire'
+
+      # TSan covers the concurrency ASan structurally cannot see: the warp's row
+      # chunks running across the parked worker pool, the pooled decode/section
+      # jobs delivering through queued invokeMethod, and the process-wide netcdf-c
+      # mutex. A race in any of those produces wrong values rather than a crash,
+      # so nothing else in this pipeline would notice.
+      #
+      # Scheduled/dispatch only, and a separate build directory: ASan and TSan are
+      # different runtimes and cannot be linked into the same binary. It reuses the
+      # dist-linux triplet, so no dependency is rebuilt for it.
+      - name: Configure (tsan)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: cmake --preset tsan-dist
+
+      - name: Build (tsan)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: cmake --build --preset tsan-dist
+
+      - name: Test (tsan)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          # halt_on_error keeps the first race as the visible failure instead of
+          # burying it under whatever the run does afterwards. The suppressions
+          # file exists to hold third-party noise (Qt/PROJ/HDF5 internals we
+          # neither own nor can fix) — see the file for the rule on adding to it.
+          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/.tsan-suppressions
+        # Excluded for the same reason as the asan run: a wall-clock budget under
+        # instrumentation measures TSan, not the code.
+        run: ctest --preset tsan-dist -E 'Warp\.(Projected)?PerformanceTripwire'
 
   windows:
     name: Windows

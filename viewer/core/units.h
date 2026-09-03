@@ -15,7 +15,10 @@ namespace met::core {
                                             const std::string& to);
 
 // Convert a pressure sample to hPa. Uses convert() when `units` is recognized,
-// otherwise falls back to a magnitude heuristic (values > ~2000 are assumed Pa).
+// otherwise falls back to a magnitude heuristic (values > ~2000 are assumed Pa)
+// and warns once per unrecognized unit, so a mislabelled field leaves a trace
+// instead of quietly setting the scale of a pressure axis. Contrast
+// toGeopotentialMeters below, which has no heuristic at all — see why there.
 // Convenience for readers/analysis that receive pressure in Pa or hPa.
 [[nodiscard]] double toHpa(double value, const std::string& units);
 

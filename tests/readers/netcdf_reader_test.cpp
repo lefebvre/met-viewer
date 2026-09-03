@@ -101,8 +101,10 @@ TEST(CfReader, IsoTimeSeparatorKeepsTimeOfDay) {
     EXPECT_EQ(v->times.back().epochSeconds, 1591012800);
 }
 
-// The whole point of M2: the same field read from GRIB and from NetCDF is
-// identical, cell for cell.
+// The two readers must agree: the same field read from GRIB and from NetCDF is
+// identical, cell for cell. This is what makes the format layer interchangeable
+// to everything above it, so a regression here is a regression in the whole
+// abstraction, not just in one reader.
 TEST(Equivalence, GribAndNetcdfMatchAt500hPa) {
     auto grib = readers::openDataset(fixture("regular_ll_t500.grib2"));
     auto nc = readers::openDataset(fixture("era5_t_pl.nc"));
