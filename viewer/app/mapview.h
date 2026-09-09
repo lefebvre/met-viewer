@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <QImage>
@@ -54,9 +55,18 @@ public:
     void setWindMode(int mode);
 
     // Interaction mode: 0 = pan, 1 = cross-section path, 2 = sounding pick,
-    // 3 = time-series pick.
-    enum class Mode { Pan, CrossSection, Sounding, TimeSeries };
+    // 3 = time-series pick, 4 = point-profile pick.
+    enum class Mode { Pan, CrossSection, Sounding, TimeSeries, Point };
     void setInteractionMode(Mode mode);
+
+    // Mark the picked point, or clear it with nullopt.
+    //
+    // Deliberately independent of the interaction mode, unlike the cross-section
+    // path: the marker has to stay put while the user switches back to Pan to
+    // look at the field around the site they picked, which is the normal thing to
+    // do with a profile open beside the map.
+    void setPickedPoint(std::optional<core::LatLon> point);
+    [[nodiscard]] std::optional<core::LatLon> pickedPoint() const { return picked_; }
 
     [[nodiscard]] const render::Colormap& colormap() const { return cmap_; }
     [[nodiscard]] bool hasField() const { return field_ != nullptr; }
@@ -73,6 +83,7 @@ signals:
     void crossSectionRequested(const std::vector<core::LatLon>& path);
     void soundingRequested(core::LatLon point);
     void timeSeriesRequested(core::LatLon point);
+    void pointPicked(core::LatLon point);
 
 public slots:
     void onTileReady(int z, int x, int y);
@@ -164,6 +175,7 @@ private:
 
     Mode mode_ = Mode::Pan;
     std::vector<core::LatLon> pathVertices_;  // in-progress cross-section path
+    std::optional<core::LatLon> picked_;      // point-profile marker, mode-independent
 };
 
 }  // namespace met::app

@@ -7,6 +7,18 @@
 
 namespace met::analysis {
 
+// Wind speed and meteorological direction (degrees, the direction the wind blows
+// FROM, 0 = from north, 90 = from east) from one earth-relative vector. NaN if
+// either component is NaN.
+//
+// The field versions below call these, so a single sampled value -- a profile
+// table cell, a cursor readout -- and a rendered field cannot disagree about the
+// convention. Getting the direction's sign or offset wrong is invisible in a
+// contour plot and glaring in a table of numbers, which is exactly the kind of
+// drift a shared formula prevents.
+[[nodiscard]] float windSpeedFrom(float u, float v);
+[[nodiscard]] float windDirectionFrom(float u, float v);
+
 // Scalar wind speed field, sqrt(u^2 + v^2), from a paired wind field.
 [[nodiscard]] core::Field2D windSpeedField(const WindField& w);
 

@@ -22,12 +22,14 @@ viewer/
 ├── readers/    met_readers  (+eccodes, netcdf-c)  ireader.h detect.cpp grib/ netcdf/ arl/
 ├── analysis/   met_analysis (met_core)       analysis, sample, crosssection, sounding,
 │                                            timeseries, wind (barbs + streamlines),
-│                                            derived, heights
+│                                            derived, heights, pointprofile,
+│                                            profilewriter (CSV/TSV, Qt-free)
 ├── render/     met_render   (Qt6::Gui ONLY)  colormap, fieldimage, warp, contour, tilemath, windbarb
 └── app/        met_viewer   (Widgets/Network/OpenGLWidgets)
                 mainwindow mapview plotview2d tilelayer controlpanel datasetdock
                 timecontroller colorbarwidget hoverreadout coastlines theme icons
                 crosssectionview skewtview timeseriesview  fieldcache (LRU + prefetch)
+                pointprofiledock + pointprofilemodel (point table, copy/CSV export)
                 glfieldrenderer (opt-in GPU path, off by default)
                 jobs (pooled work) extractions (slab reads + analysis, Qt-free)
 resources/      Natural Earth coastlines/borders as compact binary polylines, icons
@@ -69,9 +71,27 @@ Every `GridDef` provides `latlonToIndex()` / `indexToLatLon()` — analytic for 
 
 ### App shell & threading
 
-Dock layout: dataset tree (left), layer list w/ opacity+colormap (left-bottom), inspector + level selector (right), time controller (bottom), tabbed center (map / 2D plot / section / sounding / time-series tabs). Status-bar probe = one bilinear sample of the top field layer. Mode toolbar: Pan / Probe / Cross-section (click vertices) / Sounding / Time series.
+Dock layout: dataset tree (left), layer list w/ opacity+colormap (left-bottom), inspector + level selector (right), time controller (bottom), tabbed center (map / 2D plot / section / sounding / time-series tabs). Status-bar probe = one bilinear sample of the top field layer. Mode toolbar: Pan / Probe / Cross-section (click vertices) / Sounding / Time series /
+Point profile.
 
 One shared `QThreadPool`; DecodeJob/SectionJob with generation counters; results posted via queued `invokeMethod` to a **`QPointer`** context (a raw pointer would be dereferenced to find the receiver's thread even after the context died), stale generations dropped. Anything that reads slabs runs there: the multi-slab reads and the sounding/cross-section/time-series extractions live in `app/extractions.h` as free functions over an `IDataset` — no window state, no widgets, unit-testable — and the wind overlay's U/V decode is a pooled job too, with same-key requests coalescing onto one decode (the overlay and a derived quantity both want the pair from a single user action). App-level LRU `FieldCache` — **size is a user setting** (Preferences dialog, default 1 GB, persisted in `QSettings`) — plus a 3–5-timestep decode-ahead prefetcher for animation. Cross-section = great-circle path × log-p pressure axis, same colormap engine. Sounding = **skew-T log-p diagram**: skewed temperature axis (45° isotherms), log-p vertical, T and Td traces, with background isotherms, dry adiabats, moist adiabats, and mixing-ratio lines drawn as precomputed QPainter paths; wind barbs along the right margin when U/V available.
+
+**Point profile** (`analysis/pointprofile.h` + `app/pointprofiledock`): a table of a
+user-chosen set of variables down the vertical at one picked point, with copy and CSV
+export. Three things distinguish it from the sounding it sits beside. Its column set is
+chosen at runtime, so the result is a matrix rather than the sounding's six named fields,
+and the profile is built empty from the *catalog* and filled one decoded stack at a time
+— `extractSounding` takes all five of its stacks at once, which is affordable only
+because five is all it will ever be, while here the user sets the width and holding six
+40-level stacks of a mesoscale grid at once is gigabytes. Each cell carries a status
+rather than a bare NaN, because `sampleBilinear` returns NaN for "outside the grid", "the
+data is missing" and "this variable has no record at this level" alike, and a table that
+prints one identical blank for all three tells the reader nothing about what to do next.
+Rows are ordered ground-first, the opposite of `Sounding`, because a site table is read
+from the surface up; the view can sort either way. The altitude column is MSL
+geopotential height from the file's own height field and nothing else — there is no
+height-above-ground anywhere, since that needs a terrain elevation this code deliberately
+never infers.
 
 **Geopotential height on the vertical axis** (`analysis/heights.h` picks the variable — `gh`/`zg`/standard name `geopotential_height`, else geopotential `z`, converted through g): the sounding labels each standard isobar with its altitude, since a profile is at one point and pressure↔height there is a single mapping. A cross-section gets contoured, labelled **height isopleths** instead, because a pressure surface tilts along the path — height is a second field over (distance, log-p), not a second axis, and drawing it as an axis would state an altitude that is only true at one end of the section. Heights always come from a height field in the file; nothing is inferred from the temperature trace, which would need a surface height the file may not carry.
 

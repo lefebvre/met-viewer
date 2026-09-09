@@ -6,6 +6,7 @@
 #include <mutex>
 #include <set>
 #include <utility>
+#include <vector>
 
 #include "viewer/core/log.h"
 
@@ -122,6 +123,28 @@ std::optional<std::string> preferredDisplayUnit(const std::string& units) {
     // Geopotential is almost always read as a height; show the gpm equivalent.
     if (u == "m2/s2") return std::string("gpm");
     return std::nullopt;
+}
+
+std::vector<std::string> alternativeUnits(const std::string& units) {
+    // Deliberately spelled out next to convert() rather than derived from it:
+    // convert() is a flat list of ordered pairs, and reversing those into families
+    // at runtime would be more code than the six lines it would replace.
+    static const std::vector<std::vector<std::string>> kFamilies = {
+        {"K", "Cel"},      {"Pa", "hPa"}, {"m/s", "kt"}, {"gpm", "dam", "m2/s2"},
+        {"kg/kg", "g/kg"}, {"m", "mm"},
+    };
+
+    const std::string u = canon(units);
+    for (const std::vector<std::string>& family : kFamilies) {
+        if (std::find(family.begin(), family.end(), u) == family.end()) continue;
+        std::vector<std::string> out{u};  // native first, whatever order the family lists
+        for (const std::string& alt : family)
+            if (alt != u) out.push_back(alt);
+        return out;
+    }
+    // canon() leaves an unrecognized unit alone, so this hands back what was asked
+    // for rather than an empty list every caller would have to guard against.
+    return {u};
 }
 
 std::string unitLabel(const std::string& units) {

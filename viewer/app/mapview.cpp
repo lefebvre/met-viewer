@@ -499,6 +499,22 @@ void MapView::paintGL() {
         p.setBrush(Qt::NoBrush);
     }
 
+    // The picked point, in every mode.
+    if (picked_) {
+        p.setRenderHint(QPainter::Antialiasing, true);
+        const QPointF at = lonLatToScreen(*picked_);
+        // A hollow crosshair rather than a filled dot: the value under the marker
+        // is the one being tabled, and a blob would cover it.
+        p.setPen(QPen(palette().color(QPalette::Highlight), 2.0));
+        p.setBrush(Qt::NoBrush);
+        constexpr double kArm = 9.0, kRing = 5.0;
+        p.drawLine(QPointF(at.x() - kArm, at.y()), QPointF(at.x() - kRing, at.y()));
+        p.drawLine(QPointF(at.x() + kRing, at.y()), QPointF(at.x() + kArm, at.y()));
+        p.drawLine(QPointF(at.x(), at.y() - kArm), QPointF(at.x(), at.y() - kRing));
+        p.drawLine(QPointF(at.x(), at.y() + kRing), QPointF(at.x(), at.y() + kArm));
+        p.drawEllipse(at, kRing, kRing);
+    }
+
     // Attribution.
     if (tiles_ && !tiles_->source().attribution.isEmpty()) {
         p.setRenderHint(QPainter::Antialiasing, true);
@@ -677,7 +693,13 @@ void MapView::drawContours(QPainter& p) {
 void MapView::setInteractionMode(Mode mode) {
     mode_ = mode;
     if (mode_ != Mode::CrossSection) pathVertices_.clear();
+    // picked_ is deliberately NOT cleared here; see setPickedPoint.
     setCursor(mode_ == Mode::Pan ? Qt::ArrowCursor : Qt::CrossCursor);
+    update();
+}
+
+void MapView::setPickedPoint(std::optional<core::LatLon> point) {
+    picked_ = point;
     update();
 }
 
@@ -692,6 +714,8 @@ void MapView::mousePressEvent(QMouseEvent* event) {
     const core::LatLon ll = screenToLonLat(event->position());
     if (mode_ == Mode::Sounding) {
         emit soundingRequested(ll);
+    } else if (mode_ == Mode::Point) {
+        emit pointPicked(ll);
     } else if (mode_ == Mode::TimeSeries) {
         emit timeSeriesRequested(ll);
     } else if (mode_ == Mode::CrossSection) {

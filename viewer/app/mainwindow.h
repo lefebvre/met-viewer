@@ -48,6 +48,7 @@ class ThemeManager;
 class IconThemer;
 class CrossSectionView;
 class JobMonitor;
+class PointProfileDock;
 class SkewTView;
 class ViewFrame;
 
@@ -119,6 +120,7 @@ public:
     void demoCrossSection();
     void demoSounding();
     void demoTimeSeries();
+    void demoPointProfile();
     // Open a cross-section and a skew-T side by side to demonstrate a tiled layout
     // (used by --tile).
     void demoTiledLayout();
@@ -136,6 +138,7 @@ private slots:
     void onDerivedChanged(int index);
     void onCrossSectionRequested(const std::vector<core::LatLon>& path);
     void onSoundingRequested(core::LatLon point);
+    void onPointPicked(core::LatLon point);
     void onTimeSeriesRequested(core::LatLon point);
     void onProbeMoved(double lat, double lon, double value, bool hasValue);
     void onProbeLeft();
@@ -179,6 +182,17 @@ private:
                                 std::shared_ptr<CrossSectionTab> tab);
     void refreshSoundingTab(QPointer<SkewTView> view, core::LatLon point,
                             std::shared_ptr<SoundingTab> tab);
+
+    // The point-profile panel. One dock, built once and re-pointed, so unlike the
+    // analysis tabs above it has a single piece of state rather than one per view.
+    struct PointProfileTab;
+    // The one place a picked point enters, whether it came from a map click or
+    // from the panel's typed coordinates. Both converge here so the marker, the
+    // coordinate boxes and the table cannot disagree, and so a programmatic echo
+    // back into the panel cannot loop into another extraction.
+    void setProfilePoint(core::LatLon point);
+    void refreshPointProfileTab();
+    void updatePointProfileAvailability();
 
     void decodeCurrent();  // decode the field for the current var/level/time
     // Lat/lon decimals for the analysis views' readouts, from the current dataset's
@@ -309,6 +323,13 @@ private:
     // what the toolbar falls back to when that happens mid-pick.
     QAction* panAct_ = nullptr;
     QAction* timeSeriesAct_ = nullptr;
+    QAction* pointProfileAct_ = nullptr;
+    PointProfileDock* pointProfileDock_ = nullptr;
+    QDockWidget* pointProfileDockWidget_ = nullptr;
+    std::shared_ptr<PointProfileTab> pointProfileTab_;
+    // The dock outlives every extraction, so its QPointer never nulls and the
+    // usual pruning in refreshAnalyses() cannot stop a second registration.
+    bool pointProfileRegistered_ = false;
     // Enable/disable the time-series mode for the current variable's time axis.
     void updateTimeSeriesAvailability();
 

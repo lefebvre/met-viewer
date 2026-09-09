@@ -2,6 +2,7 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace met::core {
 
@@ -34,6 +35,18 @@ namespace met::core {
 // A friendlier display alternative for a native unit, if one exists (e.g. "K"
 // -> "Cel"). Returns nullopt when the native unit is already the sensible one.
 [[nodiscard]] std::optional<std::string> preferredDisplayUnit(const std::string& units);
+
+// Every unit a value can be shown as, canonical native unit first, for a UI that
+// offers the reader a choice. Wind speed is the motivating case -- m/s and knots
+// are both routine and neither is the obvious default -- but temperature,
+// pressure and height have the same property, so this is a general lookup rather
+// than a special case for speed.
+//
+// The families it reports are exactly the ones convert() implements: offering a
+// unit convert() cannot reach would be a menu entry that silently produces
+// nothing. A unit with no alternative yields a single entry, so a caller can
+// always build a menu from the result without special-casing.
+[[nodiscard]] std::vector<std::string> alternativeUnits(const std::string& units);
 
 // Short label to show for a unit string ("Cel" -> "°C", "m/s" -> "m/s").
 [[nodiscard]] std::string unitLabel(const std::string& units);

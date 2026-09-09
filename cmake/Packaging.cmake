@@ -31,19 +31,10 @@ install(TARGETS met_viewer
 #
 # Calling the tool ourselves does the same work, fails at configure time instead
 # of install time when it is missing, and does not depend on Qt internals or on
-# the order in which find_package(Qt6) happens to run.
+# the order in which find_package(Qt6) happens to run. MET_WINDEPLOYQT is
+# located by cmake/QtDeploy.cmake, which uses the same tool to make the build
+# tree runnable.
 if(WIN32)
-    find_program(MET_WINDEPLOYQT
-        NAMES windeployqt windeployqt6
-        HINTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/Qt6/bin"
-              "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin"
-        DOC "windeployqt, used to bundle the Qt runtime next to the installed exe")
-    if(NOT MET_WINDEPLOYQT)
-        message(FATAL_ERROR
-            "windeployqt not found. Installers and portable builds would ship "
-            "without the Qt DLLs and fail to start on any machine without Qt.")
-    endif()
-
     # Runs as part of `cmake --install` (and therefore of cpack), against the exe
     # already placed in the install tree, so both the NSIS package and the
     # portable build get the same self-contained payload.

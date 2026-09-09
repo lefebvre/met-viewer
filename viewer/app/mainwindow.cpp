@@ -65,6 +65,7 @@
 #include "viewer/app/mapview.h"
 #include "viewer/app/openpipeline.h"
 #include "viewer/app/plotview2d.h"
+#include "viewer/app/pointprofiledock.h"
 #include "viewer/app/skewtview.h"
 #include "viewer/app/theme.h"
 #include "viewer/app/tilelayer.h"
@@ -216,6 +217,7 @@ void MainWindow::buildUi() {
     connect(mapView_, &MapView::probeLeft, this, &MainWindow::onProbeLeft);
     connect(mapView_, &MapView::crossSectionRequested, this, &MainWindow::onCrossSectionRequested);
     connect(mapView_, &MapView::soundingRequested, this, &MainWindow::onSoundingRequested);
+    connect(mapView_, &MapView::pointPicked, this, &MainWindow::onPointPicked);
     connect(mapView_, &MapView::timeSeriesRequested, this, &MainWindow::onTimeSeriesRequested);
 
     // Left: Data dock — the variable tree plus the global level/derived selection
@@ -267,6 +269,20 @@ void MainWindow::buildUi() {
     addDockWidget(Qt::BottomDockWidgetArea, bottomDock);
     connect(timeController_, &TimeController::indexChanged, this, &MainWindow::onTimeChanged);
 
+    // Point-profile panel. Built here rather than spawned per pick like the
+    // sounding and cross-section docks: the user re-picks repeatedly, a dock per
+    // click would pile up and lose the column and unit choices each time, and only
+    // a dock that exists before loadSettings() gets its position restored.
+    pointProfileDock_ = new PointProfileDock(this);
+    pointProfileDockWidget_ = new QDockWidget(tr("Point Profile"), this);
+    pointProfileDockWidget_->setObjectName("pointProfileDock");  // for saveState()
+    pointProfileDockWidget_->setWidget(pointProfileDock_);
+    addDockWidget(Qt::RightDockWidgetArea, pointProfileDockWidget_);
+    pointProfileDockWidget_->hide();  // shown by the mode action or the View menu
+    connect(pointProfileDock_, &PointProfileDock::pointEdited, this, &MainWindow::setProfilePoint);
+    connect(pointProfileDock_, &PointProfileDock::columnsChanged, this,
+            &MainWindow::refreshPointProfileTab);
+
     // Menu.
     auto* fileMenu = menuBar()->addMenu(tr("&File"));
     QAction* openAct = fileMenu->addAction(tr("&Open Files…"));
@@ -304,7 +320,8 @@ void MainWindow::buildUi() {
     const ModeDef modes[] = {{"Pan", MapView::Mode::Pan, "view-pan"},
                              {"Cross-section", MapView::Mode::CrossSection, "mode-section"},
                              {"Sounding", MapView::Mode::Sounding, "mode-skewt"},
-                             {"Time series", MapView::Mode::TimeSeries, "mode-tseries"}};
+                             {"Time series", MapView::Mode::TimeSeries, "mode-tseries"},
+                             {"Point profile", MapView::Mode::Point, "mode-probe"}};
     for (const auto& m : modes) {
         QAction* act = toolbar->addAction(tr(m.label));
         act->setCheckable(true);
@@ -333,6 +350,11 @@ void MainWindow::buildUi() {
                     hint =
                         tr("Time series: click a point on the map to plot its values over time.");
                     break;
+                case MapView::Mode::Point:
+                    hint =
+                        tr("Point profile: click a point on the map to table its vertical "
+                           "profile.");
+                    break;
                 case MapView::Mode::Pan:
                     break;  // default mode: keep the status bar clear for the probe readout
             }
@@ -344,8 +366,10 @@ void MainWindow::buildUi() {
             panAct_ = act;
         }
         if (m.mode == MapView::Mode::TimeSeries) timeSeriesAct_ = act;
+        if (m.mode == MapView::Mode::Point) pointProfileAct_ = act;
     }
     updateTimeSeriesAvailability();  // nothing loaded yet: starts disabled
+    updatePointProfileAvailability();
 
     // View menu: the dock panels and the toolbar can be hidden via their close
     // button, so offer a way to bring them back. toggleViewAction() is a checkable
@@ -357,6 +381,9 @@ void MainWindow::buildUi() {
     QAction* timeToggle = bottomDock->toggleViewAction();
     icons_->applyAction(timeToggle, "axis-time");
     viewMenu->addAction(timeToggle);
+    QAction* profileToggle = pointProfileDockWidget_->toggleViewAction();
+    icons_->applyAction(profileToggle, "mode-probe");
+    viewMenu->addAction(profileToggle);
     viewMenu->addSeparator();
     viewMenu->addAction(toolbar->toggleViewAction());
 
@@ -623,6 +650,7 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
         return;
     }
     updateTimeSeriesAvailability();  // nothing selectable in the new set
+    updatePointProfileAvailability();
 }
 
 void MainWindow::onFieldChosen(const core::FieldKey& key) {
@@ -660,8 +688,34 @@ void MainWindow::onFieldChosen(const core::FieldKey& key) {
         timeController_->setSteps(times, timeIdx_);
     }
     updateTimeSeriesAvailability();
+    updatePointProfileAvailability();
 
     decodeCurrent();
+}
+
+void MainWindow::updatePointProfileAvailability() {
+    // A profile needs a vertical axis to run down. Rather than let the pick
+    // silently produce an empty table, disable the mode and say why, dropping back
+    // to Pan if the user is already in it -- the same shape as the time-series
+    // gate above.
+    analysis::ProfileColumnChoices choices;
+    if (dataset_) choices = analysis::profileColumnChoices(dataset_->catalog().variables());
+    const bool ok = dataset_ && choices.levelType != core::VerticalLevel::Type::Unknown;
+
+    if (pointProfileDock_) {
+        pointProfileDock_->setChoices(choices);
+        pointProfileDock_->setCoordPrecision(currentCoordPrecision());
+        if (!ok) pointProfileDock_->clearProfile();
+    }
+    if (!pointProfileAct_) return;
+    pointProfileAct_->setEnabled(ok);
+    pointProfileAct_->setToolTip(ok ? tr("Point profile")
+                                    : tr("Point profile — needs a dataset with a vertical axis"));
+    if (!ok && pointProfileAct_->isChecked() && panAct_) {
+        panAct_->setChecked(true);
+        mapView_->setInteractionMode(MapView::Mode::Pan);
+        statusBar()->clearMessage();
+    }
 }
 
 void MainWindow::updateTimeSeriesAvailability() {
@@ -1112,6 +1166,122 @@ struct MainWindow::CrossSectionTab {
     std::map<std::pair<std::int64_t, int>, analysis::CrossSection> cache;
 };
 
+// State for the single point-profile panel: one extraction in flight at a time,
+// and a cache so scrubbing back over a visited time re-reads nothing.
+//
+// The cache key carries the column set as well as the time and member, because
+// ticking a box changes the result -- without it, re-adding a column would show
+// the previous set's numbers under the new headers. The picked point is
+// deliberately NOT in the key and clears the cache instead: keying on it would
+// let twenty re-picks accumulate twenty profiles for every visited time.
+struct MainWindow::PointProfileTab {
+    bool inFlight = false;
+    bool pending = false;
+    quint64 epoch = 0;
+    core::LatLon point{};
+    std::map<std::tuple<std::int64_t, int, std::string>, analysis::PointProfile> cache;
+};
+
+void MainWindow::onPointPicked(core::LatLon point) { setProfilePoint(point); }
+
+void MainWindow::setProfilePoint(core::LatLon point) {
+    if (!pointProfileDock_ || !pointProfileDockWidget_) return;
+
+    pointProfileDockWidget_->show();
+    pointProfileDockWidget_->raise();
+    // Echo the point into the panel with its signals blocked (setPoint does that)
+    // and onto the map, so all three agree without one of them re-triggering the
+    // others.
+    pointProfileDock_->setPoint(point);
+    mapView_->setPickedPoint(point);
+
+    if (!pointProfileTab_) pointProfileTab_ = std::make_shared<PointProfileTab>();
+    // A new point invalidates every cached profile, since none of them were taken
+    // here. Compared exactly: the value either came from the same pick or a
+    // different one, so there is nothing for a tolerance to absorb.
+    if (pointProfileTab_->point.lat != point.lat || pointProfileTab_->point.lon != point.lon) {
+        pointProfileTab_->cache.clear();
+        pointProfileTab_->point = point;
+    }
+
+    if (!pointProfileRegistered_) {
+        pointProfileRegistered_ = true;
+        // One permanent entry, so the panel follows the time slider and playback
+        // waits for it like it waits for a sounding. Guarded because this dock
+        // outlives its extractions: its QPointer never nulls, so refreshAnalyses()
+        // would never prune a duplicate.
+        auto tab = pointProfileTab_;
+        analyses_.push_back({pointProfileDockWidget_, [this]() { refreshPointProfileTab(); },
+                             [tab]() { return tab->inFlight; }});
+    }
+    refreshPointProfileTab();
+}
+
+void MainWindow::refreshPointProfileTab() {
+    if (!pointProfileDock_ || !pointProfileTab_ || !dataset_ || currentTimes_.empty()) return;
+    if (!pointProfileDock_->hasPoint()) return;
+    // A closed panel must cost nothing: without this it would read its whole
+    // column set on every frame of playback while nobody was looking at it.
+    if (!pointProfileDockWidget_ || !pointProfileDockWidget_->isVisible()) return;
+
+    const std::shared_ptr<PointProfileTab> tab = pointProfileTab_;
+    if (tab->epoch != datasetEpoch_) {
+        tab->cache.clear();
+        tab->epoch = datasetEpoch_;
+    }
+
+    const std::vector<std::string> columns = pointProfileDock_->selectedColumns();
+    const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
+    const int mem = currentMember_;
+    std::string columnKey;
+    for (const std::string& c : columns) columnKey += c + "|";
+    const auto key = std::make_tuple(static_cast<std::int64_t>(t.epochSeconds), mem, columnKey);
+
+    if (auto it = tab->cache.find(key); it != tab->cache.end()) {
+        pointProfileDock_->setProfile(it->second);
+        return;
+    }
+    if (tab->inFlight) {
+        tab->pending = true;
+        return;
+    }
+
+    const core::LatLon point = tab->point;
+    auto dset = dataset_;
+    auto p = std::make_shared<JobProgress>();
+    p->total = extractions::estimatePointProfileReads(*dset, columns);
+    pointProfileDock_->setReadEstimate(p->total.load());
+    if (p->total.load() == 0) {
+        // Nothing to read: say which reason rather than starting a job that would
+        // read nothing and leave an empty grid to interpret.
+        pointProfileDock_->showNothingToRead();
+        return;
+    }
+
+    tab->inFlight = true;
+    pointProfileDock_->setBusy(true);
+    beginJob(tr("Extracting point profile…"), p);
+    submitCompute<analysis::PointProfile>(
+        *pool_, this,
+        [dset, t, mem, point, columns, p] {
+            return extractions::computePointProfile(*dset, t, mem, point, columns, p);
+        },
+        [this, tab, key, p](analysis::PointProfile profile) {
+            endJob(p);
+            tab->inFlight = false;
+            tab->cache[key] = profile;
+            if (pointProfileDock_) {
+                pointProfileDock_->setBusy(false);
+                pointProfileDock_->setProfile(profile);
+            }
+            if (tab->pending) {
+                tab->pending = false;
+                refreshPointProfileTab();
+            }
+            maybeAdvancePlayback();  // this panel's load settled -> maybe advance
+        });
+}
+
 struct MainWindow::SoundingTab {
     bool inFlight = false;
     bool pending = false;
@@ -1341,6 +1511,7 @@ void MainWindow::demoCrossSection() {
 }
 void MainWindow::demoSounding() { onSoundingRequested(demoPoint_); }
 void MainWindow::demoTimeSeries() { onTimeSeriesRequested(demoPoint_); }
+void MainWindow::demoPointProfile() { setProfilePoint(demoPoint_); }
 
 void MainWindow::demoTiledLayout() {
     // Build a cross-section and a skew-T; the dock factory tiles them side by side
@@ -1586,6 +1757,15 @@ void MainWindow::loadSettings() {
 
     prefs_.cacheBudgetMB = s.value("cacheBudgetMB", Preferences{}.cacheBudgetMB).toInt();
     prefs_.animationFps = s.value("animationFps", Preferences{}.animationFps).toInt();
+
+    // The point-profile column selection. Ids the next dataset cannot offer are
+    // dropped by setChoices, so a selection saved against one file is safe to
+    // restore over another. The panel persists its own unit choice.
+    std::vector<std::string> columns;
+    for (const QString& id : s.value("pointProfileColumns").toStringList())
+        columns.push_back(id.toStdString());
+    if (!columns.empty() && pointProfileDock_) pointProfileDock_->setSelectedColumns(columns);
+
     applyPreferences();
 }
 
@@ -1606,6 +1786,12 @@ void MainWindow::saveSettings() {
     s.setValue("coastlines", mapCoastlineCheck_->isChecked());
     s.setValue("cacheBudgetMB", prefs_.cacheBudgetMB);
     s.setValue("animationFps", prefs_.animationFps);
+    if (pointProfileDock_) {
+        QStringList columns;
+        for (const std::string& id : pointProfileDock_->selectedColumns())
+            columns << QString::fromStdString(id);
+        s.setValue("pointProfileColumns", columns);
+    }
 }
 
 void MainWindow::addRecentFile(const QString& path) {

@@ -9,10 +9,15 @@
  *   r : NC_FLOAT relative humidity (%), unpacked.
  *   z : NC_FLOAT geopotential (m2/s2) — ERA5 ships the height axis this way,
  *       one factor of g away from geopotential metres.
+ *   u, v : NC_FLOAT wind components (m/s), so one fixture carries every column a
+ *       point profile offers: pressure from the level axis, MSL height from z,
+ *       temperature, humidity, and a multi-level pair for wind speed/direction.
  *
  *   base(lat,lon) = 273.15 + 0.1*lon - 0.2*lat
  *   t = base + 0.06*(plev - 500) + timeIndex   [t@500,time0 == the GRIB fixture]
  *   r = 40 + 40*(plev/1000)                     [higher RH lower down]
+ *   u = 5 + 0.02*(1000 - plev)                  [westerly, stronger aloft]
+ *   v = -3                                      [constant northerly component]
  *   z = g * H(plev) * (1 - 0.0025*(lat - 63))   [ISA height, tilted poleward-low
  *                                                so a section shows sloping
  *                                                isopleths rather than flat ones]
@@ -52,7 +57,7 @@ int main(int argc, char** argv) {
     CHECK(nc_def_dim(ncid, "latitude", NLAT, &dlat));
     CHECK(nc_def_dim(ncid, "longitude", NLON, &dlon));
 
-    int vtime, vlev, vlat, vlon, vt, vr, vz;
+    int vtime, vlev, vlat, vlon, vt, vr, vz, vu, vv;
     CHECK(nc_def_var(ncid, "time", NC_DOUBLE, 1, &dt, &vtime));
     CHECK(nc_def_var(ncid, "pressure_level", NC_DOUBLE, 1, &dl, &vlev));
     CHECK(nc_def_var(ncid, "latitude", NC_DOUBLE, 1, &dlat, &vlat));
@@ -61,6 +66,8 @@ int main(int argc, char** argv) {
     CHECK(nc_def_var(ncid, "t", NC_SHORT, 4, tdims, &vt));
     CHECK(nc_def_var(ncid, "r", NC_FLOAT, 4, tdims, &vr));
     CHECK(nc_def_var(ncid, "z", NC_FLOAT, 4, tdims, &vz));
+    CHECK(nc_def_var(ncid, "u", NC_FLOAT, 4, tdims, &vu));
+    CHECK(nc_def_var(ncid, "v", NC_FLOAT, 4, tdims, &vv));
 
     CHECK(nc_put_att_text(ncid, vtime, "units", 33, "hours since 1900-01-01 00:00:00.0"));
     CHECK(nc_put_att_text(ncid, vtime, "calendar", 9, "gregorian"));
@@ -92,6 +99,13 @@ int main(int argc, char** argv) {
     CHECK(nc_put_att_text(ncid, vz, "long_name", 12, "Geopotential"));
     CHECK(nc_put_att_text(ncid, vz, "standard_name", 12, "geopotential"));
 
+    CHECK(nc_put_att_text(ncid, vu, "units", 7, "m s**-1"));
+    CHECK(nc_put_att_text(ncid, vu, "long_name", 19, "U component of wind"));
+    CHECK(nc_put_att_text(ncid, vu, "standard_name", 13, "eastward_wind"));
+    CHECK(nc_put_att_text(ncid, vv, "units", 7, "m s**-1"));
+    CHECK(nc_put_att_text(ncid, vv, "long_name", 19, "V component of wind"));
+    CHECK(nc_put_att_text(ncid, vv, "standard_name", 14, "northward_wind"));
+
     CHECK(nc_enddef(ncid));
 
     double lat[NLAT], lon[NLON];
@@ -108,6 +122,8 @@ int main(int argc, char** argv) {
     short* tdata = (short*)malloc(sizeof(short) * n);
     float* rdata = (float*)malloc(sizeof(float) * n);
     float* zdata = (float*)malloc(sizeof(float) * n);
+    float* udata = (float*)malloc(sizeof(float) * n);
+    float* vdata = (float*)malloc(sizeof(float) * n);
     const double g = 9.80665;
     for (int t = 0; t < NT; ++t) {
         for (int l = 0; l < NL; ++l) {
@@ -123,6 +139,8 @@ int main(int argc, char** argv) {
                     tdata[idx] = packed;
                     rdata[idx] = (float)(40.0 + 40.0 * (lev[l] / 1000.0));
                     zdata[idx] = (float)(g * hIsa * (1.0 - 0.0025 * (lat[j] - 63.0)));
+                    udata[idx] = (float)(5.0 + 0.02 * (1000.0 - lev[l]));
+                    vdata[idx] = -3.0f;
                 }
             }
         }
@@ -130,11 +148,15 @@ int main(int argc, char** argv) {
     CHECK(nc_put_var_short(ncid, vt, tdata));
     CHECK(nc_put_var_float(ncid, vr, rdata));
     CHECK(nc_put_var_float(ncid, vz, zdata));
+    CHECK(nc_put_var_float(ncid, vu, udata));
+    CHECK(nc_put_var_float(ncid, vv, vdata));
     free(tdata);
     free(rdata);
     free(zdata);
+    free(udata);
+    free(vdata);
 
     CHECK(nc_close(ncid));
-    printf("wrote %s (t,r,z: %dx%dx%dx%d)\n", argv[1], NT, NL, NLAT, NLON);
+    printf("wrote %s (t,r,z,u,v: %dx%dx%dx%d)\n", argv[1], NT, NL, NLAT, NLON);
     return 0;
 }

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "viewer/analysis/crosssection.h"
+#include "viewer/analysis/pointprofile.h"
 #include "viewer/analysis/sounding.h"
 #include "viewer/app/jobs.h"
 #include "viewer/core/field.h"
@@ -33,6 +34,14 @@ namespace extractions {
 [[nodiscard]] std::vector<std::pair<double, core::Field2D>> readLevelStack(
     readers::IDataset& ds, const std::string& varName, core::TimePoint time, int member,
     const std::function<void()>& onRead = {});
+
+// All levels of `varName` of one level type at `time`, keyed by the level value.
+// The general form: readLevelStack and readModelLevelStack are the two axes the
+// sounding and cross-section paths use, but a point profile also has to handle a
+// dataset on height levels, which neither of those would find a single slab of.
+[[nodiscard]] std::vector<std::pair<double, core::Field2D>> readLevelStackOfType(
+    readers::IDataset& ds, const std::string& varName, core::VerticalLevel::Type type,
+    core::TimePoint time, int member, const std::function<void()>& onRead = {});
 
 // All native model levels (hybrid/sigma) of `varName` at `time`, keyed by the
 // model-level index rather than a pressure; pair with the `pres` field to place
@@ -66,10 +75,31 @@ void readWindStacks(readers::IDataset& ds, core::TimePoint time, int member,
     const std::vector<core::LatLon>& path, int nSamples,
     std::shared_ptr<JobProgress> progress = {});
 
+// Extract a table of the chosen variables down the vertical profile at `point`.
+// `columnIds` are catalog variable names, plus analysis::kWindSpeedId and
+// kWindDirectionId for the derived wind columns; ids the dataset cannot offer are
+// dropped rather than added as columns of blanks, since a selection restored from
+// settings can name a variable this file lacks.
+//
+// Each column's stack is read, sampled and released before the next is read. The
+// caller sets the width here, so holding them all at once the way computeSounding
+// does would scale peak memory with the number of ticked boxes.
+//
+// Two constraints on this running inside a pool job, both easy to undo by
+// accident: the app's FieldCache is GUI-thread only and must not be consulted
+// here even though the map often has one of these slabs warm, and
+// IDataset::readField is not safe to call concurrently on one dataset, so the
+// reads are serial by necessity rather than by oversight.
+[[nodiscard]] analysis::PointProfile computePointProfile(
+    readers::IDataset& ds, core::TimePoint time, int member, core::LatLon point,
+    const std::vector<std::string>& columnIds, std::shared_ptr<JobProgress> progress = {});
+
 // How many slab reads the matching compute* will perform. Catalog-only (no I/O),
 // so a progress bar can be sized before the job starts.
 [[nodiscard]] int estimateSoundingReads(readers::IDataset& ds);
 [[nodiscard]] int estimateCrossSectionReads(readers::IDataset& ds, const std::string& var);
+[[nodiscard]] int estimatePointProfileReads(readers::IDataset& ds,
+                                            const std::vector<std::string>& columnIds);
 
 }  // namespace extractions
 }  // namespace met::app

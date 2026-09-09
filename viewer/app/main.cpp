@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
         {"contours", "Enable the 2D-plot contour overlay."},
         {"wind", "Wind overlay mode: 1 barbs, 2 streamlines.", "mode"},
         {"derived", "Select a derived quantity by index.", "index"},
-        {"demo", "Open an analysis view on the demo point: section|sounding|series.", "view"},
+        {"demo", "Open an analysis view on the demo point: section|sounding|series|point.", "view"},
         {"tile", "Tile a cross-section beside a skew-T to show a split layout."},
         {"size", "Window size WxH in pixels (e.g. 1600x840).", "WxH"},
         {"time", "Jump to a time-step index (e.g. for rendering GIF frames).", "index"},
@@ -195,6 +195,7 @@ int main(int argc, char** argv) {
     if (demo == "section") window.demoCrossSection();
     else if (demo == "sounding") window.demoSounding();
     else if (demo == "series") window.demoTimeSeries();
+    else if (demo == "point") window.demoPointProfile();
     else if (demo == "play") window.startPlayback();
 
     // Give the map extra time to fetch tiles before a headless grab.

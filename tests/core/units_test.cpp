@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <string>
+#include <vector>
 
 #include "viewer/core/units.h"
 
@@ -69,4 +71,54 @@ TEST(Units, DimensionlessOneIsNotAMixingRatio) {
     // The real mixing-ratio spellings still convert.
     EXPECT_NEAR(*convert(0.001, "kg/kg", "g/kg"), 1.0, 1e-12);
     EXPECT_NEAR(*convert(0.001, "kg kg**-1", "g/kg"), 1.0, 1e-12);
+}
+
+// The wind-speed column of a point profile has to offer both m/s and knots, and
+// nothing about that is specific to speed -- these are the units a reader picks
+// between for temperature and pressure too.
+TEST(AlternativeUnits, ListsTheNativeUnitFirstThenTheRestOfItsFamily) {
+    const std::vector<std::string> speed = alternativeUnits("m/s");
+    ASSERT_EQ(speed.size(), 2u);
+    EXPECT_EQ(speed[0], "m/s");
+    EXPECT_EQ(speed[1], "kt");
+
+    // Asking from the other end of the same family flips which one leads.
+    const std::vector<std::string> knots = alternativeUnits("kt");
+    ASSERT_EQ(knots.size(), 2u);
+    EXPECT_EQ(knots[0], "kt");
+    EXPECT_EQ(knots[1], "m/s");
+
+    const std::vector<std::string> temp = alternativeUnits("kelvin");  // canonicalized
+    ASSERT_EQ(temp.size(), 2u);
+    EXPECT_EQ(temp[0], "K");
+    EXPECT_EQ(temp[1], "Cel");
+}
+
+// A caller builds a menu straight from the result, so a unit with nothing to
+// offer must still yield one entry rather than an empty list to guard against.
+TEST(AlternativeUnits, YieldsASingleEntryForAUnitWithNoAlternative) {
+    const std::vector<std::string> pct = alternativeUnits("%");
+    ASSERT_EQ(pct.size(), 1u);
+    EXPECT_EQ(pct[0], "%");
+
+    // Dimensionless "1" stays alone for the same reason it is not a mixing ratio.
+    const std::vector<std::string> one = alternativeUnits("1");
+    ASSERT_EQ(one.size(), 1u);
+    EXPECT_EQ(one[0], "1");
+}
+
+// The whole point of listing an alternative is that the reader can switch to it.
+// An entry convert() cannot reach would be a menu item that silently does
+// nothing, so every unit reported here must actually convert both ways.
+TEST(AlternativeUnits, OffersOnlyUnitsThatConvertActuallyAccepts) {
+    for (const char* native : {"K", "Cel", "Pa", "hPa", "m/s", "kt", "gpm", "dam", "m2/s2", "kg/kg",
+                               "g/kg", "m", "mm"}) {
+        const std::vector<std::string> alts = alternativeUnits(native);
+        ASSERT_FALSE(alts.empty()) << native;
+        EXPECT_EQ(alts.front(), native) << native;
+        for (const std::string& alt : alts) {
+            EXPECT_TRUE(convert(1.0, native, alt).has_value()) << native << " -> " << alt;
+            EXPECT_TRUE(convert(1.0, alt, native).has_value()) << alt << " -> " << native;
+        }
+    }
 }

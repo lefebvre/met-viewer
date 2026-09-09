@@ -313,6 +313,43 @@ tracks the current time as you scrub.
 
 ![A time series of the value at a point, with a marker on the current time](images/15-time-series.png)
 
+### Point profile
+
+A table of the values at one site, rather than a plot of them.
+
+1. Toolbar ▸ **Point profile**.
+2. **Click** a point on the Map, or type a latitude and longitude into the panel
+   and press **Go**.
+
+The **Point Profile** panel opens with a row per vertical level and a column per
+variable, and a crosshair marks the site on the map. The marker stays put when you
+switch back to **Pan**, so you can look at the field around the point you tabled.
+
+- **Columns** chooses which variables appear. Wind speed and direction are offered
+  when the file carries a U/V pair; they are computed from it, earth-relative, not
+  read as fields. Variables with only one level are listed but disabled, since a
+  single level is not a profile.
+- **Units** switches a quantity between the units it can be shown in — wind speed
+  in m/s or knots, temperature in K or °C. The choice applies to every column in
+  that unit, is remembered between sessions, and never re-reads any data.
+- Rows start at the **ground**. Click the **Height MSL** or **Pressure** header to
+  sort the other way.
+- **Copy** puts the table on the clipboard tab-separated, so it pastes into a
+  spreadsheet as columns. **Export CSV…** writes the same table with a commented
+  header naming the point, the valid time and the dataset.
+- The table follows the time slider, so scrubbing re-tables the same point.
+
+The altitude column is **mean-sea-level geopotential height, read from the file's
+own height field** — the panel says which variable in the exported header. There is
+deliberately no height-above-ground column: that would need a terrain elevation,
+and nothing here infers one. A dataset with no height field shows no altitude
+column rather than a guessed one.
+
+A cell with no value shows a dash; hover it to find out whether the variable has no
+data at that level, the point falls outside the grid, or the data there is missing.
+The count beside **Units** is how many slabs the current selection reads each time
+the table updates — worth a glance before ticking a fifth column on a large file.
+
 ---
 
 ## 8. Arranging your workspace
@@ -362,7 +399,7 @@ Run with `--help` for the full, auto-generated list.
 | `--contours` | Turn on the 2D-plot contour overlay |
 | `--wind N` | Wind overlay mode: `1` barbs, `2` streamlines |
 | `--derived N` | Select a derived quantity by index |
-| `--demo section` \| `sounding` \| `series` | Open the named analysis view on the demo point |
+| `--demo section` \| `sounding` \| `series` \| `point` | Open the named analysis view on the demo point |
 | `--demo-at LAT,LON` | Sample point the `--demo` triggers use |
 | `--tile` | Tile a cross-section beside a skew-T (demonstrates split layouts) |
 | `--size WxH` | Set the window size in pixels (e.g. `1680x860`) |

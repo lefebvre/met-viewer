@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <limits>
 #include <numbers>
 
 #include "viewer/analysis/derived.h"
@@ -61,6 +62,31 @@ TEST(Derived, WindDirection) {
     auto east =
         makeWind(3, 1000, [](double, double) { return 5.0; }, [](double, double) { return 0.0; });
     EXPECT_NEAR(analysis::windDirectionField(east).values[0], 270.0f, 1e-3);
+}
+
+// The scalar helpers are what a single sampled value goes through -- a profile
+// table cell, a cursor readout. If they and the field versions ever disagreed the
+// symptom would be a table that contradicts the map it was picked from, so the
+// field versions are built on the scalars and this pins that they still are.
+TEST(Derived, WindFieldsAgreeWithTheScalarHelpersAtEveryCell) {
+    auto w = makeWind(
+        5, 1000, [](double x, double y) { return 0.001 * x - 0.002 * y; },
+        [](double x, double y) { return 0.003 * x + 0.0005 * y; });
+    const auto sp = analysis::windSpeedField(w);
+    const auto dir = analysis::windDirectionField(w);
+    for (std::size_t k = 0; k < sp.values.size(); ++k) {
+        const float u = w.u.values[k], v = w.v.values[k];
+        EXPECT_FLOAT_EQ(sp.values[k], analysis::windSpeedFrom(u, v));
+        EXPECT_FLOAT_EQ(dir.values[k], analysis::windDirectionFrom(u, v));
+    }
+}
+
+TEST(Derived, ScalarWindHelpersYieldNaNWhenEitherComponentIsMissing) {
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    EXPECT_TRUE(std::isnan(analysis::windSpeedFrom(nan, 1.0f)));
+    EXPECT_TRUE(std::isnan(analysis::windSpeedFrom(1.0f, nan)));
+    EXPECT_TRUE(std::isnan(analysis::windDirectionFrom(nan, 1.0f)));
+    EXPECT_TRUE(std::isnan(analysis::windDirectionFrom(1.0f, nan)));
 }
 
 TEST(Derived, PotentialTemperature) {

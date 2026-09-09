@@ -17,6 +17,8 @@ add_executable(met_tests
     analysis/wind_test.cpp
     analysis/analysis_tools_test.cpp
     analysis/heights_test.cpp
+    analysis/pointprofile_test.cpp
+    analysis/profilewriter_test.cpp
     analysis/derived_test.cpp
     readers/grib_reader_test.cpp
     readers/grib1_test.cpp
@@ -71,7 +73,10 @@ add_executable(met_app_tests
     app/skewtview_test.cpp
     app/timecontroller_test.cpp
     app/mapview_gpu_test.cpp
+    app/mapview_pick_test.cpp
     app/openpipeline_test.cpp
+    app/extractions_profile_test.cpp
+    app/pointprofiledock_test.cpp
 )
 target_include_directories(met_app_tests PRIVATE ${CMAKE_SOURCE_DIR})
 target_link_libraries(met_app_tests PRIVATE met_options met_app GTest::gtest)
@@ -83,7 +88,15 @@ target_compile_definitions(met_app_tests PRIVATE
     MET_ECCODES_DEFINITION_PATH="${_met_vcpkg_installed}/${VCPKG_TARGET_TRIPLET}/share/eccodes/definitions"
     MET_ECCODES_SAMPLES_PATH="${_met_vcpkg_installed}/${VCPKG_TARGET_TRIPLET}/share/eccodes/samples"
 )
+# Make the headless QT_QPA_PLATFORM=minimal that test_main_app.cpp sets actually
+# resolvable, which takes a different mechanism per Qt linkage. Against a static
+# Qt (the default Linux triplet) the plugin has to be linked in, which is what
+# qt_import_plugins does and where it stops: it has no effect on a dynamic Qt,
+# where the plugin stays a separate DLL that Qt loads at runtime and has to find
+# beside the executable. That is the Windows triplet's case, and what
+# met_deploy_qt_runtime covers -- see cmake/QtDeploy.cmake.
 qt_import_plugins(met_app_tests INCLUDE Qt6::QMinimalIntegrationPlugin)
+met_deploy_qt_runtime(met_app_tests PLUGINS Qt6::QMinimalIntegrationPlugin)
 gtest_discover_tests(met_app_tests DISCOVERY_MODE PRE_TEST)
 
 # Fuzz harnesses are Clang-only and opt-in; see tests/fuzz/CMakeLists.txt.
