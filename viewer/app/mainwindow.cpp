@@ -1237,6 +1237,20 @@ void MainWindow::refreshPointProfileTab() {
     for (const std::string& c : columns) columnKey += c + "|";
     const auto key = std::make_tuple(static_cast<std::int64_t>(t.epochSeconds), mem, columnKey);
 
+    auto dset = dataset_;
+    auto p = std::make_shared<JobProgress>();
+    p->total = extractions::estimatePointProfileReads(*dset, columns);
+    // The count is shown before the cache lookup can return early: de-selecting a
+    // column lands on a previously cached set, and the label must fall with the
+    // selection rather than keep the wider set's number.
+    pointProfileDock_->setReadEstimate(p->total.load());
+    if (p->total.load() == 0) {
+        // Nothing to read: say which reason rather than starting a job that would
+        // read nothing and leave an empty grid to interpret.
+        pointProfileDock_->showNothingToRead();
+        return;
+    }
+
     if (auto it = tab->cache.find(key); it != tab->cache.end()) {
         pointProfileDock_->setProfile(it->second);
         return;
@@ -1247,17 +1261,6 @@ void MainWindow::refreshPointProfileTab() {
     }
 
     const core::LatLon point = tab->point;
-    auto dset = dataset_;
-    auto p = std::make_shared<JobProgress>();
-    p->total = extractions::estimatePointProfileReads(*dset, columns);
-    pointProfileDock_->setReadEstimate(p->total.load());
-    if (p->total.load() == 0) {
-        // Nothing to read: say which reason rather than starting a job that would
-        // read nothing and leave an empty grid to interpret.
-        pointProfileDock_->showNothingToRead();
-        return;
-    }
-
     tab->inFlight = true;
     pointProfileDock_->setBusy(true);
     beginJob(tr("Extracting point profile…"), p);
