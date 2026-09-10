@@ -1266,9 +1266,22 @@ void MainWindow::refreshPointProfileTab() {
         [dset, t, mem, point, columns, p] {
             return extractions::computePointProfile(*dset, t, mem, point, columns, p);
         },
-        [this, tab, key, p](analysis::PointProfile profile) {
+        [this, tab, key, point, p](analysis::PointProfile profile) {
             endJob(p);
             tab->inFlight = false;
+            // A re-pick superseded the job while it was in flight. Time and member
+            // need no such check: they are in the key, so the result is still the
+            // right answer for them. The point is deliberately not in the key, and
+            // caching a profile the panel has left would make the new point read
+            // the old point's data forever. Drop the result and re-run the refresh
+            // so the current point gets extracted.
+            if (tab->point.lat != point.lat || tab->point.lon != point.lon) {
+                tab->pending = false;
+                if (pointProfileDock_) pointProfileDock_->setBusy(false);
+                refreshPointProfileTab();
+                maybeAdvancePlayback();
+                return;
+            }
             tab->cache[key] = profile;
             if (pointProfileDock_) {
                 pointProfileDock_->setBusy(false);
