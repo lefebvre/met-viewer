@@ -76,6 +76,7 @@ add_executable(met_app_tests
     app/mapview_pick_test.cpp
     app/openpipeline_test.cpp
     app/extractions_profile_test.cpp
+    app/pointprofilecache_test.cpp
     app/pointprofiledock_test.cpp
 )
 target_include_directories(met_app_tests PRIVATE ${CMAKE_SOURCE_DIR})

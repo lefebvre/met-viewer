@@ -65,6 +65,7 @@
 #include "viewer/app/mapview.h"
 #include "viewer/app/openpipeline.h"
 #include "viewer/app/plotview2d.h"
+#include "viewer/app/pointprofilecache.h"
 #include "viewer/app/pointprofiledock.h"
 #include "viewer/app/skewtview.h"
 #include "viewer/app/theme.h"
@@ -1188,14 +1189,6 @@ struct MainWindow::CrossSectionTab {
 // the previous set's numbers under the new headers. The picked point is
 // deliberately NOT in the key and clears the cache instead: keying on it would
 // let twenty re-picks accumulate twenty profiles for every visited time.
-struct MainWindow::PointProfileTab {
-    bool inFlight = false;
-    bool pending = false;
-    quint64 epoch = 0;
-    core::LatLon point{};
-    std::map<std::tuple<std::int64_t, int, std::string>, analysis::PointProfile> cache;
-};
-
 void MainWindow::onPointPicked(core::LatLon point) { setProfilePoint(point); }
 
 void MainWindow::setProfilePoint(core::LatLon point) {
@@ -1209,14 +1202,8 @@ void MainWindow::setProfilePoint(core::LatLon point) {
     pointProfileDock_->setPoint(point);
     mapView_->setPickedPoint(point);
 
-    if (!pointProfileTab_) pointProfileTab_ = std::make_shared<PointProfileTab>();
-    // A new point invalidates every cached profile, since none of them were taken
-    // here. Compared exactly: the value either came from the same pick or a
-    // different one, so there is nothing for a tolerance to absorb.
-    if (pointProfileTab_->point.lat != point.lat || pointProfileTab_->point.lon != point.lon) {
-        pointProfileTab_->cache.clear();
-        pointProfileTab_->point = point;
-    }
+    if (!profileCache_) profileCache_ = std::make_shared<PointProfileCache>();
+    profileCache_->setPoint(point);  // a new point invalidates every cached profile
 
     if (!pointProfileRegistered_) {
         pointProfileRegistered_ = true;
@@ -1224,58 +1211,51 @@ void MainWindow::setProfilePoint(core::LatLon point) {
         // waits for it like it waits for a sounding. Guarded because this dock
         // outlives its extractions: its QPointer never nulls, so refreshAnalyses()
         // would never prune a duplicate.
-        auto tab = pointProfileTab_;
+        auto cache = profileCache_;
         analyses_.push_back({pointProfileDockWidget_, [this]() { refreshPointProfileTab(); },
-                             [tab]() { return tab->inFlight; }});
+                             [cache]() { return cache->inFlight; }});
     }
     refreshPointProfileTab();
 }
 
 void MainWindow::refreshPointProfileTab() {
-    if (!pointProfileDock_ || !pointProfileTab_ || !dataset_ || currentTimes_.empty()) return;
+    if (!pointProfileDock_ || !profileCache_ || !dataset_ || currentTimes_.empty()) return;
     if (!pointProfileDock_->hasPoint()) return;
     // A closed panel must cost nothing: without this it would read its whole
     // column set on every frame of playback while nobody was looking at it.
     if (!pointProfileDockWidget_ || !pointProfileDockWidget_->isVisible()) return;
 
-    const std::shared_ptr<PointProfileTab> tab = pointProfileTab_;
-    if (tab->epoch != datasetEpoch_) {
-        tab->cache.clear();
-        tab->epoch = datasetEpoch_;
-    }
+    profileCache_->setEpoch(datasetEpoch_);  // a replaced dataset invalidates the cache
 
     const std::vector<std::string> columns = pointProfileDock_->selectedColumns();
     const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
     const int mem = currentMember_;
-    std::string columnKey;
-    for (const std::string& c : columns) columnKey += c + "|";
-    const auto key = std::make_tuple(static_cast<std::int64_t>(t.epochSeconds), mem, columnKey);
+    const ProfileCacheKey key = makeProfileCacheKey(t, mem, columns);
 
     auto dset = dataset_;
+    // Worked out before the plan, which takes it rather than computing it, so the
+    // count cannot end up on the far side of an early return.
+    const int reads = extractions::estimatePointProfileReads(*dset, columns);
+    const ProfilePlan plan = planProfileRequest(*profileCache_, key, reads);
+    pointProfileDock_->setReadEstimate(plan.reads);
+
+    switch (plan.action) {
+        case ProfileAction::NothingToRead:
+            // Say which reason rather than leaving an empty grid to interpret.
+            pointProfileDock_->showNothingToRead();
+            return;
+        case ProfileAction::Serve:
+            pointProfileDock_->setProfile(*plan.cached);
+            return;
+        case ProfileAction::Wait:
+            return;  // queued behind the running extraction; it will chase this
+        case ProfileAction::Extract:
+            break;
+    }
+
+    const core::LatLon point = profileCache_->point;
     auto p = std::make_shared<JobProgress>();
-    p->total = extractions::estimatePointProfileReads(*dset, columns);
-    // The count is shown before the cache lookup can return early: de-selecting a
-    // column lands on a previously cached set, and the label must fall with the
-    // selection rather than keep the wider set's number.
-    pointProfileDock_->setReadEstimate(p->total.load());
-    if (p->total.load() == 0) {
-        // Nothing to read: say which reason rather than starting a job that would
-        // read nothing and leave an empty grid to interpret.
-        pointProfileDock_->showNothingToRead();
-        return;
-    }
-
-    if (auto it = tab->cache.find(key); it != tab->cache.end()) {
-        pointProfileDock_->setProfile(it->second);
-        return;
-    }
-    if (tab->inFlight) {
-        tab->pending = true;
-        return;
-    }
-
-    const core::LatLon point = tab->point;
-    tab->inFlight = true;
+    p->total = reads;
     pointProfileDock_->setBusy(true);
     beginJob(tr("Extracting point profile…"), p);
     submitCompute<analysis::PointProfile>(
@@ -1283,31 +1263,15 @@ void MainWindow::refreshPointProfileTab() {
         [dset, t, mem, point, columns, p] {
             return extractions::computePointProfile(*dset, t, mem, point, columns, p);
         },
-        [this, tab, key, point, p](analysis::PointProfile profile) {
+        [this, key, point, p](analysis::PointProfile profile) {
             endJob(p);
-            tab->inFlight = false;
-            // A re-pick superseded the job while it was in flight. Time and member
-            // need no such check: they are in the key, so the result is still the
-            // right answer for them. The point is deliberately not in the key, and
-            // caching a profile the panel has left would make the new point read
-            // the old point's data forever. Drop the result and re-run the refresh
-            // so the current point gets extracted.
-            if (tab->point.lat != point.lat || tab->point.lon != point.lon) {
-                tab->pending = false;
-                if (pointProfileDock_) pointProfileDock_->setBusy(false);
-                refreshPointProfileTab();
-                maybeAdvancePlayback();
-                return;
-            }
-            tab->cache[key] = profile;
+            if (!profileCache_) return;
+            const ProfileDelivery delivered = deliverProfile(*profileCache_, key, point, profile);
             if (pointProfileDock_) {
                 pointProfileDock_->setBusy(false);
-                pointProfileDock_->setProfile(profile);
+                if (delivered.display) pointProfileDock_->setProfile(profile);
             }
-            if (tab->pending) {
-                tab->pending = false;
-                refreshPointProfileTab();
-            }
+            if (delivered.again) refreshPointProfileTab();
             maybeAdvancePlayback();  // this panel's load settled -> maybe advance
         });
 }

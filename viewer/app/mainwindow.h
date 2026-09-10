@@ -14,6 +14,7 @@
 #include "viewer/app/fieldcache.h"
 #include "viewer/app/jobs.h"
 #include "viewer/app/openpipeline.h"
+#include "viewer/app/pointprofilecache.h"
 #include "viewer/app/preferences.h"
 #include "viewer/core/field.h"
 #include "viewer/core/geo.h"
@@ -185,7 +186,8 @@ private:
 
     // The point-profile panel. One dock, built once and re-pointed, so unlike the
     // analysis tabs above it has a single piece of state rather than one per view.
-    struct PointProfileTab;
+    // That state and the decisions over it live in pointprofilecache.h, where they
+    // can be tested without a window.
     // The one place a picked point enters, whether it came from a map click or
     // from the panel's typed coordinates. Both converge here so the marker, the
     // coordinate boxes and the table cannot disagree, and so a programmatic echo
@@ -326,7 +328,7 @@ private:
     QAction* pointProfileAct_ = nullptr;
     PointProfileDock* pointProfileDock_ = nullptr;
     QDockWidget* pointProfileDockWidget_ = nullptr;
-    std::shared_ptr<PointProfileTab> pointProfileTab_;
+    std::shared_ptr<PointProfileCache> profileCache_;
     // The dock outlives every extraction, so its QPointer never nulls and the
     // usual pruning in refreshAnalyses() cannot stop a second registration.
     bool pointProfileRegistered_ = false;
