@@ -34,6 +34,12 @@ public:
     // The cell's row index in the profile, so a sorted view can be mapped back to
     // the profile order an export needs.
     static constexpr int kRowIndexRole = Qt::UserRole + 2;
+    // The cell as an export writes it: the bare number in the column's unit, or an
+    // empty string when there is no value. A selection copy pastes into a
+    // spreadsheet, where the on-screen "—" dash would sit in the middle of a
+    // column as a stray character and an empty field is what the CSV already
+    // writes for the same cell.
+    static constexpr int kExportRole = Qt::UserRole + 3;
 
     explicit PointProfileModel(QObject* parent = nullptr);
 

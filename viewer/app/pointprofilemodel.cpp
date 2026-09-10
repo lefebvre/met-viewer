@@ -116,7 +116,8 @@ QVariant PointProfileModel::data(const QModelIndex& index, int role) const {
     // The level label is text, so it sorts by its own numeric coordinate rather
     // than alphabetically -- "1000 hPa" would otherwise sort before "850 hPa".
     if (col == 0) {
-        if (role == Qt::DisplayRole) return QString::fromStdString(core::formatLevel(row.level));
+        if (role == Qt::DisplayRole || role == kExportRole)
+            return QString::fromStdString(core::formatLevel(row.level));
         if (role == kSortRole) return core::levelSortKey(row.level);
         return {};
     }
@@ -146,6 +147,9 @@ QVariant PointProfileModel::data(const QModelIndex& index, int role) const {
     switch (role) {
         case Qt::DisplayRole:
             return cellNumber(shown, showUnit);
+        case kExportRole:
+            // The same field the CSV writes for this cell.
+            return QString::fromStdString(analysis::formatExportValue(shown, showUnit));
         case kSortRole:
             // A cell with no number sorts to the end either way rather than
             // pretending to be zero.

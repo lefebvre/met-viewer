@@ -11,13 +11,18 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QLabel>
+#include <QKeySequence>
+#include <QMap>
 #include <QMenu>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QSet>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSortFilterProxyModel>
+#include <QStringList>
 #include <QTableView>
 #include <QTimer>
 #include <QToolButton>
@@ -166,6 +171,17 @@ PointProfileDock::PointProfileDock(QWidget* parent) : QWidget(parent) {
 
     connect(copy, &QPushButton::clicked, this, &PointProfileDock::copyToClipboard);
     connect(exportCsv, &QPushButton::clicked, this, &PointProfileDock::onExport);
+
+    // The view has no copy action of its own, so without this Ctrl+C does
+    // whatever the platform feels like. The action copies the selection -- no
+    // header row, the spreadsheet convention -- while the Copy button keeps the
+    // whole table with its header, for a paste that stands alone.
+    auto* copySelection = new QAction(this);
+    copySelection->setShortcut(QKeySequence::Copy);
+    table_->addAction(copySelection);
+    connect(copySelection, &QAction::triggered, this, [this] {
+        if (QClipboard* clip = QGuiApplication::clipboard()) clip->setText(selectionAsTsv());
+    });
 
     loadUnitChoice();
     setMessage(tr("Pick a point on the map, or type coordinates above."));
@@ -433,6 +449,39 @@ analysis::ProfileExportInfo PointProfileDock::exportInfo() const {
 QString PointProfileDock::tableAsTsv() const {
     return QString::fromStdString(
         analysis::profileToTsv(model_->profile(), model_->exportUnits(), visibleRowOrder()));
+}
+
+QString PointProfileDock::selectionAsTsv() const {
+    QItemSelectionModel* selection = showingMessage_ ? nullptr : table_->selectionModel();
+    // Nothing to select: copy the whole table, the way the Copy button does.
+    if (!selection || selection->selectedIndexes().isEmpty()) return tableAsTsv();
+
+    // View rows in the order shown. Within a row the fields run from its first
+    // selected cell to its last: a cell the selection does not cover carries an
+    // empty field so the paste keeps its columns aligned, and a hidden column
+    // carries no field at all. The export role, not the display one: a bare
+    // number or an empty field, never the on-screen dash. The set's span is
+    // found with min/max_element: QSet's iteration order is not the sorted one.
+    QMap<int, QSet<int>> byRow;
+    for (const QModelIndex& index : selection->selectedIndexes())
+        byRow[index.row()].insert(index.column());
+
+    QStringList rows;
+    for (auto it = byRow.constBegin(); it != byRow.constEnd(); ++it) {
+        const int row = it.key();
+        const QSet<int>& cols = it.value();
+        const int firstColumn = *std::min_element(cols.cbegin(), cols.cend());
+        const int lastColumn = *std::max_element(cols.cbegin(), cols.cend());
+        QStringList fields;
+        for (int c = firstColumn; c <= lastColumn; ++c) {
+            if (table_->isColumnHidden(c)) continue;
+            fields << (cols.contains(c)
+                          ? proxy_->index(row, c).data(PointProfileModel::kExportRole).toString()
+                          : QString());
+        }
+        if (!fields.isEmpty()) rows << fields.join('\t');
+    }
+    return rows.join('\n');
 }
 
 QString PointProfileDock::tableAsCsv() const {

@@ -8,8 +8,10 @@
 #include <QAction>
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QItemSelectionModel>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QTableView>
 
 #include "viewer/analysis/pointprofile.h"
 #include "viewer/app/pointprofiledock.h"
@@ -311,4 +313,75 @@ TEST(PointProfileDock, KeepsAStillAvailableColumnWhenTheDatasetChanges) {
     // Temperature survives; the two the new file cannot offer are dropped rather
     // than kept as columns of blanks.
     EXPECT_EQ(dock.selectedColumns(), std::vector<std::string>{"t"});
+}
+
+// A selection copy is the cells' numbers, not their on-screen text: the "—" a
+// missing cell shows would sit in a spreadsheet column as a stray character,
+// and the empty field is what the CSV already writes for the same cell.
+TEST(PointProfileDock, CopiesTheSelectionAsBareNumbersWithoutAHeader) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    dock.setProfile(profile());
+
+    auto* table = dock.findChild<QTableView*>();
+    ASSERT_TRUE(table != nullptr);
+    table->show();  // a selection happens in a visible panel
+    auto* selection = table->selectionModel();
+    ASSERT_TRUE(selection != nullptr);
+    // Both temperature cells, in view order (the table opens ground-first).
+    selection->select(table->model()->index(0, 3), QItemSelectionModel::Select);
+    selection->select(table->model()->index(1, 3), QItemSelectionModel::Select);
+
+    // The 500 hPa temperature is missing, so its field is empty, not a dash.
+    EXPECT_EQ(dock.selectionAsTsv(), "283.15\n");
+}
+
+// A cell the selection skips keeps its place with an empty field, so the paste
+// lands under the right column.
+TEST(PointProfileDock, KeepsSkippedCellsAlignedWithEmptyFields) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    dock.setProfile(profile());
+
+    auto* table = dock.findChild<QTableView*>();
+    ASSERT_TRUE(table != nullptr);
+    table->show();  // a selection happens in a visible panel
+    auto* selection = table->selectionModel();
+    ASSERT_TRUE(selection != nullptr);
+    // The (hidden) level label and the height, skipping the pressure between.
+    selection->select(table->model()->index(0, 0), QItemSelectionModel::Select);
+    selection->select(table->model()->index(0, 2), QItemSelectionModel::Select);
+
+    EXPECT_EQ(dock.selectionAsTsv(), "\t110.0");
+}
+
+// The level column is hidden on an isobaric axis, so a whole-row copy starts at
+// the pressure and carries no field for it at all.
+TEST(PointProfileDock, CopiesAWholeRowWithoutTheHiddenLevelColumn) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    dock.setProfile(profile());
+
+    auto* table = dock.findChild<QTableView*>();
+    ASSERT_TRUE(table != nullptr);
+    table->show();  // a selection happens in a visible panel
+    table->selectionModel()->select(
+        QItemSelection(table->model()->index(0, 0), table->model()->index(0, 4)),
+        QItemSelectionModel::Select);
+
+    EXPECT_EQ(dock.selectionAsTsv(), "1000.00\t110.0\t283.15\t10.00");
+}
+
+TEST(PointProfileDock, FallsBackToTheWholeTableWhenNothingIsSelected) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    dock.setProfile(profile());
+
+    auto* table = dock.findChild<QTableView*>();
+    ASSERT_TRUE(table != nullptr);
+    table->show();  // a selection happens in a visible panel
+    table->selectionModel()->clearSelection();
+
+    // The same text the Copy button produces, header included.
+    EXPECT_EQ(dock.selectionAsTsv(), dock.tableAsTsv());
 }

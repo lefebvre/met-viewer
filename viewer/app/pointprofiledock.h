@@ -97,6 +97,10 @@ public:
     // The table as text, in the order shown. Split from the clipboard and the
     // file dialog so both can be tested without either.
     [[nodiscard]] QString tableAsTsv() const;
+    // The selected cells as text, in the order shown, with no header row -- the
+    // spreadsheet convention for a copy. Falls back to the whole table (header
+    // included, as the Copy button produces it) when nothing is selected.
+    [[nodiscard]] QString selectionAsTsv() const;
     [[nodiscard]] QString tableAsCsv() const;
     // Writes the CSV, reporting why rather than failing silently.
     bool exportCsvTo(const QString& path, QString* error);
