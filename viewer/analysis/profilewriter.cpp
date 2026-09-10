@@ -172,7 +172,9 @@ std::string profileToCsv(const PointProfile& p, const ProfileExportInfo& info,
                          const ProfileUnits& units, const ProfileRowOrder& order) {
     std::string out = "# met-viewer point profile\n";
     out += fmt::format("# point: {:.4f}, {:.4f}\n", p.point.lat, p.point.lon);
-    out += fmt::format("# valid time: {}\n", core::formatTime(p.validTime));
+    // The file's own name carries the same token, so a reader can match header
+    // to name without re-parsing a timestamp.
+    out += fmt::format("# valid time: {}\n", core::compactTime(p.validTime));
     if (!info.datasetLabel.empty()) out += fmt::format("# dataset: {}\n", info.datasetLabel);
     out +=
         fmt::format("# level type: {}\n", info.levelTypeLabel.empty() ? levelTypeLabel(p.levelType)

@@ -18,6 +18,11 @@ struct TimePoint {
 // ISO-8601 UTC string, e.g. "2024-05-01T12:00Z". For display only.
 [[nodiscard]] std::string formatTime(TimePoint t);
 
+// The same instant without the separators a file name would not want,
+// e.g. "20240501T1200Z". Profile exports carry it in BOTH the file name and the
+// CSV's own "# valid time:" line, so the two are one spelling by construction.
+[[nodiscard]] std::string compactTime(TimePoint t);
+
 // Portable UTC calendar -> Unix epoch seconds (proleptic Gregorian, no timezone
 // or DST). A dependency-free replacement for the non-standard timegm().
 [[nodiscard]] std::int64_t timegmUtc(int year, int mon, int day, int hour, int min, int sec);

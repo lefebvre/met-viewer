@@ -502,14 +502,10 @@ QString PointProfileDock::suggestedCsvName() const {
                             QString::number(std::abs(p.lon), 'f', 2),
                             p.lon >= 0.0 ? QStringLiteral("E") : QStringLiteral("W"));
     // The profile's own valid time, not the one on the map when the file is
-    // exported: the export is a snapshot of what the table shows. formatTime's
-    // "2024-05-01T12:00Z" loses its separators for a Windows-safe file name.
-    if (model_->profile().validTime.epochSeconds > 0) {
-        QString t = QString::fromStdString(core::formatTime(model_->profile().validTime));
-        t.remove(QChar('-'));
-        t.remove(QChar(':'));
-        name += '_' + t;
-    }
+    // exported: the export is a snapshot of what the table shows. compactTime
+    // is the same token the file's "# valid time:" line carries.
+    if (model_->profile().validTime.epochSeconds > 0)
+        name += '_' + QString::fromStdString(core::compactTime(model_->profile().validTime));
     return name + ".csv";
 }
 

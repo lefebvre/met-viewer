@@ -1,5 +1,7 @@
 #include "viewer/core/timeaxis.h"
 
+#include <algorithm>
+
 #include <fmt/format.h>
 
 namespace met::core {
@@ -48,6 +50,13 @@ std::string formatTime(TimePoint t) {
     const int hh = static_cast<int>(rem / 3600);
     const int mm = static_cast<int>((rem % 3600) / 60);
     return fmt::format("{:04d}-{:02d}-{:02d}T{:02d}:{:02d}Z", y, mo, d, hh, mm);
+}
+
+std::string compactTime(TimePoint t) {
+    std::string out = formatTime(t);
+    out.erase(std::remove(out.begin(), out.end(), '-'), out.end());
+    out.erase(std::remove(out.begin(), out.end(), ':'), out.end());
+    return out;
 }
 
 double levelSortKey(const VerticalLevel& lvl) {
