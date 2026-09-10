@@ -501,9 +501,10 @@ QString PointProfileDock::suggestedCsvName() const {
                             p.lat >= 0.0 ? QStringLiteral("N") : QStringLiteral("S"),
                             QString::number(std::abs(p.lon), 'f', 2),
                             p.lon >= 0.0 ? QStringLiteral("E") : QStringLiteral("W"));
-    // The profile's own valid time, not the one on the map when the file is
-    // exported: the export is a snapshot of what the table shows. compactTime
-    // is the same token the file's "# valid time:" line carries.
+    // The profile's own valid time, not whatever the map is showing when the file
+    // is written: the export is a snapshot of the table. Basic format here
+    // because a file name cannot carry the ":" of the extended one the CSV body
+    // uses -- see core::compactTime for why the "-" goes too.
     if (model_->profile().validTime.epochSeconds > 0)
         name += '_' + QString::fromStdString(core::compactTime(model_->profile().validTime));
     return name + ".csv";

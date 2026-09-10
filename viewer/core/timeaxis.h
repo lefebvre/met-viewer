@@ -18,9 +18,15 @@ struct TimePoint {
 // ISO-8601 UTC string, e.g. "2024-05-01T12:00Z". For display only.
 [[nodiscard]] std::string formatTime(TimePoint t);
 
-// The same instant without the separators a file name would not want,
-// e.g. "20240501T1200Z". Profile exports carry it in BOTH the file name and the
-// CSV's own "# valid time:" line, so the two are one spelling by construction.
+// The same instant in ISO-8601 *basic* format, e.g. "20240501T1200Z" -- the
+// standard's own separator-free spelling, which exists for contexts that cannot
+// take the extended form's punctuation. Used for export file names, since a
+// Windows file name cannot contain the ":" formatTime puts in the time.
+//
+// It drops the "-" as well as the ":", even though a file name takes a dash
+// happily, because ISO-8601 does not allow the two forms to be mixed: a
+// "2024-05-01T1200Z" is neither, and reads as a typo. File contents keep
+// formatTime, which is under no such constraint.
 [[nodiscard]] std::string compactTime(TimePoint t);
 
 // Portable UTC calendar -> Unix epoch seconds (proleptic Gregorian, no timezone

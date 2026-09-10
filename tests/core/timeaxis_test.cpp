@@ -20,8 +20,9 @@ TEST(TimeAxis, FormatTimeMatchesCalendar) {
     EXPECT_EQ(formatTime(TimePoint{timegmUtc(1985, 3, 31, 12, 30, 0)}), "1985-03-31T12:30Z");
 }
 
-// The export file name and the CSV's "# valid time:" line share this spelling,
-// so the same instant round-trips through both without either side re-parsing.
+// ISO-8601 basic format is exactly the extended one with its punctuation gone,
+// so the two spellings are pinned against each other rather than against a
+// hand-written table that could drift from formatTime.
 TEST(TimeAxis, CompactTimeDropsOnlyTheSeparators) {
     EXPECT_EQ(compactTime(TimePoint{0}), "19700101T0000Z");
     EXPECT_EQ(compactTime(TimePoint{1590991200}), "20200601T0600Z");
