@@ -705,6 +705,20 @@ void MainWindow::updatePointProfileAvailability() {
     if (pointProfileDock_) {
         pointProfileDock_->setChoices(choices);
         pointProfileDock_->setCoordPrecision(currentCoordPrecision());
+        // Provenance for the export header, which only the window knows: the
+        // file(s) as loaded. The profile carries its own time and member, so
+        // these are for the record, not for the numbers.
+        QString sources;
+        for (const std::filesystem::path& source : loadedPaths_) {
+            if (!sources.isEmpty()) sources += QStringLiteral(", ");
+            sources += QString::fromStdString(source.filename().string());
+        }
+        pointProfileDock_->setContext(
+            sources,
+            timeIdx_ >= 0 && timeIdx_ < static_cast<int>(currentTimes_.size())
+                ? currentTimes_[static_cast<std::size_t>(timeIdx_)]
+                : core::TimePoint{},
+            currentMember_);
         if (!ok) pointProfileDock_->clearProfile();
     }
     if (!pointProfileAct_) return;

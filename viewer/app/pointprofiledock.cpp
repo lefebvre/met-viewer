@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 
 #include <QAction>
 #include <QActionGroup>
@@ -493,15 +494,30 @@ void PointProfileDock::copyToClipboard() {
     if (QClipboard* clip = QGuiApplication::clipboard()) clip->setText(tableAsTsv());
 }
 
+QString PointProfileDock::suggestedCsvName() const {
+    const core::LatLon p = point();
+    QString name = QStringLiteral("profile_%1%2_%3%4")
+                       .arg(QString::number(std::abs(p.lat), 'f', 2),
+                            p.lat >= 0.0 ? QStringLiteral("N") : QStringLiteral("S"),
+                            QString::number(std::abs(p.lon), 'f', 2),
+                            p.lon >= 0.0 ? QStringLiteral("E") : QStringLiteral("W"));
+    // The profile's own valid time, not the one on the map when the file is
+    // exported: the export is a snapshot of what the table shows. formatTime's
+    // "2024-05-01T12:00Z" loses its separators for a Windows-safe file name.
+    if (model_->profile().validTime.epochSeconds > 0) {
+        QString t = QString::fromStdString(core::formatTime(model_->profile().validTime));
+        t.remove(QChar('-'));
+        t.remove(QChar(':'));
+        name += '_' + t;
+    }
+    return name + ".csv";
+}
+
 void PointProfileDock::onExport() {
     if (model_->profile().levels.empty()) return;
-    const core::LatLon p = point();
-    // A name that says what the file is without opening it.
-    const QString suggested =
-        QStringLiteral("profile_%1_%2.csv")
-            .arg(QString::number(p.lat, 'f', 2), QString::number(p.lon, 'f', 2));
-    const QString path = QFileDialog::getSaveFileName(this, tr("Export point profile"), suggested,
-                                                      tr("CSV files (*.csv);;All files (*)"));
+    const QString path =
+        QFileDialog::getSaveFileName(this, tr("Export point profile"), suggestedCsvName(),
+                                      tr("CSV files (*.csv);;All files (*)"));
     if (path.isEmpty()) return;
     QString error;
     if (!exportCsvTo(path, &error)) setMessage(tr("Could not write %1: %2").arg(path, error));

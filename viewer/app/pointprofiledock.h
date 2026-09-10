@@ -101,6 +101,9 @@ public:
     // spreadsheet convention for a copy. Falls back to the whole table (header
     // included, as the Copy button produces it) when nothing is selected.
     [[nodiscard]] QString selectionAsTsv() const;
+    // The name the save dialog opens on: the point and the profile's own valid
+    // time, so a folder of exports says where and when without opening the files.
+    [[nodiscard]] QString suggestedCsvName() const;
     [[nodiscard]] QString tableAsCsv() const;
     // Writes the CSV, reporting why rather than failing silently.
     bool exportCsvTo(const QString& path, QString* error);

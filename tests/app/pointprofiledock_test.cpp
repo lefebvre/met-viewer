@@ -385,3 +385,26 @@ TEST(PointProfileDock, FallsBackToTheWholeTableWhenNothingIsSelected) {
     // The same text the Copy button produces, header included.
     EXPECT_EQ(dock.selectionAsTsv(), dock.tableAsTsv());
 }
+
+// The save dialog opens on a name that says where the profile is from and the
+// time it was read at: the point from the panel, the valid time from the profile
+// itself, with the separators a file name would not want.
+TEST(PointProfileDock, SuggestsANameCarryingThePointAndTheProfilesOwnTime) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    analysis::PointProfile p = profile();
+    p.validTime = {core::timegmUtc(2024, 5, 1, 12, 0, 0)};
+    dock.setPoint({-33.5, -70.1234});
+    dock.setProfile(p);
+
+    EXPECT_EQ(dock.suggestedCsvName(), "profile_33.50S_70.12W_20240501T1200Z.csv");
+}
+
+TEST(PointProfileDock, SuggestsANameWithoutATimeWhenTheProfileHasNone) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    dock.setPoint({63.0, 10.0});
+    dock.setProfile(profile());  // no valid time
+
+    EXPECT_EQ(dock.suggestedCsvName(), "profile_63.00N_10.00E.csv");
+}
