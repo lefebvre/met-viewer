@@ -13,8 +13,8 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QItemSelectionModel>
-#include <QLabel>
 #include <QKeySequence>
+#include <QLabel>
 #include <QMap>
 #include <QMenu>
 #include <QPushButton>
@@ -477,8 +477,8 @@ QString PointProfileDock::selectionAsTsv() const {
         for (int c = firstColumn; c <= lastColumn; ++c) {
             if (table_->isColumnHidden(c)) continue;
             fields << (cols.contains(c)
-                          ? proxy_->index(row, c).data(PointProfileModel::kExportRole).toString()
-                          : QString());
+                           ? proxy_->index(row, c).data(PointProfileModel::kExportRole).toString()
+                           : QString());
         }
         if (!fields.isEmpty()) rows << fields.join('\t');
     }
@@ -517,7 +517,7 @@ void PointProfileDock::onExport() {
     if (model_->profile().levels.empty()) return;
     const QString path =
         QFileDialog::getSaveFileName(this, tr("Export point profile"), suggestedCsvName(),
-                                      tr("CSV files (*.csv);;All files (*)"));
+                                     tr("CSV files (*.csv);;All files (*)"));
     if (path.isEmpty()) return;
     QString error;
     if (!exportCsvTo(path, &error)) setMessage(tr("Could not write %1: %2").arg(path, error));

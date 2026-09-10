@@ -10,8 +10,8 @@
 #include <QElapsedTimer>
 #include <QItemSelectionModel>
 #include <QSettings>
-#include <QTemporaryDir>
 #include <QTableView>
+#include <QTemporaryDir>
 
 #include "viewer/analysis/pointprofile.h"
 #include "viewer/app/pointprofiledock.h"
