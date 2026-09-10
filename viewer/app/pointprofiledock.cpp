@@ -505,7 +505,13 @@ QString PointProfileDock::suggestedCsvName() const {
     // is written: the export is a snapshot of the table. Basic format here
     // because a file name cannot carry the ":" of the extended one the CSV body
     // uses -- see core::compactTime for why the "-" goes too.
-    if (model_->profile().validTime.epochSeconds > 0)
+    //
+    // Gated on there being a profile at all, never on the timestamp's value. Any
+    // sentinel would be a real instant: a positive-seconds test drops every date
+    // before 1970, which reanalysis routinely carries (ERA5 reaches 1940), and
+    // zero is midnight on the epoch rather than "unset". A profile with rows has
+    // been through computePointProfile, which always stamps it.
+    if (!model_->profile().levels.empty())
         name += '_' + QString::fromStdString(core::compactTime(model_->profile().validTime));
     return name + ".csv";
 }

@@ -400,11 +400,37 @@ TEST(PointProfileDock, SuggestsANameCarryingThePointAndTheProfilesOwnTime) {
     EXPECT_EQ(dock.suggestedCsvName(), "profile_33.50S_70.12W_20240501T1200Z.csv");
 }
 
-TEST(PointProfileDock, SuggestsANameWithoutATimeWhenTheProfileHasNone) {
+TEST(PointProfileDock, SuggestsANameWithoutATimeWhenThereIsNoProfileToStamp) {
     ScopedUnitSettings restore;
     PointProfileDock dock;
     dock.setPoint({63.0, 10.0});
-    dock.setProfile(profile());  // no valid time
+    dock.setProfile({});  // nothing extracted, so there is no time to name it by
 
     EXPECT_EQ(dock.suggestedCsvName(), "profile_63.00N_10.00E.csv");
+}
+
+// Reanalysis routinely predates 1970 -- ERA5 reaches 1940 -- so the epoch
+// seconds go negative. Testing the timestamp's sign to decide whether there is
+// one to print dropped the time from the name for every such file.
+TEST(PointProfileDock, NamesAProfileWhoseTimeIsBeforeTheUnixEpoch) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    analysis::PointProfile p = profile();
+    p.validTime = {core::timegmUtc(1948, 1, 1, 6, 0, 0)};
+    dock.setPoint({63.0, 10.0});
+    dock.setProfile(p);
+
+    EXPECT_EQ(dock.suggestedCsvName(), "profile_63.00N_10.00E_19480101T0600Z.csv");
+}
+
+// Midnight on the epoch is a time like any other, not a missing one.
+TEST(PointProfileDock, NamesAProfileValidAtTheEpochItself) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    analysis::PointProfile p = profile();
+    p.validTime = {0};
+    dock.setPoint({63.0, 10.0});
+    dock.setProfile(p);
+
+    EXPECT_EQ(dock.suggestedCsvName(), "profile_63.00N_10.00E_19700101T0000Z.csv");
 }
