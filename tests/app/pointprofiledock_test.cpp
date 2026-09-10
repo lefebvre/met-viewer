@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <limits>
 #include <string>
 #include <vector>
@@ -191,10 +192,42 @@ TEST(PointProfileDock, EmitsPointEditedWhenCoordinatesAreCommitted) {
     EXPECT_NEAR(dock.point().lon, -100.0, 1e-9);
 }
 
+// An empty table on the first pick would be honest and useless, so a dataset
+// arriving with nothing chosen yet opens on the quantities a site readout is
+// usually wanted for.
+TEST(PointProfileDock, OpensOnADefaultSelectionRatherThanAnEmptyTable) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    EXPECT_TRUE(dock.selectedColumns().empty()) << "nothing to choose from before a dataset";
+
+    dock.setChoices(choices());
+    const std::vector<std::string> chosen = dock.selectedColumns();
+    EXPECT_NE(std::find(chosen.begin(), chosen.end(), "t"), chosen.end());
+    EXPECT_NE(std::find(chosen.begin(), chosen.end(), "r"), chosen.end());
+    EXPECT_NE(std::find(chosen.begin(), chosen.end(), analysis::kWindSpeedId), chosen.end());
+}
+
+// Clearing every box is a decision, not an absence of one: the next dataset must
+// not silently repopulate the table the user just emptied.
+TEST(PointProfileDock, DoesNotRepopulateASelectionTheUserDeliberatelyCleared) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    dock.setChoices(choices());
+    ASSERT_FALSE(dock.selectedColumns().empty());
+
+    dock.setSelectedColumns({});
+    dock.setChoices(choices());  // a second file with the same variables
+    EXPECT_TRUE(dock.selectedColumns().empty());
+}
+
 TEST(PointProfileDock, CoalescesABurstOfColumnTicksIntoOneSignal) {
     ScopedUnitSettings restore;
     PointProfileDock dock;
     dock.setChoices(choices());
+    // Start from nothing selected. setChoices opens on a default set, and ticking
+    // a box that is already ticked is not a change, so the burst below would
+    // otherwise be three no-ops.
+    dock.setSelectedColumns({});
     int changes = 0;
     QObject::connect(&dock, &PointProfileDock::columnsChanged, [&changes] { ++changes; });
 
