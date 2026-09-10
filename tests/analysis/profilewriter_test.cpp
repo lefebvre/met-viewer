@@ -90,8 +90,10 @@ TEST(ProfileToCsv, BeginsWithCommentedProvenanceThenAHeaderRowCarryingUnits) {
 
     EXPECT_EQ(csv.rfind("# met-viewer point profile", 0), 0u);
     EXPECT_TRUE(contains(csv, "# point: 63.5000, 10.4000"));
-    // The compact token matches what the export file is named with.
-    EXPECT_TRUE(contains(csv, "# valid time: 20240501T1200Z"));
+    // Extended ISO-8601 in the file's contents; only its name is compacted, and
+    // only because a colon is illegal in a Windows file name.
+    EXPECT_TRUE(contains(csv, "# valid time: 2024-05-01T12:00Z"));
+    EXPECT_FALSE(contains(csv, "20240501T1200Z"));
     EXPECT_TRUE(contains(csv, "# dataset: era5_t_pl.nc"));
     EXPECT_TRUE(contains(csv, "# level type: isobaric"));
     EXPECT_EQ(headerLine(csv), "level,pressure (hPa),height MSL (gpm),t (K),wspd (m/s)");

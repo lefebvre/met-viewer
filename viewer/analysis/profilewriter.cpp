@@ -172,9 +172,11 @@ std::string profileToCsv(const PointProfile& p, const ProfileExportInfo& info,
                          const ProfileUnits& units, const ProfileRowOrder& order) {
     std::string out = "# met-viewer point profile\n";
     out += fmt::format("# point: {:.4f}, {:.4f}\n", p.point.lat, p.point.lon);
-    // The file's own name carries the same token, so a reader can match header
-    // to name without re-parsing a timestamp.
-    out += fmt::format("# valid time: {}\n", core::compactTime(p.validTime));
+    // Extended ISO-8601, deliberately not the compact spelling the export's file
+    // name uses. That form exists only because a Windows file name cannot carry a
+    // colon, and the file's contents are under no such constraint -- letting a
+    // filesystem limitation set a data format is the wrong way round.
+    out += fmt::format("# valid time: {}\n", core::formatTime(p.validTime));
     if (!info.datasetLabel.empty()) out += fmt::format("# dataset: {}\n", info.datasetLabel);
     out +=
         fmt::format("# level type: {}\n", info.levelTypeLabel.empty() ? levelTypeLabel(p.levelType)
