@@ -62,7 +62,7 @@ QT_QPA_PLATFORM=xcb ./build/release/viewer/app/met_viewer tests/fixtures/era5_t_
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │ File   View                                    (menu bar)               │
-│ [Pan] [Cross-section] [Sounding] [Time series]  (Tools toolbar / modes) │
+│ [Pan] [Cross-section] [Sounding] [Time series] [Point profile]  (modes) │
 ├──────────────┬────────────────────────────────────────┬────────────────┤
 │ Data         │  ┌── canvas ─────────────────────────┐ │  ▾ Map         │
 │              │  │                                    │ │   Colormap …   │
@@ -95,11 +95,13 @@ in-repo [`tests/fixtures/`](../tests/fixtures/) files so you can reproduce them.
   what is on screen.
 - **Views (center)** — **2D Plot** and **Map** start as tabs; analysis views
   (cross-section, skew-T, time series) open as additional tabs. **Each view owns
-  its own control panel** on the right — collapse it with the **▾/▸** header.
+  its own control panel** on the right — collapse it with the **▾/▸** header. The
+  **Point Profile** panel is the exception: one panel docked at the right edge that
+  re-points to each new pick, rather than a new tab per pick.
 - **Time dock (bottom)** — play/pause, step, a scrubbable time slider, and the
   current valid time.
 - **Tools toolbar (top)** — the picking **modes** (Pan / Cross-section /
-  Sounding / Time series), described in [§7](#7-analysis-tools).
+  Sounding / Time series / Point profile), described in [§7](#7-analysis-tools).
 - **Status bar (bottom)** — the **probe** readout (value under the cursor) and
   mode hints.
 
@@ -253,7 +255,8 @@ are **persisted** between sessions.
 
 ## 7. Analysis tools
 
-Cross-sections, soundings, and time series are **picked on the Map**. Use the
+Cross-sections, soundings, time series, and point profiles are **picked on the
+Map**. Use the
 **Tools** toolbar to choose a picking mode (choosing any non-Pan mode raises the
 Map for you); the status bar tells you what each mode expects. Switch back to
 **Pan** when you are done to restore drag-to-pan and the hover probe.
@@ -325,6 +328,8 @@ The **Point Profile** panel opens with a row per vertical level and a column per
 variable, and a crosshair marks the site on the map. The marker stays put when you
 switch back to **Pan**, so you can look at the field around the point you tabled.
 
+![The Point Profile panel docked beside the map: a ground-first table of pressure, height and temperature at the picked site, further columns scrolled off to the right, and a crosshair marking the site on the map](images/17-point-profile.png)
+
 - **Columns** chooses which variables appear. The panel opens on temperature,
   humidity and wind when the file has them. Wind speed and direction are offered
   when the file carries a U/V pair; they are computed from it, earth-relative, not
@@ -377,9 +382,9 @@ The views live in a nested docking area, so you can build the layout you want:
   Map next to a Skew-T).
 - **Tab** — drag one view onto the **center** of another to stack them as tabs.
 - **Float** — drag a view out of the window to pop it into its own floating window.
-- **Close / restore** — analysis tabs close with their **×**. The **Data** and
-  **Time** docks and the **Tools** toolbar can be hidden and brought back from the
-  **View** menu.
+- **Close / restore** — analysis tabs close with their **×**. The **Data**,
+  **Time** and **Point Profile** docks and the **Tools** toolbar can be hidden and
+  brought back from the **View** menu.
 - **Collapse controls** — each view's control panel collapses via its **▾/▸**
   header to maximize canvas space.
 

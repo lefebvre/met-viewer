@@ -83,6 +83,9 @@ animate 12-time-animation 0 4 8 12 16 20 24 28 32 36 40 44   # GIF stepping thro
 shot 13-cross-section     --var t --map --demo-at "$AT" --demo section
 shot 14-skewt-sounding    --var t --map --demo-at "$AT" --demo sounding
 shot 15-time-series       --var t --level 500 --map --demo-at "$AT" --demo series
+# Point-profile panel docked beside the map with the picked site marked. Rendered
+# at the tiled shot's width so the table has room next to the map at all.
+shot 17-point-profile     --var t --map --demo-at "$AT" --demo point --size 1680x860
 
 # --- Workspace (§8) ---
 # Cross-section beside a skew-T, rendered wider so each pane has room (the skew-T's
