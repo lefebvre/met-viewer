@@ -325,7 +325,8 @@ The **Point Profile** panel opens with a row per vertical level and a column per
 variable, and a crosshair marks the site on the map. The marker stays put when you
 switch back to **Pan**, so you can look at the field around the point you tabled.
 
-- **Columns** chooses which variables appear. Wind speed and direction are offered
+- **Columns** chooses which variables appear. The panel opens on temperature,
+  humidity and wind when the file has them. Wind speed and direction are offered
   when the file carries a U/V pair; they are computed from it, earth-relative, not
   read as fields. Variables with only one level are listed but disabled, since a
   single level is not a profile.
@@ -333,11 +334,26 @@ switch back to **Pan**, so you can look at the field around the point you tabled
   in m/s or knots, temperature in K or °C. The choice applies to every column in
   that unit, is remembered between sessions, and never re-reads any data.
 - Rows start at the **ground**. Click the **Height MSL** or **Pressure** header to
-  sort the other way.
-- **Copy** puts the table on the clipboard tab-separated, so it pastes into a
-  spreadsheet as columns. **Export CSV…** writes the same table with a commented
-  header naming the point, the valid time and the dataset.
+  sort the other way. On a pressure-level file the level name is left out, since it
+  repeats the pressure.
+- **Copy** puts the whole table on the clipboard tab-separated, with its header
+  row, so it pastes into a spreadsheet as columns.
+- `Ctrl+C` copies just the **selected cells**, without a header row, in the order
+  shown. A selected cell with no value pastes as an empty field rather than a
+  dash, and with nothing selected `Ctrl+C` copies the whole table.
+- **Export CSV…** writes the table in the order and units shown, with a
+  commented header naming the point, the valid time and the dataset. The save
+  dialog suggests a name carrying the point and the profile's valid time, such as
+  `profile_63.00N_10.00E_20070114T1200Z.csv`. The time in the name drops its
+  separators because a Windows file name cannot hold a colon; the header inside
+  the file keeps the full `2007-01-14T12:00Z` form.
 - The table follows the time slider, so scrubbing re-tables the same point.
+
+You can pick again while a profile is still extracting. The panel finishes the
+extraction in progress and then extracts the point you picked **last**; points
+picked in between are skipped, since their profiles would only be thrown away. The
+extraction in progress cannot be stopped early, so on a large file a quick re-pick
+waits for it to finish before your latest point starts.
 
 The altitude column is **mean-sea-level geopotential height, read from the file's
 own height field** — the panel says which variable in the exported header. There is

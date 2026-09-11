@@ -48,7 +48,7 @@ platform plugin, not `wayland`): `QT_QPA_PLATFORM=xcb ./build/release/viewer/app
 
 Once it's running, the [Getting Started tutorial](docs/getting-started.md) walks
 through opening data, colormaps, the GIS map, wind overlays, cross-sections,
-soundings, time series, and animation.
+soundings, time series, point-profile tables, and animation.
 
 Other presets: `debug`, `asan` (address/UB sanitizers **plus `-Werror`** — run before
 committing). CI runs the equivalent as `asan-dist`, which differs only in inheriting

@@ -30,6 +30,7 @@ viewer/
                 timecontroller colorbarwidget hoverreadout coastlines theme icons
                 crosssectionview skewtview timeseriesview  fieldcache (LRU + prefetch)
                 pointprofiledock + pointprofilemodel (point table, copy/CSV export)
+                pointprofilecache (request coalescing + result staleness, Qt-free)
                 glfieldrenderer (opt-in GPU path, off by default)
                 jobs (pooled work) extractions (slab reads + analysis, Qt-free)
 resources/      Natural Earth coastlines/borders as compact binary polylines, icons
@@ -92,6 +93,19 @@ from the surface up; the view can sort either way. The altitude column is MSL
 geopotential height from the file's own height field and nothing else — there is no
 height-above-ground anywhere, since that needs a terrain elevation this code deliberately
 never infers.
+
+Requests coalesce the way the analysis tabs' do: one extraction in flight and one "look
+again" flag, not a queue. When the running extraction lands, the panel re-reads the
+current point, time and columns and extracts for those, so a burst of re-picks resolves to
+the latest point and the ones in between are never read. The cache key omits the point so
+twenty re-picks cannot pile up twenty profiles per visited time, which means a result has
+to be checked against the point it was extracted for before it is stored; storing a
+superseded one would make the new point read the old point's data for as long as the
+entry lived. Those decisions live in `app/pointprofilecache.h` as free functions over
+plain data rather than inside `MainWindow`, where two bugs in them once went untested.
+Not yet implemented: cancelling the superseded extraction, so the latest point waits for
+the running one to finish. It needs a cancel flag on `JobProgress` checked between slab
+reads, in the read path the sounding and cross-section extractions share.
 
 **Geopotential height on the vertical axis** (`analysis/heights.h` picks the variable — `gh`/`zg`/standard name `geopotential_height`, else geopotential `z`, converted through g): the sounding labels each standard isobar with its altitude, since a profile is at one point and pressure↔height there is a single mapping. A cross-section gets contoured, labelled **height isopleths** instead, because a pressure surface tilts along the path — height is a second field over (distance, log-p), not a second axis, and drawing it as an axis would state an altitude that is only true at one end of the section. Heights always come from a height field in the file; nothing is inferred from the temperature trace, which would need a surface height the file may not carry.
 
