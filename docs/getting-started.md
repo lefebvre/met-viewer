@@ -105,6 +105,9 @@ in-repo [`tests/fixtures/`](../tests/fixtures/) files so you can reproduce them.
 - **Status bar (bottom)** — the **probe** readout (value under the cursor) and
   mode hints.
 
+Most controls in the panels are icons rather than labels; hover one to see its
+name.
+
 Every panel and the toolbar can be closed with its **×** and brought back from the
 **View** menu. Panels can be dragged, split, tabbed, and floated — see [§8](#8-arranging-your-workspace).
 
@@ -143,7 +146,8 @@ Diverging colormaps auto-center on zero, so they suit signed fields — here the
 
 ### Contours
 
-Check **Contours** to overlay isolines on the plot. Leave **Contour interval** at
+Turn on the **Contours** toggle (the isoline icon) to overlay isolines on the plot.
+Leave **Contour interval** at
 `auto` for a "nice" automatic spacing, or type an interval in the field's units
 (e.g. `2` for every 2 K).
 
@@ -167,17 +171,24 @@ semi-transparently over basemap tiles.
 The Map's control panel adds:
 
 - **Basemap** — `OpenStreetMap`, `Carto Light`, `Carto Dark`,
-  `Esri World Imagery` (satellite), `OpenTopoMap` (terrain). Attribution is shown
-  in the corner as each source requires.
+  `Esri World Imagery` (satellite), and the terrain presets
+  `Esri World Shaded Relief` and `OpenTopoMap`. Attribution is shown in the corner
+  as each source requires. The two Carto presets currently draw an
+  "API KEY REQUIRED" watermark over every tile, because Carto has started
+  requiring a key for its basemaps.
 - **Field opacity** — blend the data against the basemap.
 
-The same field over the **Carto Dark** and **Esri World Imagery** basemaps:
+The same field over the **OpenTopoMap** and **Esri World Imagery** basemaps:
 
-![The field over the Carto Dark basemap](images/07-map-carto-dark.png)
+![The field over the OpenTopoMap terrain basemap](images/07-map-opentopo.png)
 
 ![The field over the Esri World Imagery satellite basemap](images/08-map-esri.png)
 
-- **Graticule** / **Coastlines** — lat/lon grid and Natural Earth coastlines.
+- **Graticule**, **Coastlines** and **Contours** — icon toggles for the lat/lon
+  grid, Natural Earth coastlines, and isolines drawn over the map.
+- **Range to view** — with **Auto range** on, fits the color scale to the data
+  currently visible in the map rather than the whole field, so zooming in on a
+  region spreads the colors across that region.
 - **GPU render (experimental)** — an OpenGL warp path. It is **off by default**;
   the CPU warp is the robust default (the GPU path shows a driver artifact on some
   Mesa/radeonsi GPUs — see [Design.md](../Design.md)).
@@ -299,7 +310,8 @@ If the file carries geopotential height (`gh`, or ERA5's geopotential `z`), each
 labelled isobar also gets the **altitude** the sounding puts it at, down the left
 edge of the diagram, and the cursor readout adds a `Z` line in metres. Heights are
 read from the file, never inferred from the temperature trace, so a file without
-them simply shows none.
+them simply shows none. The **Height labels** toggle in the Skew-T's control panel
+turns them off.
 
 ![A skew-T log-p sounding with temperature, dewpoint, a wind-barb column, and geopotential-height labels on the pressure axis](images/14-skewt-sounding.png)
 
