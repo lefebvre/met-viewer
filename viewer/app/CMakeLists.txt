@@ -13,6 +13,12 @@ add_library(met_app STATIC
     mainwindow.h
     openpipeline.cpp
     openpipeline.h
+    pointprofilecache.cpp
+    pointprofilecache.h
+    pointprofilemodel.cpp
+    pointprofilemodel.h
+    pointprofiledock.cpp
+    pointprofiledock.h
     jobmonitor.cpp
     jobmonitor.h
     analysisdocks.cpp
@@ -86,3 +92,8 @@ target_compile_definitions(met_viewer PRIVATE MET_VERSION="${PROJECT_VERSION}")
 set_target_properties(met_viewer PROPERTIES
     AUTORCC ON
     WIN32_EXECUTABLE $<PLATFORM_ID:Windows>)
+
+# Put Qt's plugins next to the executable on Windows. Without them the app
+# cannot start from the build tree at all -- vcpkg's applocal copying handles
+# only linked DLLs. See cmake/QtDeploy.cmake.
+met_deploy_qt_runtime(met_viewer)

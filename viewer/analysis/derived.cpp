@@ -69,24 +69,29 @@ double gridLatRadians(const core::GridDef& grid, int j) {
 
 }  // namespace
 
+float windSpeedFrom(float u, float v) {
+    if (std::isnan(u) || std::isnan(v)) return kNaN;
+    return std::sqrt(u * u + v * v);
+}
+
+float windDirectionFrom(float u, float v) {
+    if (std::isnan(u) || std::isnan(v)) return kNaN;
+    double dir = std::atan2(-u, -v) * 180.0 / std::numbers::pi;  // direction wind comes FROM
+    if (dir < 0) dir += 360.0;
+    return static_cast<float>(dir);
+}
+
 core::Field2D windSpeedField(const WindField& w) {
     core::Field2D f = likeField(w.u, "wspd", "m/s", "Wind speed");
-    for (std::size_t k = 0; k < f.values.size(); ++k) {
-        const float u = w.u.values[k], v = w.v.values[k];
-        if (!std::isnan(u) && !std::isnan(v)) f.values[k] = std::sqrt(u * u + v * v);
-    }
+    for (std::size_t k = 0; k < f.values.size(); ++k)
+        f.values[k] = windSpeedFrom(w.u.values[k], w.v.values[k]);
     return f;
 }
 
 core::Field2D windDirectionField(const WindField& w) {
     core::Field2D f = likeField(w.u, "wdir", "deg", "Wind direction (from)");
-    for (std::size_t k = 0; k < f.values.size(); ++k) {
-        const float u = w.u.values[k], v = w.v.values[k];
-        if (std::isnan(u) || std::isnan(v)) continue;
-        double dir = std::atan2(-u, -v) * 180.0 / std::numbers::pi;  // direction wind comes FROM
-        if (dir < 0) dir += 360.0;
-        f.values[k] = static_cast<float>(dir);
-    }
+    for (std::size_t k = 0; k < f.values.size(); ++k)
+        f.values[k] = windDirectionFrom(w.u.values[k], w.v.values[k]);
     return f;
 }
 

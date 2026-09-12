@@ -5,6 +5,8 @@ add_library(met_analysis STATIC
     crosssection.cpp
     heights.cpp
     sounding.cpp
+    pointprofile.cpp
+    profilewriter.cpp
     timeseries.cpp
 )
 

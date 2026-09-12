@@ -313,20 +313,16 @@ jobs:
       # seek64 helper — a Linux-only suite cannot regress-test either.
       #
       # x64-windows is a dynamic triplet, so the test executables need the Qt and
-      # dependency DLLs on PATH, and met_app_tests needs a platform plugin for the
-      # QT_QPA_PLATFORM=minimal it sets. Both are pointed at the vcpkg tree
-      # explicitly rather than relying on vcpkg's applocal DLL copying, and both
-      # must be set before ctest, since gtest_discover_tests(PRE_TEST) runs the
-      # executables to enumerate the tests.
+      # dependency DLLs, and met_app_tests needs the minimal platform plugin for
+      # the QT_QPA_PLATFORM it sets. Both now sit in the build tree beside the
+      # executables -- the DLLs from vcpkg's applocal step, the plugins from
+      # met_deploy_qt_runtime() in cmake/QtDeploy.cmake -- so no Qt environment
+      # is set up here. The vcpkg bin directory stays on PATH as a cheap
+      # fallback, and has to be in place before ctest either way, since
+      # gtest_discover_tests(PRE_TEST) runs the executables to enumerate tests.
       - name: Test
         run: |
-          $bin = "$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows\bin"
-          $plugins = "$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows\Qt6\plugins"
-          if (-not (Test-Path "$plugins\platforms")) {
-            throw "Qt platform plugins not found at $plugins - met_app_tests cannot start"
-          }
-          $env:PATH = "$bin;$env:PATH"
-          $env:QT_PLUGIN_PATH = $plugins
+          $env:PATH = "$env:GITHUB_WORKSPACE\vcpkg_installed\x64-windows\bin;$env:PATH"
           # The two Warp tripwires assert wall-clock budgets. They are useful as
           # regression detectors on the consistent Linux runner; on a shared
           # Windows runner they would only add flakiness.

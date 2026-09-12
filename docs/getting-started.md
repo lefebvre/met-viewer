@@ -62,7 +62,7 @@ QT_QPA_PLATFORM=xcb ./build/release/viewer/app/met_viewer tests/fixtures/era5_t_
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │ File   View                                    (menu bar)               │
-│ [Pan] [Cross-section] [Sounding] [Time series]  (Tools toolbar / modes) │
+│ [Pan] [Cross-section] [Sounding] [Time series] [Point profile]  (modes) │
 ├──────────────┬────────────────────────────────────────┬────────────────┤
 │ Data         │  ┌── canvas ─────────────────────────┐ │  ▾ Map         │
 │              │  │                                    │ │   Colormap …   │
@@ -95,13 +95,18 @@ in-repo [`tests/fixtures/`](../tests/fixtures/) files so you can reproduce them.
   what is on screen.
 - **Views (center)** — **2D Plot** and **Map** start as tabs; analysis views
   (cross-section, skew-T, time series) open as additional tabs. **Each view owns
-  its own control panel** on the right — collapse it with the **▾/▸** header.
+  its own control panel** on the right — collapse it with the **▾/▸** header. The
+  **Point Profile** panel is the exception: one panel docked at the right edge that
+  re-points to each new pick, rather than a new tab per pick.
 - **Time dock (bottom)** — play/pause, step, a scrubbable time slider, and the
   current valid time.
 - **Tools toolbar (top)** — the picking **modes** (Pan / Cross-section /
-  Sounding / Time series), described in [§7](#7-analysis-tools).
+  Sounding / Time series / Point profile), described in [§7](#7-analysis-tools).
 - **Status bar (bottom)** — the **probe** readout (value under the cursor) and
   mode hints.
+
+Most controls in the panels are icons rather than labels; hover one to see its
+name.
 
 Every panel and the toolbar can be closed with its **×** and brought back from the
 **View** menu. Panels can be dragged, split, tabbed, and floated — see [§8](#8-arranging-your-workspace).
@@ -141,7 +146,8 @@ Diverging colormaps auto-center on zero, so they suit signed fields — here the
 
 ### Contours
 
-Check **Contours** to overlay isolines on the plot. Leave **Contour interval** at
+Turn on the **Contours** toggle (the isoline icon) to overlay isolines on the plot.
+Leave **Contour interval** at
 `auto` for a "nice" automatic spacing, or type an interval in the field's units
 (e.g. `2` for every 2 K).
 
@@ -165,17 +171,24 @@ semi-transparently over basemap tiles.
 The Map's control panel adds:
 
 - **Basemap** — `OpenStreetMap`, `Carto Light`, `Carto Dark`,
-  `Esri World Imagery` (satellite), `OpenTopoMap` (terrain). Attribution is shown
-  in the corner as each source requires.
+  `Esri World Imagery` (satellite), and the terrain presets
+  `Esri World Shaded Relief` and `OpenTopoMap`. Attribution is shown in the corner
+  as each source requires. The two Carto presets currently draw an
+  "API KEY REQUIRED" watermark over every tile, because Carto has started
+  requiring a key for its basemaps.
 - **Field opacity** — blend the data against the basemap.
 
-The same field over the **Carto Dark** and **Esri World Imagery** basemaps:
+The same field over the **OpenTopoMap** and **Esri World Imagery** basemaps:
 
-![The field over the Carto Dark basemap](images/07-map-carto-dark.png)
+![The field over the OpenTopoMap terrain basemap](images/07-map-opentopo.png)
 
 ![The field over the Esri World Imagery satellite basemap](images/08-map-esri.png)
 
-- **Graticule** / **Coastlines** — lat/lon grid and Natural Earth coastlines.
+- **Graticule**, **Coastlines** and **Contours** — icon toggles for the lat/lon
+  grid, Natural Earth coastlines, and isolines drawn over the map.
+- **Range to view** — with **Auto range** on, fits the color scale to the data
+  currently visible in the map rather than the whole field, so zooming in on a
+  region spreads the colors across that region.
 - **GPU render (experimental)** — an OpenGL warp path. It is **off by default**;
   the CPU warp is the robust default (the GPU path shows a driver artifact on some
   Mesa/radeonsi GPUs — see [Design.md](../Design.md)).
@@ -253,7 +266,8 @@ are **persisted** between sessions.
 
 ## 7. Analysis tools
 
-Cross-sections, soundings, and time series are **picked on the Map**. Use the
+Cross-sections, soundings, time series, and point profiles are **picked on the
+Map**. Use the
 **Tools** toolbar to choose a picking mode (choosing any non-Pan mode raises the
 Map for you); the status bar tells you what each mode expects. Switch back to
 **Pan** when you are done to restore drag-to-pan and the hover probe.
@@ -296,7 +310,8 @@ If the file carries geopotential height (`gh`, or ERA5's geopotential `z`), each
 labelled isobar also gets the **altitude** the sounding puts it at, down the left
 edge of the diagram, and the cursor readout adds a `Z` line in metres. Heights are
 read from the file, never inferred from the temperature trace, so a file without
-them simply shows none.
+them simply shows none. The **Height labels** toggle in the Skew-T's control panel
+turns them off.
 
 ![A skew-T log-p sounding with temperature, dewpoint, a wind-barb column, and geopotential-height labels on the pressure axis](images/14-skewt-sounding.png)
 
@@ -313,6 +328,61 @@ tracks the current time as you scrub.
 
 ![A time series of the value at a point, with a marker on the current time](images/15-time-series.png)
 
+### Point profile
+
+A table of the values at one site, rather than a plot of them.
+
+1. Toolbar ▸ **Point profile**.
+2. **Click** a point on the Map, or type a latitude and longitude into the panel
+   and press **Go**.
+
+The **Point Profile** panel opens with a row per vertical level and a column per
+variable, and a crosshair marks the site on the map. The marker stays put when you
+switch back to **Pan**, so you can look at the field around the point you tabled.
+
+![The Point Profile panel docked beside the map: a ground-first table of pressure, height and temperature at the picked site, further columns scrolled off to the right, and a crosshair marking the site on the map](images/17-point-profile.png)
+
+- **Columns** chooses which variables appear. The panel opens on temperature,
+  humidity and wind when the file has them. Wind speed and direction are offered
+  when the file carries a U/V pair; they are computed from it, earth-relative, not
+  read as fields. Variables with only one level are listed but disabled, since a
+  single level is not a profile.
+- **Units** switches a quantity between the units it can be shown in — wind speed
+  in m/s or knots, temperature in K or °C. The choice applies to every column in
+  that unit, is remembered between sessions, and never re-reads any data.
+- Rows start at the **ground**. Click the **Height MSL** or **Pressure** header to
+  sort the other way. On a pressure-level file the level name is left out, since it
+  repeats the pressure.
+- **Copy** puts the whole table on the clipboard tab-separated, with its header
+  row, so it pastes into a spreadsheet as columns.
+- `Ctrl+C` copies just the **selected cells**, without a header row, in the order
+  shown. A selected cell with no value pastes as an empty field rather than a
+  dash, and with nothing selected `Ctrl+C` copies the whole table.
+- **Export CSV…** writes the table in the order and units shown, with a
+  commented header naming the point, the valid time and the dataset. The save
+  dialog suggests a name carrying the point and the profile's valid time, such as
+  `profile_63.00N_10.00E_20070114T1200Z.csv`. The time in the name drops its
+  separators because a Windows file name cannot hold a colon; the header inside
+  the file keeps the full `2007-01-14T12:00Z` form.
+- The table follows the time slider, so scrubbing re-tables the same point.
+
+You can pick again while a profile is still extracting. The panel finishes the
+extraction in progress and then extracts the point you picked **last**; points
+picked in between are skipped, since their profiles would only be thrown away. The
+extraction in progress cannot be stopped early, so on a large file a quick re-pick
+waits for it to finish before your latest point starts.
+
+The altitude column is **mean-sea-level geopotential height, read from the file's
+own height field** — the panel says which variable in the exported header. There is
+deliberately no height-above-ground column: that would need a terrain elevation,
+and nothing here infers one. A dataset with no height field shows no altitude
+column rather than a guessed one.
+
+A cell with no value shows a dash; hover it to find out whether the variable has no
+data at that level, the point falls outside the grid, or the data there is missing.
+The count beside **Units** is how many slabs the current selection reads each time
+the table updates — worth a glance before ticking a fifth column on a large file.
+
 ---
 
 ## 8. Arranging your workspace
@@ -324,9 +394,9 @@ The views live in a nested docking area, so you can build the layout you want:
   Map next to a Skew-T).
 - **Tab** — drag one view onto the **center** of another to stack them as tabs.
 - **Float** — drag a view out of the window to pop it into its own floating window.
-- **Close / restore** — analysis tabs close with their **×**. The **Data** and
-  **Time** docks and the **Tools** toolbar can be hidden and brought back from the
-  **View** menu.
+- **Close / restore** — analysis tabs close with their **×**. The **Data**,
+  **Time** and **Point Profile** docks and the **Tools** toolbar can be hidden and
+  brought back from the **View** menu.
 - **Collapse controls** — each view's control panel collapses via its **▾/▸**
   header to maximize canvas space.
 
@@ -362,7 +432,7 @@ Run with `--help` for the full, auto-generated list.
 | `--contours` | Turn on the 2D-plot contour overlay |
 | `--wind N` | Wind overlay mode: `1` barbs, `2` streamlines |
 | `--derived N` | Select a derived quantity by index |
-| `--demo section` \| `sounding` \| `series` | Open the named analysis view on the demo point |
+| `--demo section` \| `sounding` \| `series` \| `point` | Open the named analysis view on the demo point |
 | `--demo-at LAT,LON` | Sample point the `--demo` triggers use |
 | `--tile` | Tile a cross-section beside a skew-T (demonstrates split layouts) |
 | `--size WxH` | Set the window size in pixels (e.g. `1680x860`) |

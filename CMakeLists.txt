@@ -12,6 +12,9 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
 include(cmake/Warnings.cmake)
 include(cmake/Sanitizers.cmake)
 include(cmake/Format.cmake)
+# Defines met_deploy_qt_runtime() and locates windeployqt; included before the
+# subdirectories so both the targets and cmake/Packaging.cmake can use it.
+include(cmake/QtDeploy.cmake)
 
 option(MET_BUILD_TESTS "Build unit tests" ON)
 # Clang-only (libFuzzer), so it is opt-in rather than part of the default build or

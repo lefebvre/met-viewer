@@ -3,3 +3,7 @@
 # seed carrying a 0x0A data byte would be rewritten on checkout and stop being
 # the input that found the bug.
 tests/fuzz/corpus/** -text
+
+# Shell scripts run under bash, including Git Bash on Windows, which fails on
+# the carriage returns core.autocrlf would otherwise check them out with.
+*.sh text eol=lf
