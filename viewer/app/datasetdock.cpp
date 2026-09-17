@@ -5,6 +5,7 @@
 #include <QVBoxLayout>
 
 #include "viewer/core/timeaxis.h"
+#include "viewer/core/units.h"
 
 namespace met::app {
 namespace {
@@ -46,7 +47,8 @@ void DatasetDock::setCatalog(const core::DatasetCatalog& catalog) {
         if (!var.longName.empty())
             label += QStringLiteral(" — ") + QString::fromStdString(var.longName);
         if (!var.units.empty())
-            label += QStringLiteral(" [") + QString::fromStdString(var.units) + QStringLiteral("]");
+            label += QStringLiteral(" [") + QString::fromStdString(core::unitLabel(var.units)) +
+                     QStringLiteral("]");
         varItem->setText(0, label);
         varItem->setData(0, kRoleIsLeaf, false);
 

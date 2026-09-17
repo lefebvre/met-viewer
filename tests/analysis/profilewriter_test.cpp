@@ -113,7 +113,7 @@ TEST(ProfileToCsv, WritesAMissingValueAsAnEmptyFieldNotZeroAndNotNaN) {
     EXPECT_FALSE(contains(csv, "NaN"));
 }
 
-// The display side renders "273.15 K (0.00 Cel)", which is right for a cell a
+// The display side renders "273.15 K (0.00 °C)", which is right for a cell a
 // person reads and would be unparseable in a column a script consumes.
 TEST(ProfileToCsv, WritesABareNumberWithNoParenthesisedDisplayConversion) {
     const std::string csv = profileToCsv(sampleProfile(), {});
@@ -140,7 +140,7 @@ TEST(ProfileToCsv, ConvertsTheValuesAndTheHeaderTogetherWhenAUnitIsChosen) {
     units.columns = {"Cel", "kt"};  // temperature in Celsius, speed in knots
     const std::string csv = profileToCsv(sampleProfile(), {}, units);
 
-    EXPECT_EQ(headerLine(csv), "level,pressure (hPa),height MSL (gpm),t (Cel),wspd (kt)");
+    EXPECT_EQ(headerLine(csv), "level,pressure (hPa),height MSL (gpm),t (degC),wspd (kt)");
     const std::vector<std::string> rows = dataLines(csv);
     ASSERT_EQ(rows.size(), 2u);
     // 273.15 K is 0 Cel; 10 m/s is 19.44 kt.

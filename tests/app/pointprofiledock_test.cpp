@@ -188,11 +188,8 @@ TEST(PointProfileDock, OffersUnitsPerColumnByTheNameItsHeaderShows) {
     dock.setProfile(windProfile());
 
     const QStringList expected = {
-        "Pressure: *hPa, Pa",
-        "Height MSL: *gpm, dam, m2/s2",
-        "U component of wind: *m s**-1, kt",
-        "Wind speed: *m/s, kt",
-        "Vertical velocity (Pa s**-1): none",
+        "Pressure: *hPa, Pa",   "Height MSL: *gpm, dam, m²/s²",   "U component of wind: *m/s, kt",
+        "Wind speed: *m/s, kt", "Vertical velocity (Pa/s): none",
     };
     EXPECT_EQ(dock.unitMenuEntries(), expected);
 }
@@ -207,14 +204,9 @@ TEST(PointProfileDock, ConvertsOnlyTheColumnWhoseUnitWasChosen) {
     dock.setUnitFor(analysis::kWindSpeedId, "kt");
     EXPECT_EQ(dock.headerText(4), "Wind speed (kt)");
     EXPECT_EQ(dock.cellText(0, 4), "19.44");
-    EXPECT_EQ(dock.headerText(3), "U component of wind (m s**-1)");
+    EXPECT_EQ(dock.headerText(3), "U component of wind (m/s)");
     EXPECT_TRUE(dock.unitMenuEntries().contains("Wind speed: m/s, *kt"));
-    EXPECT_TRUE(dock.unitMenuEntries().contains("U component of wind: *m s**-1, kt"));
-
-    // Choosing the native unit back keeps the file's spelling in the header.
-    dock.setUnitFor("u", "kt");
-    dock.setUnitFor("u", "m/s");
-    EXPECT_EQ(dock.headerText(3), "U component of wind (m s**-1)");
+    EXPECT_TRUE(dock.unitMenuEntries().contains("U component of wind: *m/s, kt"));
 }
 
 TEST(PointProfileDock, RemembersAColumnsUnitAcrossPanels) {

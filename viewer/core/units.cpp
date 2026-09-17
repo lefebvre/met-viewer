@@ -4,6 +4,7 @@
 #include <cctype>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <utility>
 #include <vector>
@@ -147,11 +148,112 @@ std::vector<std::string> alternativeUnits(const std::string& units) {
     return {u};
 }
 
-std::string unitLabel(const std::string& units) {
-    const std::string u = canon(units);
-    if (u == "Cel") return "°C";  // °C
-    if (u == "K") return "K";
-    return units;
+namespace {
+
+struct UnitFactor {
+    std::string symbol;
+    int exponent = 1;
+};
+
+bool isSymbolChar(unsigned char c) {
+    // Bytes >= 0x80 admit UTF-8 symbols such as "°".
+    return std::isalpha(c) || c == '_' || c == '%' || c >= 0x80;
 }
+
+// One factor: a symbol, then an optional exponent written "**-1", "^-1", "-1" or
+// "2". Anything else in the token and the whole string is left alone.
+std::optional<UnitFactor> parseFactor(const std::string& token) {
+    std::size_t i = 0;
+    while (i < token.size() && isSymbolChar(static_cast<unsigned char>(token[i]))) ++i;
+    if (i == 0) return std::nullopt;
+    UnitFactor f{token.substr(0, i), 1};
+    std::string rest = token.substr(i);
+    if (rest.rfind("**", 0) == 0) rest.erase(0, 2);
+    else if (rest.rfind('^', 0) == 0) rest.erase(0, 1);
+    if (rest.empty()) return token.size() == i ? std::optional<UnitFactor>(f) : std::nullopt;
+    std::size_t digits = rest[0] == '-' || rest[0] == '+' ? 1 : 0;
+    if (digits == rest.size()) return std::nullopt;
+    for (std::size_t k = digits; k < rest.size(); ++k)
+        if (!std::isdigit(static_cast<unsigned char>(rest[k]))) return std::nullopt;
+    f.exponent = std::stoi(rest);
+    if (f.exponent == 0) return std::nullopt;
+    return f;
+}
+
+// Space-separated factors, each exponent multiplied by `sign`.
+bool parseFactors(const std::string& text, int sign, std::vector<UnitFactor>& out) {
+    std::size_t start = 0;
+    bool any = false;
+    while (start <= text.size()) {
+        std::size_t end = text.find(' ', start);
+        if (end == std::string::npos) end = text.size();
+        if (end > start) {
+            const std::optional<UnitFactor> f = parseFactor(text.substr(start, end - start));
+            if (!f) return false;
+            out.push_back({f->symbol, f->exponent * sign});
+            any = true;
+        }
+        start = end + 1;
+    }
+    return any;
+}
+
+std::string exponentText(int exponent, bool ascii) {
+    const std::string digits = std::to_string(exponent);
+    if (ascii) return digits;
+    // Escaped rather than typed: the build sets no source charset, and several of
+    // these encode bytes code page 1252 leaves undefined.
+    static const char* const kSuperscript[] = {
+        "\xE2\x81\xB0", "\xC2\xB9",     "\xC2\xB2",     "\xC2\xB3",     "\xE2\x81\xB4",
+        "\xE2\x81\xB5", "\xE2\x81\xB6", "\xE2\x81\xB7", "\xE2\x81\xB8", "\xE2\x81\xB9"};
+    constexpr const char* kSuperscriptMinus = "\xE2\x81\xBB";
+    std::string out;
+    for (const char d : digits) out += d == '-' ? kSuperscriptMinus : kSuperscript[d - '0'];
+    return out;
+}
+
+std::string formatUnits(const std::string& units, bool ascii) {
+    if (canon(units) == "Cel")
+        return ascii ? "degC"
+                     : "\xC2\xB0"
+                       "C";
+
+    std::vector<UnitFactor> factors;
+    const std::size_t slash = units.find('/');
+    if (slash == std::string::npos) {
+        if (!parseFactors(units, 1, factors)) return units;
+    } else {
+        if (units.find('/', slash + 1) != std::string::npos) return units;
+        if (!parseFactors(units.substr(0, slash), 1, factors) ||
+            !parseFactors(units.substr(slash + 1), -1, factors))
+            return units;
+    }
+
+    const auto join = [ascii](const std::vector<UnitFactor>& fs) {
+        std::string out;
+        for (const UnitFactor& f : fs) {
+            if (!out.empty()) out += ' ';
+            out += f.symbol;
+            if (f.exponent != 1) out += exponentText(f.exponent, ascii);
+        }
+        return out;
+    };
+    std::vector<UnitFactor> above;
+    std::vector<UnitFactor> below;
+    for (const UnitFactor& f : factors) {
+        if (f.exponent > 0) above.push_back(f);
+        else below.push_back({f.symbol, -f.exponent});
+    }
+    if (below.empty()) return join(above);
+    const std::string numerator = above.empty() ? std::string("1") : join(above);
+    const std::string denominator = join(below);
+    return numerator + "/" + (below.size() > 1 ? "(" + denominator + ")" : denominator);
+}
+
+}  // namespace
+
+std::string unitLabel(const std::string& units) { return formatUnits(units, /*ascii=*/false); }
+
+std::string unitLabelAscii(const std::string& units) { return formatUnits(units, /*ascii=*/true); }
 
 }  // namespace met::core

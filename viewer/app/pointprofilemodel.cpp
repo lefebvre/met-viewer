@@ -92,9 +92,9 @@ std::string PointProfileModel::displayUnitAt(int column) const {
     if (native.empty()) return {};
     const auto it = unitChoice_.find(columnKeyAt(column));
     if (it == unitChoice_.end()) return native;
-    // alternativeUnits() leads with the native unit in its canonical spelling, so
-    // choosing it keeps the file's own spelling in the header rather than
-    // swapping "m s**-1" for "m/s" on a column that was never converted.
+    // alternativeUnits() leads with the native unit in its canonical spelling;
+    // choosing it means no conversion, so report the native string convert() and
+    // the writer already expect.
     const std::vector<std::string> alts = core::alternativeUnits(native);
     if (it->second == alts.front()) return native;
     return std::find(alts.begin(), alts.end(), it->second) != alts.end() ? it->second : native;

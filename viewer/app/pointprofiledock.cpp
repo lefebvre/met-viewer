@@ -267,12 +267,11 @@ void PointProfileDock::rebuildUnitMenu() {
     const std::vector<PointProfileModel::UnitColumn> columns = model_->unitColumns();
     for (const PointProfileModel::UnitColumn& col : columns) {
         const std::vector<std::string> alts = core::alternativeUnits(col.nativeUnit);
-        const QString nativeLabel = QString::fromStdString(core::unitLabel(col.nativeUnit));
         if (alts.size() < 2) {
             // Listed disabled rather than dropped: a column missing from this menu
             // reads as an oversight, not as a unit with nothing to convert to.
-            QAction* act =
-                unitsMenu_->addAction(QStringLiteral("%1 (%2)").arg(col.name, nativeLabel));
+            QAction* act = unitsMenu_->addAction(QStringLiteral("%1 (%2)").arg(
+                col.name, QString::fromStdString(core::unitLabel(col.nativeUnit))));
             act->setEnabled(false);
             act->setToolTip(tr("No other units are available for this column."));
             continue;
@@ -282,12 +281,10 @@ void PointProfileDock::rebuildUnitMenu() {
         group->setExclusive(true);
         const std::string& key = col.key;
         for (std::size_t i = 0; i < alts.size(); ++i) {
-            // The first alternative is the native unit in its canonical spelling;
-            // label it as the file spells it, which is what the header shows.
-            const QString label =
-                i == 0 ? nativeLabel : QString::fromStdString(core::unitLabel(alts[i]));
-            QAction* act = sub->addAction(label);
+            QAction* act = sub->addAction(QString::fromStdString(core::unitLabel(alts[i])));
             act->setCheckable(true);
+            // The first alternative is the native unit, canonically spelled, and the
+            // model reports an unconverted column in the file's own spelling.
             act->setChecked(i == 0 ? col.displayUnit == col.nativeUnit
                                    : col.displayUnit == alts[i]);
             group->addAction(act);

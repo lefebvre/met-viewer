@@ -70,7 +70,7 @@ namespace {
 }
 
 [[nodiscard]] std::string headerName(const std::string& name, const std::string& units) {
-    return units.empty() ? name : fmt::format("{} ({})", name, units);
+    return units.empty() ? name : fmt::format("{} ({})", name, core::unitLabelAscii(units));
 }
 
 ProfileRowOrder effectiveOrder(const PointProfile& p, const ProfileRowOrder& order) {

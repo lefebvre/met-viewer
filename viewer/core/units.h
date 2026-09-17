@@ -48,7 +48,20 @@ namespace met::core {
 // always build a menu from the result without special-casing.
 [[nodiscard]] std::vector<std::string> alternativeUnits(const std::string& units);
 
-// Short label to show for a unit string ("Cel" -> "°C", "m/s" -> "m/s").
+// A unit string in the one spelling this app shows, whatever the file used:
+// factors separated by spaces, one slash before everything with a negative
+// exponent, and parentheses when more than one factor sits below it. So
+// "m s**-1", "m s-1" and "m/s" all read "m/s", "kg m-2 s-1" reads "kg/(m² s)",
+// and "s**-1" reads "1/s". "Cel" reads "°C". The shortest spelling that cannot
+// be misread, since "kg/m²/s" can.
+//
+// A string that does not parse as units and exponents -- "(10**-6 g) m**-3",
+// "(0 - 1)", "1" -- comes back unchanged: a label is only rewritten when the
+// rewrite provably says the same thing.
 [[nodiscard]] std::string unitLabel(const std::string& units);
+
+// unitLabel() in plain ASCII, for exported files: exponents as trailing digits
+// ("kg/(m2 s)") and "degC" for Celsius, the spellings UDUNITS and pint parse.
+[[nodiscard]] std::string unitLabelAscii(const std::string& units);
 
 }  // namespace met::core
