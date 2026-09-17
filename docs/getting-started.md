@@ -347,9 +347,11 @@ switch back to **Pan**, so you can look at the field around the point you tabled
   when the file carries a U/V pair; they are computed from it, earth-relative, not
   read as fields. Variables with only one level are listed but disabled, since a
   single level is not a profile.
-- **Units** switches a quantity between the units it can be shown in — wind speed
-  in m/s or knots, temperature in K or °C. The choice applies to every column in
-  that unit, is remembered between sessions, and never re-reads any data.
+- **Units** lists each column by name and switches it between the units it can be
+  shown in — wind speed in m/s or knots, temperature in K or °C. The choice applies
+  to that column only, so wind speed in knots leaves the U and V components as they
+  are. A column whose unit has no alternative is listed greyed out. Choices are
+  remembered by variable between sessions, and never re-read any data.
 - Rows start at the **ground**. Click the **Height MSL** or **Pressure** header to
   sort the other way. On a pressure-level file the level name is left out, since it
   repeats the pressure.

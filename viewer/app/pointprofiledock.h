@@ -6,6 +6,7 @@
 
 #include <QSize>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 
 #include "viewer/analysis/pointprofile.h"
@@ -56,10 +57,16 @@ public:
     [[nodiscard]] std::vector<std::string> selectedColumns() const;
     void setSelectedColumns(const std::vector<std::string>& ids);
 
-    // Show every value whose native unit is `nativeUnit` in `unit` instead. A
-    // repaint, not a re-extraction: values are stored natively and converted for
-    // display, so this never re-reads a slab.
-    void setUnitFor(const std::string& nativeUnit, const std::string& unit);
+    // Show one column in `unit` instead of its native unit. `columnKey` is the
+    // column's variable id, or PointProfileModel::kPressureKey / kHeightKey for a
+    // coordinate column. A repaint, not a re-extraction: values are stored
+    // natively and converted for display, so this never re-reads a slab.
+    void setUnitFor(const std::string& columnKey, const std::string& unit);
+
+    // The Units menu as text, one line per column: "Name: unit, *chosen, unit" for
+    // a column with alternatives, "Name (unit): none" for one without. For tests,
+    // like the other readbacks below.
+    [[nodiscard]] QStringList unitMenuEntries() const;
 
     // Reorder the table as a header click would. setProfile calls this to put the
     // ground first; it is public so the order can be driven and asserted without
@@ -147,6 +154,7 @@ private:
 
     analysis::ProfileColumnChoices choices_;
     std::vector<std::string> selected_;
+    // Display unit per column key, as PointProfileModel::setUnitChoice takes it.
     std::map<std::string, std::string> unitChoice_;
     QString datasetLabel_;
     int readEstimate_ = 0;

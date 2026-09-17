@@ -47,8 +47,18 @@ public:
     [[nodiscard]] const analysis::PointProfile& profile() const { return profile_; }
     void clearProfile();
 
-    // Display unit per *native* unit, not per column: picking knots once applies
-    // to every speed in the table, which is what a reader means by the choice.
+    // Keys for the two coordinate columns in a unit choice. Value columns are keyed
+    // by their variable id; these are spelled so no variable id can collide.
+    static constexpr const char* kPressureKey = "(pressure)";
+    static constexpr const char* kHeightKey = "(height)";
+
+    // Display unit per *column*, keyed as above. Per column rather than per native
+    // unit: the same unit can mean unrelated quantities -- m for visibility and for
+    // hail size, m/s for wind speed and for vertical velocity -- and a file may
+    // spell one unit two ways, so a per-unit choice both converted columns the
+    // reader never asked about and split one quantity across two menu entries.
+    // A choice the column's native unit cannot convert to is ignored rather than
+    // applied, so a choice kept from another file never blanks a column.
     // Values are always stored natively and converted on the way out, so this
     // never invalidates the profile and never triggers a re-extraction.
     void setUnitChoice(const std::map<std::string, std::string>& choice);
@@ -56,9 +66,15 @@ public:
         return unitChoice_;
     }
 
-    // The native units this table is showing, so a menu can offer alternatives
-    // for each. Includes the two coordinate columns.
-    [[nodiscard]] std::vector<std::string> nativeUnitsInUse() const;
+    // One entry per column that carries a unit, in table order, so a menu can
+    // offer each column its alternatives by the name its header shows.
+    struct UnitColumn {
+        std::string key;
+        QString name;
+        std::string nativeUnit;
+        std::string displayUnit;
+    };
+    [[nodiscard]] std::vector<UnitColumn> unitColumns() const;
 
     // The chosen units in the shape the writer takes, so the export cannot use a
     // different unit from the one on screen.
@@ -80,6 +96,9 @@ private:
     // from. Column 0 (the level label) has neither.
     [[nodiscard]] std::string nativeUnitAt(int column) const;
     [[nodiscard]] std::string displayUnitAt(int column) const;
+    // The unit-choice key and the unitless header name of a column past column 0.
+    [[nodiscard]] std::string columnKeyAt(int column) const;
+    [[nodiscard]] QString columnNameAt(int column) const;
     [[nodiscard]] int firstValueColumn() const { return heightColumn() >= 0 ? 3 : 2; }
 
     analysis::PointProfile profile_;

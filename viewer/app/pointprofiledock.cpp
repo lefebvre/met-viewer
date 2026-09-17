@@ -28,6 +28,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QVariant>
 
 #include "viewer/app/pointprofilemodel.h"
 #include "viewer/core/timeaxis.h"
@@ -40,9 +41,6 @@ namespace {
 // reads as lag and above a fast run down a menu.
 constexpr int kColumnDebounceMs = 200;
 
-// A unit string can contain '/', which QSettings reads as a group separator, so
-// "m/s" would silently become a group named "m" holding a key "s". Swapping it
-// for a character that cannot appear in a unit keeps one flat key per unit.
 // What to show before the user has chosen anything. An empty table on the first
 // pick would be honest and useless, so this opens on the quantities a site
 // readout is usually wanted for, and falls back to whatever the file leads with
@@ -69,11 +67,12 @@ std::vector<std::string> defaultColumns(const analysis::ProfileColumnChoices& ch
     return out;
 }
 
-QString unitSettingsKey(const std::string& nativeUnit) {
-    QString key = QString::fromStdString(nativeUnit);
-    key.replace(QLatin1Char('/'), QLatin1Char('_'));
-    return QStringLiteral("pointProfile/units/") + key;
-}
+// One map rather than a key per column: a variable id is the file's to choose and
+// may hold '/', which QSettings would read as a group separator.
+const QString kUnitSettingsKey = QStringLiteral("pointProfile/columnUnits");
+// Where choices were kept when they applied per native unit. Those cannot be
+// mapped onto columns without guessing which quantity each one meant.
+const QString kLegacyUnitSettingsGroup = QStringLiteral("pointProfile/units");
 
 }  // namespace
 
@@ -265,26 +264,39 @@ void PointProfileDock::rebuildColumnMenu() {
 
 void PointProfileDock::rebuildUnitMenu() {
     unitsMenu_->clear();
-    bool any = false;
-    for (const std::string& native : model_->nativeUnitsInUse()) {
-        const std::vector<std::string> alts = core::alternativeUnits(native);
-        if (alts.size() < 2) continue;  // nothing to choose between
-        any = true;
-        QMenu* sub = unitsMenu_->addMenu(QString::fromStdString(core::unitLabel(native)));
+    const std::vector<PointProfileModel::UnitColumn> columns = model_->unitColumns();
+    for (const PointProfileModel::UnitColumn& col : columns) {
+        const std::vector<std::string> alts = core::alternativeUnits(col.nativeUnit);
+        const QString nativeLabel = QString::fromStdString(core::unitLabel(col.nativeUnit));
+        if (alts.size() < 2) {
+            // Listed disabled rather than dropped: a column missing from this menu
+            // reads as an oversight, not as a unit with nothing to convert to.
+            QAction* act =
+                unitsMenu_->addAction(QStringLiteral("%1 (%2)").arg(col.name, nativeLabel));
+            act->setEnabled(false);
+            act->setToolTip(tr("No other units are available for this column."));
+            continue;
+        }
+        QMenu* sub = unitsMenu_->addMenu(col.name);
         auto* group = new QActionGroup(sub);
         group->setExclusive(true);
-        const auto chosen = unitChoice_.find(native);
-        for (const std::string& alt : alts) {
-            QAction* act = sub->addAction(QString::fromStdString(core::unitLabel(alt)));
+        const std::string& key = col.key;
+        for (std::size_t i = 0; i < alts.size(); ++i) {
+            // The first alternative is the native unit in its canonical spelling;
+            // label it as the file spells it, which is what the header shows.
+            const QString label =
+                i == 0 ? nativeLabel : QString::fromStdString(core::unitLabel(alts[i]));
+            QAction* act = sub->addAction(label);
             act->setCheckable(true);
-            act->setChecked(chosen == unitChoice_.end() ? alt == native : chosen->second == alt);
+            act->setChecked(i == 0 ? col.displayUnit == col.nativeUnit
+                                   : col.displayUnit == alts[i]);
             group->addAction(act);
-            connect(act, &QAction::triggered, this,
-                    [this, native, alt] { setUnitFor(native, alt); });
+            const std::string alt = alts[i];
+            connect(act, &QAction::triggered, this, [this, key, alt] { setUnitFor(key, alt); });
         }
     }
-    if (!any) unitsMenu_->addAction(tr("No alternative units"))->setEnabled(false);
-    unitsButton_->setEnabled(any);
+    if (columns.empty()) unitsMenu_->addAction(tr("No columns to convert"))->setEnabled(false);
+    unitsButton_->setEnabled(!columns.empty());
 }
 
 void PointProfileDock::applyUnitChoice() {
@@ -296,22 +308,23 @@ void PointProfileDock::applyUnitChoice() {
 
 void PointProfileDock::loadUnitChoice() {
     QSettings s;
-    // Only the units this build knows how to convert are restored, so a stale
-    // setting cannot pin a column to a unit convert() would refuse.
-    for (const char* native : {"K", "Pa", "hPa", "m/s", "gpm", "dam", "m2/s2", "kg/kg", "m"}) {
-        const QString value = s.value(unitSettingsKey(native)).toString();
-        if (value.isEmpty()) continue;
-        const std::vector<std::string> alts = core::alternativeUnits(native);
-        const std::string want = value.toStdString();
-        if (std::find(alts.begin(), alts.end(), want) != alts.end()) unitChoice_[native] = want;
+    s.remove(kLegacyUnitSettingsGroup);
+    // Restored whole, without checking against any column: which units a choice
+    // can reach depends on the file the column comes from, so the model decides
+    // that per column and ignores a choice it cannot honour.
+    const QVariantMap stored = s.value(kUnitSettingsKey).toMap();
+    for (auto it = stored.cbegin(); it != stored.cend(); ++it) {
+        const QString unit = it.value().toString();
+        if (!unit.isEmpty()) unitChoice_[it.key().toStdString()] = unit.toStdString();
     }
     model_->setUnitChoice(unitChoice_);
 }
 
 void PointProfileDock::saveUnitChoice() {
-    QSettings s;
-    for (const auto& [native, chosen] : unitChoice_)
-        s.setValue(unitSettingsKey(native), QString::fromStdString(chosen));
+    QVariantMap stored;
+    for (const auto& [key, unit] : unitChoice_)
+        stored.insert(QString::fromStdString(key), QString::fromStdString(unit));
+    QSettings().setValue(kUnitSettingsKey, stored);
 }
 
 void PointProfileDock::setProfile(const analysis::PointProfile& profile) {
@@ -373,8 +386,8 @@ void PointProfileDock::setSelectedColumns(const std::vector<std::string>& ids) {
     rebuildColumnMenu();
 }
 
-void PointProfileDock::setUnitFor(const std::string& nativeUnit, const std::string& unit) {
-    unitChoice_[nativeUnit] = unit;
+void PointProfileDock::setUnitFor(const std::string& columnKey, const std::string& unit) {
+    unitChoice_[columnKey] = unit;
     saveUnitChoice();
     applyUnitChoice();
 }
@@ -418,6 +431,23 @@ QString PointProfileDock::message() const { return showingMessage_ ? message_->t
 
 int PointProfileDock::rowCount() const { return showingMessage_ ? 0 : proxy_->rowCount(); }
 int PointProfileDock::columnCount() const { return showingMessage_ ? 0 : proxy_->columnCount(); }
+
+QStringList PointProfileDock::unitMenuEntries() const {
+    QStringList out;
+    if (!unitsButton_->isEnabled()) return out;  // the menu holds only its placeholder
+    for (QAction* entry : unitsMenu_->actions()) {
+        const QMenu* sub = entry->menu();
+        if (!sub) {
+            out.append(entry->text() + QStringLiteral(": none"));
+            continue;
+        }
+        QStringList units;
+        for (const QAction* act : sub->actions())
+            units.append(act->isChecked() ? QLatin1Char('*') + act->text() : act->text());
+        out.append(entry->text() + QStringLiteral(": ") + units.join(QStringLiteral(", ")));
+    }
+    return out;
+}
 
 QString PointProfileDock::headerText(int column) const {
     return proxy_->headerData(column, Qt::Horizontal, Qt::DisplayRole).toString();
