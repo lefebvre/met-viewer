@@ -262,6 +262,31 @@ TEST(HoverReadout, SkewTReportsThePressureItsOwnAxisDrawsAtThatRow) {
     EXPECT_TRUE(lines[1].startsWith(QStringLiteral("T -10."))) << lines[1].toStdString();
 }
 
+// And when the sounding reaches higher, the axis goes with it, so the same row reads
+// a pressure the conventional 100 hPa frame could not have put there.
+TEST(HoverReadout, SkewTPressureAxisFollowsTheTopOfTheSounding) {
+    app::SkewTView view;
+    view.resize(500, 560);
+
+    analysis::Sounding s;
+    s.point = {45.0, -95.0};
+    for (double p : {10.0, 20.0, 50.0, 100.0, 150.0, 250.0, 400.0, 500.0, 700.0, 850.0, 1000.0}) {
+        analysis::SoundingLevel lvl;
+        lvl.pressure = p;
+        lvl.tempK = 273.0f - static_cast<float>((1000.0 - p) * 0.02);
+        lvl.dewpointK = lvl.tempK - 5.0f;
+        s.levels.push_back(lvl);
+    }
+    view.setSounding(s);
+
+    // Two rows below the top of the plot rect, which now sits at the sounding's own
+    // top level rather than at 100 hPa.
+    moveMouse(view, QPointF(250, 26.0));
+    const QStringList lines = view.hoverText();
+    ASSERT_FALSE(lines.isEmpty());
+    EXPECT_NEAR(lines[0].split(' ').first().toDouble(), 10.0, 1.0) << lines[0].toStdString();
+}
+
 TEST(HoverReadout, CrossSectionReportsDistanceAlongThePath) {
     app::CrossSectionView view;
     view.resize(700, 420);

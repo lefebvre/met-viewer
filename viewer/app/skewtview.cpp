@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <utility>
 #include <vector>
 
 #include <QFontMetrics>
@@ -18,12 +19,162 @@
 namespace met::app {
 namespace {
 constexpr int kML = 44, kMR = 58, kMT = 24, kMB = 30;  // wide right margin: wind column
-constexpr double kPtop = 100.0, kPbot = 1050.0;        // pressure axis (hPa)
+// The conventional skew-T frame: a 100-1050 hPa log-pressure axis read against a fixed
+// -40...40 °C window, with isotherms skewed 0.85 px of x per px of plot height.
+constexpr double kPtopStd = 100.0, kPbotStd = 1050.0;  // pressure axis (hPa)
+constexpr double kTminStd = -40.0, kTmaxStd = 40.0;    // temperature at the bottom (°C)
+constexpr double kSkewStd = 0.85;                      // px of x per px of height
+// How far fitFrame may go to hold a sounding the standard frame cannot.
+constexpr double kSkewFloor = 0.25;  // below this it stops reading as a skew-T
+constexpr double kTSpanMax = 400.0;  // widest temperature window (°C)
+constexpr double kFitMargin = 6.0;   // px kept clear inside the side edges
+constexpr int kCurveSteps = 80;      // vertices per background curve, spaced in log-p
+
 // The isobars that get a line and a label — and, when the sounding carries
-// heights, the pressures whose altitude is labelled inside the diagram.
-constexpr double kIsobars[] = {1000.0, 850.0, 700.0, 500.0, 300.0, 200.0, 100.0};
-constexpr double kTmin = -40.0, kTmax = 40.0;  // temperature at the bottom (°C)
-constexpr double kSkew = 0.85;                 // px of x per px of height
+// heights, the pressures whose altitude is labelled inside the diagram. The
+// mandatory levels down to 100 hPa, then the standard stratospheric ladder for
+// soundings that reach above it; only those inside the frame are drawn.
+constexpr double kIsobars[] = {1000.0, 850.0, 700.0, 500.0, 300.0, 200.0, 100.0, 70.0, 50.0,
+                               30.0,   20.0,  10.0,  7.0,   5.0,   3.0,   2.0,   1.0};
+
+// The frame a sounding is drawn in: its log-pressure span, the temperature window at
+// the bottom of the diagram, and the skew. Mirrors the frame fields of
+// SkewTView::Layout, which are private to the class and so out of reach from here.
+struct Frame {
+    double pTop = kPtopStd, pBot = kPbotStd;
+    double tMin = kTminStd, tMax = kTmaxStd;
+    double skew = kSkewStd;
+};
+
+// Where `press` sits down the frame: 0 at the top, 1 at the bottom.
+double pressFrac(double pTop, double pBot, double press) {
+    const double span = std::log(pBot) - std::log(pTop);
+    return span != 0.0 ? (std::log(press) - std::log(pTop)) / span : 0.0;
+}
+
+// The i-th vertex of a background curve running from `pBot` up to `pTop`, spaced evenly
+// in log-p so the curve stays smooth however many decades the frame spans.
+double curvePress(double pTop, double pBot, int i) {
+    const double f = static_cast<double>(i) / kCurveSteps;
+    return std::exp(std::log(pBot) + f * (std::log(pTop) - std::log(pBot)));
+}
+
+// Every finite temperature and dewpoint in the sounding, paired with its pressure:
+// the points the frame has to hold.
+std::vector<std::pair<double, double>> framePoints(const analysis::Sounding& s) {
+    std::vector<std::pair<double, double>> pts;
+    pts.reserve(s.levels.size() * 2);
+    for (const analysis::SoundingLevel& lvl : s.levels) {
+        if (!(lvl.pressure > 0.0)) continue;
+        if (!std::isnan(lvl.tempK)) pts.emplace_back(lvl.pressure, lvl.tempK - 273.15);
+        if (!std::isnan(lvl.dewpointK)) pts.emplace_back(lvl.pressure, lvl.dewpointK - 273.15);
+    }
+    return pts;
+}
+
+// Slide the temperature window so the points sit centred across the plot, keeping the
+// given skew and window width. False when no placement of that window fits them.
+bool centreWindow(const std::vector<std::pair<double, double>>& pts, double skew, double tSpan,
+                  double w, double h, Frame& f) {
+    double qLo = std::numeric_limits<double>::infinity(), qHi = -qLo;
+    for (const auto& pt : pts) {
+        // x, but for the unknown tMin, which shifts every point by the same amount.
+        const double q =
+            pt.second / tSpan * w + skew * h * (1.0 - pressFrac(f.pTop, f.pBot, pt.first));
+        qLo = std::min(qLo, q);
+        qHi = std::max(qHi, q);
+    }
+    const double room = w - 2.0 * kFitMargin;
+    if (!std::isfinite(qLo) || qHi - qLo > room) return false;
+    f.skew = skew;
+    f.tMin = (qLo - (kFitMargin + (room - (qHi - qLo)) / 2.0)) * tSpan / w;
+    f.tMax = f.tMin + tSpan;
+    return true;
+}
+
+// The frame to draw `s` in, on a plot `w` x `h` px.
+//
+// A skew-T is read by eye against fixed isotherms, so the conventional window and skew
+// are kept whenever they hold the sounding — which is every sounding that stops at
+// 100 hPa, and most that reach 10 hPa. Higher than that the geometry runs out. The skew
+// shifts the top of the frame right by 0.85x the plot height, slightly more than the
+// plot is wide, and that is only affordable while the air up there is cold enough to
+// start far enough left. At a 1 hPa top the stratopause is near 0 °C and lands some
+// 220 px past the right edge, where the clip in paintEvent drops it: the level is in
+// the sounding but not on the diagram, which is the whole complaint.
+//
+// Two knobs can buy the room back, and the skew is the one to turn. Widening the
+// temperature window cannot help at all once the span of the skew exceeds the plot
+// width — no window is wide enough — and before that it pays in exactly the detail the
+// diagram exists to show: at a 5 hPa top the troposphere squeezes from 357 px to 272 px
+// of a 398 px plot. Relaxing the skew always works and costs no temperature resolution,
+// so it goes first. The window widens only for a sounding whose raw temperature span
+// does not fit in 80 °C at all — a tropical surface over a -80 °C tropopause — which no
+// amount of skew can fix.
+Frame fitFrame(const analysis::Sounding& s, double w, double h) {
+    Frame f;
+    const std::vector<std::pair<double, double>> pts = framePoints(s);
+    // Extend to the data; never shrink below the conventional frame.
+    for (const auto& pt : pts) {
+        f.pTop = std::min(f.pTop, pt.first);
+        f.pBot = std::max(f.pBot, pt.first);
+    }
+    if (pts.empty() || w <= 0.0 || h <= 0.0) return f;
+
+    const bool standardFits = std::all_of(pts.begin(), pts.end(), [&](const auto& pt) {
+        const double x = (pt.second - f.tMin) / (f.tMax - f.tMin) * w +
+                         f.skew * h * (1.0 - pressFrac(f.pTop, f.pBot, pt.first));
+        return x >= kFitMargin && x <= w - kFitMargin;
+    });
+    if (standardFits) return f;
+
+    for (double skew = kSkewStd; skew >= kSkewFloor; skew -= 0.01)
+        if (centreWindow(pts, skew, kTmaxStd - kTminStd, w, h, f)) return f;
+    for (double tSpan = kTmaxStd - kTminStd; tSpan <= kTSpanMax; tSpan += 10.0)
+        if (centreWindow(pts, kSkewFloor, tSpan, w, h, f)) return f;
+
+    // Nothing holds it. Take the widest frame centred on the data and let the clip drop
+    // whatever still falls outside — better than a frame centred on nothing.
+    double tLo = std::numeric_limits<double>::infinity(), tHi = -tLo;
+    for (const auto& pt : pts) {
+        tLo = std::min(tLo, pt.second);
+        tHi = std::max(tHi, pt.second);
+    }
+    f.skew = kSkewFloor;
+    f.tMin = 0.5 * (tLo + tHi) - kTSpanMax / 2.0;
+    f.tMax = f.tMin + kTSpanMax;
+    return f;
+}
+
+// The isobars inside the frame, top-down.
+std::vector<double> isobarsIn(double pTop, double pBot) {
+    std::vector<double> out;
+    for (double press : kIsobars)
+        if (press >= pTop && press <= pBot) out.push_back(press);
+    return out;
+}
+
+// A tick step that divides a `tSpan`-wide window into at most `maxCount` intervals.
+double niceStep(double tSpan, double maxCount) {
+    for (double step : {5.0, 10.0, 20.0, 25.0, 50.0, 100.0, 200.0})
+        if (tSpan / step <= maxCount) return step;
+    return 250.0;
+}
+
+// The dry adiabats worth drawing: the conventional 10 K ladder, then a geometric
+// continuation for a frame that reaches into the stratosphere. Every adiabat on the
+// ladder has left the frame by roughly 90 hPa, so without the continuation the top of
+// an extended diagram is bare; and because adiabats crowd together as pressure falls,
+// continuing the ladder linearly instead would pack that same region solid.
+// `tTopRight` is the warmest temperature the top row of the frame can show, so the
+// list stops as soon as it covers that corner.
+std::vector<double> dryAdiabats(double pTop, double tTopRight) {
+    std::vector<double> thetas;
+    for (double c = -30.0; c <= 160.0; c += 10.0) thetas.push_back(c + 273.15);
+    const double need = (tTopRight + 273.15) * std::pow(1000.0 / pTop, 0.2854);
+    for (double theta = thetas.back() * 1.12; theta <= need; theta *= 1.12) thetas.push_back(theta);
+    return thetas;
+}
 
 // Inverse Magnus: dewpoint/temperature (°C) whose saturation vapour pressure is es (hPa).
 double tempForEs(double es) {
@@ -98,29 +249,35 @@ Legend legendFor(const QFontMetrics& fm, const QRectF& r) {
 }  // namespace
 
 double SkewTView::Layout::yOfP(double press) const {
-    const double logTop = std::log(kPtop), logBot = std::log(kPbot);
+    const double logTop = std::log(pTop), logBot = std::log(pBot);
     return rect.top() + rect.height() * (std::log(press) - logTop) / (logBot - logTop);
 }
 
 double SkewTView::Layout::pOfY(double y) const {
-    const double logTop = std::log(kPtop), logBot = std::log(kPbot);
+    const double logTop = std::log(pTop), logBot = std::log(pBot);
     return std::exp(logTop + (y - rect.top()) / rect.height() * (logBot - logTop));
 }
 
 double SkewTView::Layout::xOfT(double tC, double y) const {
-    const double base = rect.left() + (tC - kTmin) / (kTmax - kTmin) * rect.width();
-    return base + kSkew * (rect.bottom() - y);
+    const double base = rect.left() + (tC - tMin) / (tMax - tMin) * rect.width();
+    return base + skew * (rect.bottom() - y);
 }
 
 double SkewTView::Layout::tOfX(double x, double y) const {
-    const double base = x - kSkew * (rect.bottom() - y);
-    return kTmin + (base - rect.left()) / rect.width() * (kTmax - kTmin);
+    const double base = x - skew * (rect.bottom() - y);
+    return tMin + (base - rect.left()) / rect.width() * (tMax - tMin);
 }
 
 SkewTView::Layout SkewTView::layout() const {
     Layout lay;
     lay.rect = QRectF(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
     lay.valid = lay.rect.width() >= 2 && lay.rect.height() >= 2;
+    const Frame f = fitFrame(s_, lay.rect.width(), lay.rect.height());
+    lay.pTop = f.pTop;
+    lay.pBot = f.pBot;
+    lay.tMin = f.tMin;
+    lay.tMax = f.tMax;
+    lay.skew = f.skew;
     return lay;
 }
 
@@ -161,53 +318,54 @@ void SkewTView::paintEvent(QPaintEvent*) {
     auto yOfP = [&](double press) { return lay.yOfP(press); };
     auto xOfT = [&](double tC, double y) { return lay.xOfT(tC, y); };
 
-    // Isotherms (skewed straight lines).
+    // Isotherms (skewed straight lines). They lean right going up, so the coldest one
+    // that can reach the frame is the temperature at its top-left corner, not tMin.
+    const double isoStep = niceStep(lay.tMax - lay.tMin, 8.0);
     p.setPen(QPen(QColor(200, 120, 120, 120), 0.6));
-    for (double t = -120; t <= kTmax; t += 10) {
+    for (double t = std::floor(lay.tOfX(r.left(), r.top()) / isoStep) * isoStep; t <= lay.tMax;
+         t += isoStep) {
         p.drawLine(QPointF(xOfT(t, r.bottom()), r.bottom()), QPointF(xOfT(t, r.top()), r.top()));
     }
 
     // Dry adiabats (theta const): T(K) = theta * (p/1000)^0.2854.
     p.setPen(QPen(QColor(120, 160, 120, 120), 0.6));
-    for (double thetaC = -30; thetaC <= 160; thetaC += 10) {
-        const double theta = thetaC + 273.15;
+    for (double theta : dryAdiabats(lay.pTop, lay.tOfX(r.right(), r.top()))) {
         QPainterPath path;
-        bool first = true;
-        for (double press = kPbot; press >= kPtop; press -= 25) {
+        for (int i = 0; i <= kCurveSteps; ++i) {
+            const double press = curvePress(lay.pTop, lay.pBot, i);
             const double tK = theta * std::pow(press / 1000.0, 0.2854);
             const QPointF pt(xOfT(tK - 273.15, yOfP(press)), yOfP(press));
-            if (first) {
-                path.moveTo(pt);
-                first = false;
-            } else path.lineTo(pt);
+            if (i == 0) path.moveTo(pt);
+            else path.lineTo(pt);
         }
         p.drawPath(path);
     }
 
-    // Saturation mixing-ratio lines (dashed): es = w*p/(0.622+w), Td from es.
+    // Saturation mixing-ratio lines (dashed): es = w*p/(0.622+w), Td from es. They stop
+    // at 300 hPa, above which there is too little vapour for them to mean anything.
     QPen mr(QColor(120, 140, 170, 130), 0.6);
     mr.setStyle(Qt::DashLine);
     p.setPen(mr);
+    const double mrTop = std::max(300.0, lay.pTop);
     for (double wg : {1.0, 2.0, 4.0, 8.0, 16.0, 32.0}) {
         const double w = wg / 1000.0;  // kg/kg
         QPainterPath path;
-        bool first = true;
-        for (double press = kPbot; press >= 300; press -= 25) {
+        for (int i = 0; i <= kCurveSteps; ++i) {
+            const double press = curvePress(mrTop, lay.pBot, i);
             const double es = w * press / (0.622 + w);
             const double td = tempForEs(es);
             const QPointF pt(xOfT(td, yOfP(press)), yOfP(press));
-            if (first) {
-                path.moveTo(pt);
-                first = false;
-            } else path.lineTo(pt);
+            if (i == 0) path.moveTo(pt);
+            else path.lineTo(pt);
         }
         p.drawPath(path);
     }
 
     // Isobars.
+    const std::vector<double> isobars = isobarsIn(lay.pTop, lay.pBot);
     p.setClipping(false);
     p.setPen(QColor(120, 120, 120));
-    for (double press : kIsobars) {
+    for (double press : isobars) {
         const double y = yOfP(press);
         p.drawLine(QPointF(r.left(), y), QPointF(r.right(), y));
         p.drawText(QRectF(0, y - 8, kML - 4, 16), Qt::AlignRight | Qt::AlignVCenter,
@@ -223,7 +381,7 @@ void SkewTView::paintEvent(QPaintEvent*) {
     const Legend leg = legendFor(QFontMetrics(p.font()), r);
     if (showHeights_ && hasHeights()) {
         p.setPen(QColor(95, 125, 170));
-        for (double press : kIsobars) {
+        for (double press : isobars) {
             analysis::SoundingLevel lvl{};
             if (!soundingAt(s_, press, lvl) || std::isnan(lvl.heightGpm)) continue;
             const double y = yOfP(press);
@@ -237,7 +395,8 @@ void SkewTView::paintEvent(QPaintEvent*) {
     }
 
     // Temperature-axis labels along the bottom.
-    for (double t = kTmin; t <= kTmax; t += 20) {
+    const double labStep = niceStep(lay.tMax - lay.tMin, 4.0);
+    for (double t = std::ceil(lay.tMin / labStep) * labStep; t <= lay.tMax; t += labStep) {
         const double x = xOfT(t, r.bottom());
         p.drawText(QRectF(x - 20, r.bottom() + 4, 40, 16), Qt::AlignHCenter | Qt::AlignTop,
                    QString::number(t, 'g', 3) + "°");
