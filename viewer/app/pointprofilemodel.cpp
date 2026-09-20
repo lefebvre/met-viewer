@@ -70,18 +70,42 @@ std::string PointProfileModel::nativeUnitAt(int column) const {
     return profile_.columns[static_cast<std::size_t>(c)].units;
 }
 
+std::string PointProfileModel::columnKeyAt(int column) const {
+    if (column == pressureColumn()) return kPressureKey;
+    if (column == heightColumn()) return kHeightKey;
+    const int c = column - firstValueColumn();
+    if (c < 0 || static_cast<std::size_t>(c) >= profile_.columns.size()) return {};
+    return profile_.columns[static_cast<std::size_t>(c)].id;
+}
+
+QString PointProfileModel::columnNameAt(int column) const {
+    if (column == pressureColumn()) return tr("Pressure");
+    if (column == heightColumn()) return tr("Height MSL");
+    const int c = column - firstValueColumn();
+    if (c < 0 || static_cast<std::size_t>(c) >= profile_.columns.size()) return {};
+    const analysis::ProfileColumn& pc = profile_.columns[static_cast<std::size_t>(c)];
+    return QString::fromStdString(pc.longName.empty() ? pc.id : pc.longName);
+}
+
 std::string PointProfileModel::displayUnitAt(int column) const {
     const std::string native = nativeUnitAt(column);
     if (native.empty()) return {};
-    const auto it = unitChoice_.find(native);
-    return it == unitChoice_.end() ? native : it->second;
+    const auto it = unitChoice_.find(columnKeyAt(column));
+    if (it == unitChoice_.end()) return native;
+    // alternativeUnits() leads with the native unit in its canonical spelling;
+    // choosing it means no conversion, so report the native string convert() and
+    // the writer already expect.
+    const std::vector<std::string> alts = core::alternativeUnits(native);
+    if (it->second == alts.front()) return native;
+    return std::find(alts.begin(), alts.end(), it->second) != alts.end() ? it->second : native;
 }
 
-std::vector<std::string> PointProfileModel::nativeUnitsInUse() const {
-    std::vector<std::string> out;
+std::vector<PointProfileModel::UnitColumn> PointProfileModel::unitColumns() const {
+    std::vector<UnitColumn> out;
     for (int c = 1; c < columnCount(); ++c) {
-        const std::string u = nativeUnitAt(c);
-        if (!u.empty() && std::find(out.begin(), out.end(), u) == out.end()) out.push_back(u);
+        std::string native = nativeUnitAt(c);
+        if (native.empty()) continue;
+        out.push_back({columnKeyAt(c), columnNameAt(c), std::move(native), displayUnitAt(c)});
     }
     return out;
 }
@@ -175,14 +199,7 @@ QVariant PointProfileModel::headerData(int section, Qt::Orientation orientation,
     if (role == Qt::DisplayRole) {
         if (section == 0) return tr("Level");
         const QString unit = QString::fromStdString(core::unitLabel(displayUnitAt(section)));
-        QString name;
-        if (section == pressureColumn()) name = tr("Pressure");
-        else if (section == heightColumn()) name = tr("Height MSL");
-        else {
-            const analysis::ProfileColumn& c =
-                profile_.columns[static_cast<std::size_t>(section - firstValueColumn())];
-            name = QString::fromStdString(c.longName.empty() ? c.id : c.longName);
-        }
+        const QString name = columnNameAt(section);
         return unit.isEmpty() ? name : QStringLiteral("%1 (%2)").arg(name, unit);
     }
 

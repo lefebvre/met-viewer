@@ -121,7 +121,7 @@ QString formatValueWithUnits(double value, const QString& units) {
     if (std::isnan(value)) return QStringLiteral("—");
     QString s = QString::number(value, 'f', 2);
     if (units.isEmpty()) return s;
-    s += QLatin1Char(' ') + units;
+    s += QLatin1Char(' ') + QString::fromStdString(core::unitLabel(units.toStdString()));
     if (const auto alt = core::preferredDisplayUnit(units.toStdString())) {
         if (const auto converted = core::convert(value, units.toStdString(), *alt)) {
             s += QStringLiteral(" (%1 %2)")

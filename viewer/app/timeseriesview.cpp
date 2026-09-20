@@ -9,6 +9,7 @@
 
 #include "viewer/app/hoverreadout.h"
 #include "viewer/core/timeaxis.h"
+#include "viewer/core/units.h"
 
 namespace met::app {
 namespace {
@@ -135,7 +136,7 @@ void TimeSeriesView::paintEvent(QPaintEvent*) {
                    .arg(varName_)
                    .arg(ts_.point.lat, 0, 'f', coordPrec_)
                    .arg(ts_.point.lon, 0, 'f', coordPrec_)
-                   .arg(QString::fromStdString(ts_.units)));
+                   .arg(QString::fromStdString(core::unitLabel(ts_.units))));
 
     // Cursor readout, snapped to the nearest sample so the badge names a real point.
     if (hoverActive_ && hoverIdx_ >= 0 && hoverIdx_ < n) {

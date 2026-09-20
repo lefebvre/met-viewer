@@ -15,6 +15,7 @@
 
 #include "viewer/analysis/pointprofile.h"
 #include "viewer/app/pointprofiledock.h"
+#include "viewer/app/pointprofilemodel.h"
 
 using namespace met;
 using namespace met::app;
@@ -23,19 +24,24 @@ namespace {
 
 constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
 
-// The unit choice is process-wide state persisted in QSettings, so a test that
-// changes it has to put it back or the next one inherits it.
+// The unit choice is process-wide state persisted in QSettings. Clearing it on
+// both ends rather than only on the way out keeps a test from reading what an
+// earlier one wrote, including one that died before it could clean up.
 class ScopedUnitSettings {
 public:
-    ScopedUnitSettings() = default;
-    ~ScopedUnitSettings() {
+    ScopedUnitSettings() { clear(); }
+    ~ScopedUnitSettings() { clear(); }
+    ScopedUnitSettings(const ScopedUnitSettings&) = delete;
+    ScopedUnitSettings& operator=(const ScopedUnitSettings&) = delete;
+
+private:
+    static void clear() {
         QSettings s;
         s.beginGroup(QStringLiteral("pointProfile"));
+        s.remove(QStringLiteral("columnUnits"));
         s.remove(QStringLiteral("units"));
         s.endGroup();
     }
-    ScopedUnitSettings(const ScopedUnitSettings&) = delete;
-    ScopedUnitSettings& operator=(const ScopedUnitSettings&) = delete;
 };
 
 // Spin the event loop until `predicate` holds or `ms` elapses. The project does
@@ -154,7 +160,7 @@ TEST(PointProfileDock, RescalesInPlaceWhenTheUnitChangesAndKeepsTheProfileIntact
     dock.setProfile(profile());
     ASSERT_EQ(dock.cellText(0, 4), "10.00");  // m/s
 
-    dock.setUnitFor("m/s", "kt");
+    dock.setUnitFor(analysis::kWindSpeedId, "kt");
     EXPECT_EQ(dock.cellText(0, 4), "19.44");
     EXPECT_TRUE(dock.headerText(4).contains("kt"));
     // Still two rows and five columns: no re-extraction happened, the same stored
@@ -162,6 +168,78 @@ TEST(PointProfileDock, RescalesInPlaceWhenTheUnitChangesAndKeepsTheProfileIntact
     EXPECT_EQ(dock.rowCount(), 2);
     EXPECT_EQ(dock.columnCount(), 5);
     EXPECT_TRUE(dock.tableAsCsv().contains("19.44"));
+}
+
+// Wind components as GRIB spells their unit, a derived speed as this app spells
+// the same unit, and a vertical velocity in a unit with nothing to convert to --
+// the mix the Units menu has to present without merging, splitting or dropping.
+analysis::PointProfile windProfile() {
+    analysis::PointProfile p = profile();
+    p.columns = {
+        {"u", "U component of wind", "m s**-1", analysis::ProfileColumnKind::Variable},
+        {analysis::kWindSpeedId, "Wind speed", "m/s", analysis::ProfileColumnKind::WindSpeed},
+        {"w", "Vertical velocity", "Pa s**-1", analysis::ProfileColumnKind::Variable}};
+    for (analysis::ProfileLevel& level : p.levels) {
+        level.values = {10.0f, 10.0f, -0.5f};
+        level.statuses.assign(3, analysis::CellStatus::Ok);
+    }
+    return p;
+}
+
+TEST(PointProfileDock, OffersUnitsPerColumnByTheNameItsHeaderShows) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    dock.setProfile(windProfile());
+
+    const QStringList expected = {
+        "Pressure: *hPa, Pa",   "Height MSL: *gpm, dam, m²/s²",   "U component of wind: *m/s, kt",
+        "Wind speed: *m/s, kt", "Vertical velocity (Pa/s): none",
+    };
+    EXPECT_EQ(dock.unitMenuEntries(), expected);
+}
+
+// Two columns in the same unit are still two quantities: knots for the wind speed
+// says nothing about how the reader wants the U component shown.
+TEST(PointProfileDock, ConvertsOnlyTheColumnWhoseUnitWasChosen) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    dock.setProfile(windProfile());
+
+    dock.setUnitFor(analysis::kWindSpeedId, "kt");
+    EXPECT_EQ(dock.headerText(4), "Wind speed (kt)");
+    EXPECT_EQ(dock.cellText(0, 4), "19.44");
+    EXPECT_EQ(dock.headerText(3), "U component of wind (m/s)");
+    EXPECT_TRUE(dock.unitMenuEntries().contains("Wind speed: m/s, *kt"));
+    EXPECT_TRUE(dock.unitMenuEntries().contains("U component of wind: *m/s, kt"));
+}
+
+TEST(PointProfileDock, RemembersAColumnsUnitAcrossPanels) {
+    ScopedUnitSettings restore;
+    {
+        PointProfileDock first;
+        first.setProfile(profile());
+        first.setUnitFor("t", "Cel");
+        first.setUnitFor(PointProfileModel::kPressureKey, "Pa");
+    }
+    PointProfileDock second;
+    second.setProfile(profile());
+    EXPECT_EQ(second.headerText(1), "Pressure (Pa)");
+    EXPECT_EQ(second.headerText(3), "Temperature (°C)");
+    EXPECT_EQ(second.cellText(0, 3), "10.00");
+}
+
+// A choice is kept by variable id, and another file can use the same id for a
+// quantity in a unit the choice cannot reach. Applying it would blank the column.
+TEST(PointProfileDock, IgnoresARememberedUnitTheColumnCannotConvertTo) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    dock.setUnitFor("t", "Cel");
+
+    analysis::PointProfile other = profile();
+    other.columns[0].units = "%";
+    dock.setProfile(other);
+    EXPECT_EQ(dock.headerText(3), "Temperature (%)");
+    EXPECT_EQ(dock.cellText(0, 3), "283.1");
 }
 
 TEST(PointProfileDock, ReordersOnASortAndExportsWhatIsOnScreen) {

@@ -135,14 +135,14 @@ QComboBox* addColormapControls(ControlPanel* panel, View* view, IconThemer* icon
     };
     QObject::connect(minS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
     QObject::connect(maxS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
-    QObject::connect(view, &View::rangeChanged, view,
-                     [view, cbar, minS, maxS](double lo, double hi) {
-                         cbar->setColormap(view->colormap());
-                         cbar->setUnits(view->units());
-                         const QSignalBlocker b1(minS), b2(maxS);
-                         minS->setValue(lo);
-                         maxS->setValue(hi);
-                     });
+    QObject::connect(
+        view, &View::rangeChanged, view, [view, cbar, minS, maxS](double lo, double hi) {
+            cbar->setColormap(view->colormap());
+            cbar->setUnits(QString::fromStdString(core::unitLabel(view->units().toStdString())));
+            const QSignalBlocker b1(minS), b2(maxS);
+            minS->setValue(lo);
+            maxS->setValue(hi);
+        });
     return cmap;
 }
 

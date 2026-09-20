@@ -122,3 +122,39 @@ TEST(AlternativeUnits, OffersOnlyUnitsThatConvertActuallyAccepts) {
         }
     }
 }
+
+// Every spelling a file uses for one unit reads the same, in the shortest form
+// that cannot be misread.
+TEST(Units, LabelsEverySpellingOfAUnitTheSameWay) {
+    EXPECT_EQ(unitLabel("m s**-1"), "m/s");
+    EXPECT_EQ(unitLabel("m s-1"), "m/s");
+    EXPECT_EQ(unitLabel("m s^-1"), "m/s");
+    EXPECT_EQ(unitLabel("m/s"), "m/s");
+    EXPECT_EQ(unitLabel("kg kg**-1"), "kg/kg");
+    EXPECT_EQ(unitLabel("Pa s**-1"), "Pa/s");
+    EXPECT_EQ(unitLabel("m**2 s**-2"), "m²/s²");
+    EXPECT_EQ(unitLabel("m2/s2"), "m²/s²");
+    EXPECT_EQ(unitLabel("kg m**-2"), "kg/m²");
+    EXPECT_EQ(unitLabel("s**-1"), "1/s");
+    EXPECT_EQ(unitLabel("Cel"), "°C");
+    EXPECT_EQ(unitLabel("K"), "K");
+}
+
+// "kg/m²/s" would leave the reader working out what divides what.
+TEST(Units, GroupsSeveralFactorsBelowOneSlash) {
+    EXPECT_EQ(unitLabel("kg m-2 s-1"), "kg/(m² s)");
+    EXPECT_EQ(unitLabel("K m**2 kg**-1 s**-1"), "K m²/(kg s)");
+}
+
+TEST(Units, LeavesAUnitItCannotParseAsItIs) {
+    for (const char* raw :
+         {"(10**-6 g) m**-3", "(0 - 1)", "1", "Proportion", "", "m/s/s", "10**-6 g"})
+        EXPECT_EQ(unitLabel(raw), raw) << raw;
+}
+
+TEST(Units, SpellsAnExportedUnitInPlainAscii) {
+    EXPECT_EQ(unitLabelAscii("kg m**-2 s**-1"), "kg/(m2 s)");
+    EXPECT_EQ(unitLabelAscii("m s**-1"), "m/s");
+    EXPECT_EQ(unitLabelAscii("Cel"), "degC");
+    EXPECT_EQ(unitLabelAscii("K"), "K");
+}

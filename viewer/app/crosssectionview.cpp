@@ -12,6 +12,7 @@
 #include "viewer/core/field.h"
 #include "viewer/core/geo.h"
 #include "viewer/core/grid.h"
+#include "viewer/core/units.h"
 #include "viewer/render/contour.h"
 
 namespace met::app {
@@ -342,7 +343,7 @@ void CrossSectionView::paintEvent(QPaintEvent*) {
                    QString::number(km, 'g', 4) + " km");
     }
     p.drawText(QRectF(0, 0, width(), kMT), Qt::AlignCenter,
-               tr("Cross-section (%1)").arg(QString::fromStdString(cs_.units)));
+               tr("Cross-section (%1)").arg(QString::fromStdString(core::unitLabel(cs_.units))));
 
     if (hoverActive_) paintHoverReadout(p, r, hoverPos_, hoverLines_, palette());
 }
