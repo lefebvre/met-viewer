@@ -42,9 +42,9 @@ QByteArray readAll(const QString& path) {
 // be read back without a PDF parser — which is the point of checking it here: it is
 // the one thing that says the figure was laid out at the size we asked for.
 QRectF mediaBox(const QByteArray& pdf) {
-    const int at = pdf.indexOf("/MediaBox");
+    const qsizetype at = pdf.indexOf("/MediaBox");
     if (at < 0) return {};
-    const int open = pdf.indexOf('[', at), close = pdf.indexOf(']', open);
+    const qsizetype open = pdf.indexOf('[', at), close = pdf.indexOf(']', open);
     if (open < 0 || close < 0) return {};
     const QList<QByteArray> n = pdf.mid(open + 1, close - open - 1).simplified().split(' ');
     if (n.size() != 4) return {};
