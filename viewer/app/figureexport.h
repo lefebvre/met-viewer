@@ -23,7 +23,10 @@ namespace met::app {
 struct Figure {
     QWidget* canvas = nullptr;
     const render::Colormap* colormap = nullptr;  // null for a view with no colour scale
-    QString units;                               // suffix on the scale's labels
+    // Suffix on the scale's labels. Defaulted explicitly like the pointers above so
+    // that `Figure{canvas}`, which is how a line plot with no colour scale is built,
+    // is not a missing-initializer warning -- one the Linux build turns into an error.
+    QString units = {};
 };
 
 // Write `fig` to `path` as a PDF: vector, at the canvas's on-screen size, in the
