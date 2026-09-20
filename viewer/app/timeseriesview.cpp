@@ -3,9 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <tuple>
 
 #include <QMouseEvent>
 #include <QPainter>
+#include <QResizeEvent>
 
 #include "viewer/app/hoverreadout.h"
 #include "viewer/core/timeaxis.h"
@@ -46,16 +48,41 @@ TimeSeriesView::Layout TimeSeriesView::layout() const {
         hi += 1;
     }
     const double pad = 0.08 * (hi - lo);
-    lay.lo = lo - pad;
-    lay.hi = hi + pad;
-    lay.valid = true;
+    std::tie(lay.lo, lay.hi) = value_.resolve(lo - pad, hi + pad);
+    lay.valid = lay.hi > lay.lo;
     return lay;
 }
 
 void TimeSeriesView::setSeries(const analysis::TimeSeries& ts, const QString& varName) {
     ts_ = ts;
     varName_ = varName;
+    publishRange();
     update();
+}
+
+void TimeSeriesView::setValueAuto(bool on) {
+    value_.setAutomatic(on);
+    publishRange();
+    update();
+}
+
+void TimeSeriesView::setValueLimits(double lo, double hi) {
+    value_.set(lo, hi);
+    publishRange();
+    update();
+}
+
+void TimeSeriesView::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    publishRange();
+}
+
+void TimeSeriesView::publishRange() {
+    const Layout lay = layout();
+    if (!lay.valid || (lay.lo == sentLo_ && lay.hi == sentHi_)) return;
+    sentLo_ = lay.lo;
+    sentHi_ = lay.hi;
+    emit valueRangeChanged(lay.lo, lay.hi);
 }
 
 void TimeSeriesView::setCurrentIndex(int index) {
@@ -107,7 +134,10 @@ void TimeSeriesView::paintEvent(QPaintEvent*) {
         p.restore();
     }
 
-    // Series line + markers.
+    // Series line + markers. Clipped to the plot box because a pinned value axis is
+    // a window onto the series, not a promise that the series fits inside it.
+    p.save();
+    p.setClipRect(r);
     p.setRenderHint(QPainter::Antialiasing, true);
     QPolygonF poly;
     for (int i = 0; i < n; ++i)
@@ -129,6 +159,7 @@ void TimeSeriesView::paintEvent(QPaintEvent*) {
             p.drawEllipse(QPointF(x, yOf(cv)), 3.5, 3.5);
         }
     }
+    p.restore();
 
     p.setPen(palette().color(QPalette::Text));
     p.drawText(QRectF(0, 2, width(), kMT - 2), Qt::AlignCenter,

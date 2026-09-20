@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QResizeEvent>
 
 #include "viewer/analysis/wind.h"
 #include "viewer/app/hoverreadout.h"
@@ -111,13 +113,30 @@ bool centreWindow(const std::vector<std::pair<double, double>>& pts, double skew
 // so it goes first. The window widens only for a sounding whose raw temperature span
 // does not fit in 80 °C at all — a tropical surface over a -80 °C tropopause — which no
 // amount of skew can fix.
-Frame fitFrame(const analysis::Sounding& s, double w, double h) {
+Frame fitFrame(const analysis::Sounding& s, double w, double h, const AxisRange& press,
+               const AxisRange& temp) {
     Frame f;
     const std::vector<std::pair<double, double>> pts = framePoints(s);
     // Extend to the data; never shrink below the conventional frame.
+    double fitTop = kPtopStd, fitBot = kPbotStd;
     for (const auto& pt : pts) {
-        f.pTop = std::min(f.pTop, pt.first);
-        f.pBot = std::max(f.pBot, pt.first);
+        fitTop = std::min(fitTop, pt.first);
+        fitBot = std::max(fitBot, pt.first);
+    }
+    std::tie(f.pTop, f.pBot) = press.resolve(fitTop, fitBot);
+    // A pressure axis has to survive being typed into. AxisRange drops a pair that
+    // is not a range, but nothing stops a pinned pair from being physically absurd.
+    if (!(f.pTop > 0.0 && f.pBot > f.pTop)) {
+        f.pTop = fitTop;
+        f.pBot = fitBot;
+    }
+
+    // A pinned temperature window is the frame, full stop: the conventional skew,
+    // and the clip in paintEvent takes whatever falls outside. Everything below
+    // this point exists to make room for data, which is not what was asked for.
+    if (!temp.automatic()) {
+        std::tie(f.tMin, f.tMax) = temp.resolve(kTminStd, kTmaxStd);
+        return f;
     }
     if (pts.empty() || w <= 0.0 || h <= 0.0) return f;
 
@@ -272,7 +291,7 @@ SkewTView::Layout SkewTView::layout() const {
     Layout lay;
     lay.rect = QRectF(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
     lay.valid = lay.rect.width() >= 2 && lay.rect.height() >= 2;
-    const Frame f = fitFrame(s_, lay.rect.width(), lay.rect.height());
+    const Frame f = fitFrame(s_, lay.rect.width(), lay.rect.height(), press_, temp_);
     lay.pTop = f.pTop;
     lay.pBot = f.pBot;
     lay.tMin = f.tMin;
@@ -294,7 +313,52 @@ SkewTView::SkewTView(QWidget* parent) : QWidget(parent) {
 void SkewTView::setSounding(const analysis::Sounding& s) {
     s_ = s;
     emit heightsAvailableChanged(hasHeights());
+    publishFrame();
     update();
+}
+
+void SkewTView::setPressureAuto(bool on) {
+    press_.setAutomatic(on);
+    publishFrame();
+    update();
+}
+
+void SkewTView::setPressureLimits(double topHpa, double bottomHpa) {
+    press_.set(topHpa, bottomHpa);
+    publishFrame();
+    update();
+}
+
+void SkewTView::setTemperatureAuto(bool on) {
+    temp_.setAutomatic(on);
+    publishFrame();
+    update();
+}
+
+void SkewTView::setTemperatureLimits(double minC, double maxC) {
+    temp_.set(minC, maxC);
+    publishFrame();
+    update();
+}
+
+void SkewTView::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    publishFrame();
+}
+
+void SkewTView::publishFrame() {
+    const Layout lay = layout();
+    if (!lay.valid) return;
+    if (lay.pTop != sentPTop_ || lay.pBot != sentPBot_) {
+        sentPTop_ = lay.pTop;
+        sentPBot_ = lay.pBot;
+        emit pressureRangeChanged(lay.pTop, lay.pBot);
+    }
+    if (lay.tMin != sentTMin_ || lay.tMax != sentTMax_) {
+        sentTMin_ = lay.tMin;
+        sentTMax_ = lay.tMax;
+        emit temperatureRangeChanged(lay.tMin, lay.tMax);
+    }
 }
 
 void SkewTView::setHeightLabelsEnabled(bool on) {

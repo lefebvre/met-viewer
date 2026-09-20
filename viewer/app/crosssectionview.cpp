@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <tuple>
 
 #include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QResizeEvent>
 
 #include "viewer/app/hoverreadout.h"
 #include "viewer/core/field.h"
@@ -119,6 +121,7 @@ void CrossSectionView::setSection(const analysis::CrossSection& cs) {
     if (autoRange_) applyAutoRange();
     emit rangeChanged(min_, max_);
     emit heightsAvailableChanged(hasHeights());
+    publishRanges();
     update();
 }
 
@@ -151,34 +154,92 @@ void CrossSectionView::setRange(double lo, double hi) {
     update();
 }
 
+double CrossSectionView::Layout::pressAt(double fy) const {
+    const double logTop = std::log(pTop), logBot = std::log(pBot);
+    return std::exp(logTop + fy * (logBot - logTop));
+}
+
+double CrossSectionView::Layout::columnAt(double fx) const {
+    // Path samples are evenly spaced by distance (core::sampleGreatCirclePath), so
+    // distance along the path and column index are one axis under two names.
+    const double km = kmLo + fx * (kmHi - kmLo);
+    return totalKm > 0.0 ? km / totalKm * (ns - 1) : 0.0;
+}
+
 CrossSectionView::Layout CrossSectionView::layout() const {
     Layout lay;
     lay.rect = QRectF(kML, kMT, width() - kML - kMR, height() - kMT - kMB);
     if (cs_.pressures.size() < 2 || cs_.distancesKm.size() < 2) return lay;
-    pressureExtent(cs_, lay.pTop, lay.pBot);
-    lay.valid =
-        lay.pTop > 0.0 && lay.pBot > lay.pTop && lay.rect.width() >= 2 && lay.rect.height() >= 2;
+    double fitTop = 0.0, fitBot = 0.0;
+    pressureExtent(cs_, fitTop, fitBot);
+    std::tie(lay.pTop, lay.pBot) = press_.resolve(fitTop, fitBot);
+    lay.totalKm = cs_.distancesKm.back();
+    lay.ns = static_cast<int>(cs_.distancesKm.size());
+    std::tie(lay.kmLo, lay.kmHi) = dist_.resolve(0.0, lay.totalKm);
+    lay.valid = lay.pTop > 0.0 && lay.pBot > lay.pTop && lay.kmHi > lay.kmLo &&
+                lay.rect.width() >= 2 && lay.rect.height() >= 2;
     return lay;
+}
+
+void CrossSectionView::setPressureAuto(bool on) {
+    press_.setAutomatic(on);
+    publishRanges();
+    update();
+}
+
+void CrossSectionView::setPressureLimits(double topHpa, double bottomHpa) {
+    press_.set(topHpa, bottomHpa);
+    publishRanges();
+    update();
+}
+
+void CrossSectionView::setDistanceAuto(bool on) {
+    dist_.setAutomatic(on);
+    publishRanges();
+    update();
+}
+
+void CrossSectionView::setDistanceLimits(double loKm, double hiKm) {
+    dist_.set(loKm, hiKm);
+    publishRanges();
+    update();
+}
+
+void CrossSectionView::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    publishRanges();
+}
+
+void CrossSectionView::publishRanges() {
+    const Layout lay = layout();
+    if (!lay.valid) return;
+    if (lay.pTop != sentPTop_ || lay.pBot != sentPBot_) {
+        sentPTop_ = lay.pTop;
+        sentPBot_ = lay.pBot;
+        emit pressureRangeChanged(lay.pTop, lay.pBot);
+    }
+    if (lay.kmLo != sentKmLo_ || lay.kmHi != sentKmHi_) {
+        sentKmLo_ = lay.kmLo;
+        sentKmHi_ = lay.kmHi;
+        emit distanceRangeChanged(lay.kmLo, lay.kmHi);
+    }
 }
 
 void CrossSectionView::rebuildImage(const Layout& lay) {
     const QSize size(static_cast<int>(lay.rect.width()), static_cast<int>(lay.rect.height()));
     if (!img_.isNull() && imgSize_ == size && imgSection_ == sectionSeq_ &&
         imgCmap_ == QString::fromStdString(cmap_.name()) && imgMin_ == cmap_.min() &&
-        imgMax_ == cmap_.max())
+        imgMax_ == cmap_.max() && imgAxes_ == axisKey(lay))
         return;
 
     // For each screen row map to a pressure, then sample each column at that
     // pressure through its own (terrain-following) profile.
-    const int ns = static_cast<int>(cs_.distancesKm.size());
-    const double logTop = std::log(lay.pTop), logBot = std::log(lay.pBot);
     img_ = QImage(size, QImage::Format_ARGB32);
     for (int py = 0; py < img_.height(); ++py) {
-        const double press =
-            std::exp(logTop + (double(py) / (img_.height() - 1)) * (logBot - logTop));
+        const double press = lay.pressAt(double(py) / (img_.height() - 1));
         auto* scan = reinterpret_cast<QRgb*>(img_.scanLine(py));
         for (int px = 0; px < img_.width(); ++px) {
-            const double sampleF = (double(px) / (img_.width() - 1)) * (ns - 1);
+            const double sampleF = lay.columnAt(double(px) / (img_.width() - 1));
             const float val = sampleSection(cs_, sampleF, press);
             const render::Rgba c = cmap_.map(val);
             scan[px] = qRgba(c.r, c.g, c.b, c.a);
@@ -189,13 +250,16 @@ void CrossSectionView::rebuildImage(const Layout& lay) {
     imgCmap_ = QString::fromStdString(cmap_.name());
     imgMin_ = cmap_.min();
     imgMax_ = cmap_.max();
+    imgAxes_ = axisKey(lay);
 }
 
 void CrossSectionView::rebuildHeightContours(const Layout& lay) {
     const QSize size(static_cast<int>(lay.rect.width()), static_cast<int>(lay.rect.height()));
-    if (contourSection_ == sectionSeq_ && contourSize_ == size) return;
+    if (contourSection_ == sectionSeq_ && contourSize_ == size && contourAxes_ == axisKey(lay))
+        return;
     contourSection_ = sectionSeq_;
     contourSize_ = size;
+    contourAxes_ = axisKey(lay);
     heightContours_.clear();
     if (cs_.heights.empty() || size.width() < 8 || size.height() < 8) return;
 
@@ -213,13 +277,11 @@ void CrossSectionView::rebuildHeightContours(const Layout& lay) {
         0.0, 0.0, 1.0, 1.0, static_cast<int>(nx), static_cast<int>(ny), false};
     field.values.assign(nx * ny, std::numeric_limits<float>::quiet_NaN());
 
-    const double logTop = std::log(lay.pTop), logBot = std::log(lay.pBot);
-    const int ns = static_cast<int>(cs_.distancesKm.size());
     for (std::size_t j = 0; j < ny; ++j) {
-        const double fy = static_cast<double>(j) / static_cast<double>(ny - 1);
-        const double press = std::exp(logTop + fy * (logBot - logTop));
+        const double press = lay.pressAt(static_cast<double>(j) / static_cast<double>(ny - 1));
         for (std::size_t i = 0; i < nx; ++i) {
-            const double sampleF = static_cast<double>(i) / static_cast<double>(nx - 1) * (ns - 1);
+            const double sampleF =
+                lay.columnAt(static_cast<double>(i) / static_cast<double>(nx - 1));
             field.values[j * nx + i] =
                 static_cast<float>(sampleRows(cs_, cs_.heights, sampleF, press));
         }
@@ -313,7 +375,6 @@ void CrossSectionView::paintEvent(QPaintEvent*) {
     }
     const double pTop = lay.pTop, pBot = lay.pBot;
     const double logTop = std::log(pTop), logBot = std::log(pBot);
-    const double totalKm = cs_.distancesKm.back();
 
     rebuildImage(lay);
     p.drawImage(r.topLeft(), img_);
@@ -337,7 +398,7 @@ void CrossSectionView::paintEvent(QPaintEvent*) {
     // Distance axis.
     for (int k = 0; k <= 4; ++k) {
         const double x = r.left() + r.width() * k / 4.0;
-        const double km = totalKm * k / 4.0;
+        const double km = lay.kmLo + (lay.kmHi - lay.kmLo) * k / 4.0;
         p.drawLine(QPointF(x, r.bottom()), QPointF(x, r.bottom() + 4));
         p.drawText(QRectF(x - 40, r.bottom() + 5, 80, 16), Qt::AlignHCenter | Qt::AlignTop,
                    QString::number(km, 'g', 4) + " km");
@@ -362,10 +423,9 @@ void CrossSectionView::mouseMoveEvent(QMouseEvent* event) {
     // Invert the paint mapping: x -> fractional column along the path, y -> pressure
     // on the log axis. Both must match layout()/rebuildImage() exactly.
     const QRectF& r = lay.rect;
-    const int ns = static_cast<int>(cs_.distancesKm.size());
-    const double sampleF = (pos.x() - r.left()) / r.width() * (ns - 1);
-    const double logTop = std::log(lay.pTop), logBot = std::log(lay.pBot);
-    const double press = std::exp(logTop + (pos.y() - r.top()) / r.height() * (logBot - logTop));
+    const int ns = lay.ns;
+    const double sampleF = lay.columnAt((pos.x() - r.left()) / r.width());
+    const double press = lay.pressAt((pos.y() - r.top()) / r.height());
 
     // Distance and position at this column, interpolated between path samples.
     const std::size_t s0 =

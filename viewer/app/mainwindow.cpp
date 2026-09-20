@@ -146,6 +146,72 @@ QComboBox* addColormapControls(ControlPanel* panel, View* view, IconThemer* icon
     return cmap;
 }
 
+// Two bounds side by side in one form row. An axis needs a pair of numbers, and
+// giving each its own row doubles the height of every panel that has axes.
+QWidget* spinPair(QWidget* parent, QWidget* lo, QWidget* hi) {
+    auto* row = new QWidget(parent);
+    auto* h = new QHBoxLayout(row);
+    h->setContentsMargins(0, 0, 0, 0);
+    h->setSpacing(4);
+    h->addWidget(lo);
+    h->addWidget(hi);
+    return row;
+}
+
+// What one axis needs to describe itself to the panel.
+struct AxisSpec {
+    QString name;             // the axis, e.g. "Pressure (hPa)"
+    QString bounds;           // what its two numbers are, e.g. "Top / bottom"
+    double min = 0, max = 1;  // what the spin boxes will accept
+    int decimals = 1;
+};
+
+// Add one axis's limit controls to `panel`, wired to `view`.
+//
+// Deliberately the same shape as addColormapControls above: a checkbox that hands
+// the axis back to the data over a pair of numbers that take it away again. An axis
+// and the colour scale beside it are the same kind of setting, and a view whose two
+// halves behaved differently would be a view you had to learn twice.
+//
+// While the checkbox is ticked the boxes follow whatever the view reports drawing,
+// so unticking it starts from what is already on screen instead of moving the plot.
+template <typename View, typename Signal>
+void addAxisLimitControls(ControlPanel* panel, View* view, const AxisSpec& spec,
+                          void (View::*setAuto)(bool), void (View::*setLimits)(double, double),
+                          Signal changed) {
+    auto* autoBox = new QCheckBox(QObject::tr("Auto"), panel);
+    autoBox->setChecked(true);
+    auto* loS = new QDoubleSpinBox(panel);
+    auto* hiS = new QDoubleSpinBox(panel);
+    for (QDoubleSpinBox* sb : {loS, hiS}) {
+        sb->setRange(spec.min, spec.max);
+        sb->setDecimals(spec.decimals);
+        // One update per finished number rather than one per keystroke: a limit
+        // change re-samples the plot (the cross-section re-renders its whole field
+        // raster), which is far too much work to do against a half-typed number.
+        sb->setKeyboardTracking(false);
+        sb->setEnabled(false);
+    }
+    panel->addRow(spec.name, autoBox);
+    panel->addRow(spec.bounds, spinPair(panel, loS, hiS));
+
+    QObject::connect(autoBox, &QCheckBox::toggled, view, [view, loS, hiS, setAuto](bool on) {
+        (view->*setAuto)(on);
+        loS->setEnabled(!on);
+        hiS->setEnabled(!on);
+    });
+    auto pushManual = [view, loS, hiS, autoBox, setLimits] {
+        if (!autoBox->isChecked()) (view->*setLimits)(loS->value(), hiS->value());
+    };
+    QObject::connect(loS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
+    QObject::connect(hiS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
+    QObject::connect(view, changed, view, [loS, hiS](double lo, double hi) {
+        const QSignalBlocker b1(loS), b2(hiS);
+        loS->setValue(lo);
+        hiS->setValue(hi);
+    });
+}
+
 // Group icon-only toggles into one horizontal strip instead of giving each its
 // own form row: the glyphs are square and self-describing, so a row reads as a
 // single set of options and keeps the panel short.
@@ -1144,6 +1210,12 @@ ViewFrame* MainWindow::wrapCrossSection(CrossSectionView* view) {
     connect(heights, &QCheckBox::toggled, view, &CrossSectionView::setHeightContoursEnabled);
     panel->addRow(toggleStrip(panel, {heights}));
 
+    addAxisLimitControls(panel, view, {tr("Pressure (hPa)"), tr("Top / bottom"), 0.01, 1200.0, 2},
+                         &CrossSectionView::setPressureAuto, &CrossSectionView::setPressureLimits,
+                         &CrossSectionView::pressureRangeChanged);
+    addAxisLimitControls(panel, view, {tr("Distance (km)"), tr("Start / end"), 0.0, 100000.0, 1},
+                         &CrossSectionView::setDistanceAuto, &CrossSectionView::setDistanceLimits,
+                         &CrossSectionView::distanceRangeChanged);
     return new ViewFrame(view, panel);
 }
 
@@ -1167,6 +1239,20 @@ ViewFrame* MainWindow::wrapSkewT(SkewTView* view) {
     connect(heights, &QCheckBox::toggled, view, &SkewTView::setHeightLabelsEnabled);
     panel->addRow(toggleStrip(panel, {heights}));
 
+    addAxisLimitControls(panel, view, {tr("Pressure (hPa)"), tr("Top / bottom"), 0.01, 1200.0, 2},
+                         &SkewTView::setPressureAuto, &SkewTView::setPressureLimits,
+                         &SkewTView::pressureRangeChanged);
+    addAxisLimitControls(panel, view, {tr("Temperature (°C)"), tr("Min / max"), -150.0, 150.0, 1},
+                         &SkewTView::setTemperatureAuto, &SkewTView::setTemperatureLimits,
+                         &SkewTView::temperatureRangeChanged);
+    return new ViewFrame(view, panel);
+}
+
+ViewFrame* MainWindow::wrapTimeSeries(TimeSeriesView* view) {
+    auto* panel = new ControlPanel(tr("Time series"));
+    addAxisLimitControls(panel, view, {tr("Value"), tr("Min / max"), -1e12, 1e12, 3},
+                         &TimeSeriesView::setValueAuto, &TimeSeriesView::setValueLimits,
+                         &TimeSeriesView::valueRangeChanged);
     return new ViewFrame(view, panel);
 }
 
@@ -1483,12 +1569,18 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
             }
             auto* view = new TimeSeriesView;
             view->setCoordPrecision(currentCoordPrecision());
+            // The frame first, then the data. The panel learns the fitted axis from
+            // the view announcing it, and the series is the one analysis whose data
+            // is already in hand when its view is built — the cross-section and the
+            // sounding are still extracting at this point, so they cannot lose the
+            // announcement the way this would if the order were the other way round.
+            ViewFrame* frame = wrapTimeSeries(view);
             view->setSeries(ts, QString::fromStdString(var));
             view->setCurrentIndex(timeIdx_);
-            addAnalysisDock(view, tr("Series: %1").arg(QString::fromStdString(var)));
+            addAnalysisDock(frame, tr("Series: %1").arg(QString::fromStdString(var)));
             statusBar()->clearMessage();
             // The series spans all times; just move its marker with the slider.
-            analyses_.push_back({view,
+            analyses_.push_back({frame,
                                  [this, v = QPointer<TimeSeriesView>(view)]() {
                                      if (v) v->setCurrentIndex(timeIdx_);
                                  },
