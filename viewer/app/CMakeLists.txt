@@ -9,6 +9,8 @@ add_library(met_app STATIC
     controlpanel.cpp
     extractions.cpp
     extractions.h
+    figureexport.cpp
+    figureexport.h
     controlpanel.h
     mainwindow.cpp
     mainwindow.h
