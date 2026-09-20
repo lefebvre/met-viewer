@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <utility>
+#include <vector>
 
 #include <QColor>
 #include <QImage>
+#include <QRect>
 #include <Qt>
 
 #include "viewer/analysis/sounding.h"
@@ -31,6 +34,43 @@ analysis::Sounding makeSounding(bool withWind, bool withHeights = false) {
     return s;
 }
 
+// Temperature (K) of a standard-atmosphere-like profile at `p` hPa, interpolated in
+// log-p between anchors. The stratospheric warming above 30 hPa is the part that
+// matters here: it is what carries the top of the trace toward the right-hand edge of
+// a skewed diagram, and so what the frame has to make room for.
+float stdAtmTempK(double p) {
+    static const std::vector<std::pair<double, double>> anchors = {
+        {1000.0, 15.0}, {500.0, -21.0}, {300.0, -45.0}, {200.0, -56.5}, {100.0, -56.5},
+        {50.0, -54.0},  {30.0, -47.0},  {10.0, -35.0},  {3.0, -24.0},   {1.0, -3.0}};
+    for (std::size_t i = 0; i + 1 < anchors.size(); ++i) {
+        const auto& hi = anchors[i];  // the higher pressure of the pair
+        const auto& lo = anchors[i + 1];
+        if (p <= hi.first && p >= lo.first) {
+            const double f =
+                (std::log(p) - std::log(hi.first)) / (std::log(lo.first) - std::log(hi.first));
+            return static_cast<float>(273.15 + std::lerp(hi.second, lo.second, f));
+        }
+    }
+    return static_cast<float>(273.15 + anchors.back().second);
+}
+
+// A sounding reaching up to `topHpa`, on the pressure levels a GFS or ERA5 file
+// carries. Above 100 hPa is the range the conventional skew-T frame cannot show.
+analysis::Sounding makeDeepSounding(double topHpa) {
+    analysis::Sounding s;
+    s.point = {45.0, 10.0};
+    for (double p : {1.0, 2.0, 3.0, 5.0, 7.0, 10.0, 20.0, 30.0, 50.0, 70.0, 100.0, 150.0, 200.0,
+                     300.0, 500.0, 700.0, 850.0, 1000.0}) {  // top -> bottom, as Sounding wants
+        if (p < topHpa) continue;
+        analysis::SoundingLevel lvl;
+        lvl.pressure = p;
+        lvl.tempK = stdAtmTempK(p);
+        lvl.dewpointK = lvl.tempK - 5.0f;
+        s.levels.push_back(lvl);
+    }
+    return s;
+}
+
 // Count dark pixels in the right-hand wind gutter, above the bottom axis labels.
 int gutterInk(const QImage& img) {
     int ink = 0;
@@ -46,6 +86,19 @@ int heightStripInk(const QImage& img) {
     for (int y = 30; y < 520; ++y)
         for (int x = 48; x < 110; ++x)
             if (qGray(img.pixel(x, y)) < 200) ++ink;
+    return ink;
+}
+
+// Pixels of the red temperature trace inside `area`. The trace is the only strongly
+// red ink on the diagram: the isotherms behind it are drawn at alpha 120 and wash out
+// to pink over the background.
+int traceInk(const QImage& img, const QRect& area) {
+    int ink = 0;
+    for (int y = area.top(); y <= area.bottom(); ++y)
+        for (int x = area.left(); x <= area.right(); ++x) {
+            const QColor c = img.pixelColor(x, y);
+            if (c.red() > 150 && c.green() < 110 && c.blue() < 110) ++ink;
+        }
     return ink;
 }
 
@@ -116,4 +169,36 @@ TEST(SkewTView, ReportsHeightAvailabilityPerSounding) {
     view.setSounding(makeSounding(false, /*withHeights=*/false));
     EXPECT_FALSE(available);
     EXPECT_FALSE(view.hasHeights());
+}
+
+// The diagram used to stop at 100 hPa whatever the data did, so a sounding carrying
+// stratospheric levels simply lost them: the levels were in the sounding, and the
+// clip in paintEvent dropped them.
+TEST(SkewTView, DrawsLevelsAboveTheConventionalHundredHectopascalTop) {
+    app::SkewTView view;
+    view.resize(500, 560);
+
+    // The top fifth of the plot rect (margins 44/58/24/30), which a 100 hPa axis can
+    // put no data in. Its left corner holds the legend, whose temperature swatch is
+    // the same red as the trace, so the strip starts clear of it.
+    const QRect upper(184, 24, 442 - 184, 100);
+
+    const QImage shallow = renderSkewT(view, makeSounding(false));
+    EXPECT_EQ(traceInk(shallow, upper), 0);
+
+    const QImage deep = renderSkewT(view, makeDeepSounding(1.0));
+    EXPECT_GT(traceInk(deep, upper), 20);
+}
+
+// Making room upward is only half of it: the skew shifts the top of the frame right by
+// most of the plot width, so an extended axis will push a warm stratopause off the
+// right-hand edge unless the frame relaxes. Trace ink piled against that edge is what
+// the clipping looks like.
+TEST(SkewTView, ExtendedFrameHoldsTheWholeTraceInsideThePlot) {
+    app::SkewTView view;
+    view.resize(500, 560);
+
+    const QImage deep = renderSkewT(view, makeDeepSounding(1.0));
+    ASSERT_GT(traceInk(deep, QRect(44, 24, 398, 506)), 200) << "no trace drawn at all";
+    EXPECT_EQ(traceInk(deep, QRect(439, 24, 3, 506)), 0);
 }

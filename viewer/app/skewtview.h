@@ -54,6 +54,12 @@ private:
     struct Layout {
         QRectF rect;
         bool valid = false;
+        // The frame the diagram is drawn in. These are the conventional skew-T values
+        // unless the sounding reaches above 100 hPa and needs a taller, less skewed
+        // frame to show every level; see fitFrame in the .cpp for when they move.
+        double pTop = 100.0, pBot = 1050.0;  // pressure axis (hPa)
+        double tMin = -40.0, tMax = 40.0;    // temperature window at the bottom (°C)
+        double skew = 0.85;                  // px of x per px of height
 
         [[nodiscard]] double yOfP(double press) const;         // pressure (hPa) -> y
         [[nodiscard]] double pOfY(double y) const;             // y -> pressure (hPa)
