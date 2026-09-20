@@ -24,20 +24,24 @@ namespace {
 
 constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
 
-// The unit choice is process-wide state persisted in QSettings, so a test that
-// changes it has to put it back or the next one inherits it.
+// The unit choice is process-wide state persisted in QSettings. Clearing it on
+// both ends rather than only on the way out keeps a test from reading what an
+// earlier one wrote, including one that died before it could clean up.
 class ScopedUnitSettings {
 public:
-    ScopedUnitSettings() = default;
-    ~ScopedUnitSettings() {
+    ScopedUnitSettings() { clear(); }
+    ~ScopedUnitSettings() { clear(); }
+    ScopedUnitSettings(const ScopedUnitSettings&) = delete;
+    ScopedUnitSettings& operator=(const ScopedUnitSettings&) = delete;
+
+private:
+    static void clear() {
         QSettings s;
         s.beginGroup(QStringLiteral("pointProfile"));
         s.remove(QStringLiteral("columnUnits"));
         s.remove(QStringLiteral("units"));
         s.endGroup();
     }
-    ScopedUnitSettings(const ScopedUnitSettings&) = delete;
-    ScopedUnitSettings& operator=(const ScopedUnitSettings&) = delete;
 };
 
 // Spin the event loop until `predicate` holds or `ms` elapses. The project does
