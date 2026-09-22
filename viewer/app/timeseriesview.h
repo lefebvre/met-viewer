@@ -17,6 +17,7 @@ public:
     explicit TimeSeriesView(QWidget* parent = nullptr);
     void setSeries(const analysis::TimeSeries& ts, const QString& varName);
     void setCurrentIndex(int index);  // highlight the current time step (marker)
+    [[nodiscard]] const analysis::TimeSeries& series() const { return ts_; }
     // Decimals for the point's lat/lon in the title, from the source grid spacing
     // (see app::coordPrecision). The series carries no grid, so MainWindow sets it.
     void setCoordPrecision(int digits) { coordPrec_ = digits; }

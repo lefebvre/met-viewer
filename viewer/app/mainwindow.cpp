@@ -57,7 +57,9 @@
 #include "viewer/app/controlpanel.h"
 #include "viewer/app/crosssectionview.h"
 #include "viewer/app/datasetdock.h"
+#include "viewer/app/exportname.h"
 #include "viewer/app/extractions.h"
+#include "viewer/app/figureexport.h"
 #include "viewer/app/hoverreadout.h"
 #include "viewer/app/icons.h"
 #include "viewer/app/jobmonitor.h"
@@ -1087,6 +1089,10 @@ ViewFrame* MainWindow::buildPlotFrame() {
     });
     panel->addRow(icons_->iconLabel("wind-barb", 20, tr("Wind")), plotWindCombo_);
 
+    installFigureExport(
+        plot_, [this] { return plotFigureStem(plot_->field()); },
+        [this] { return Figure{plot_, &plot_->colormap(), plot_->units()}; },
+        [this](const QString& msg) { statusBar()->showMessage(msg, 6000); });
     return new ViewFrame(plot_, panel);
 }
 
@@ -1216,6 +1222,10 @@ ViewFrame* MainWindow::wrapCrossSection(CrossSectionView* view) {
     addAxisLimitControls(panel, view, {tr("Distance (km)"), tr("Start / end"), 0.0, 100000.0, 1},
                          &CrossSectionView::setDistanceAuto, &CrossSectionView::setDistanceLimits,
                          &CrossSectionView::distanceRangeChanged);
+    installFigureExport(
+        view, [view] { return sectionFigureStem(view->section()); },
+        [view] { return Figure{view, &view->colormap(), view->units()}; },
+        [this](const QString& msg) { statusBar()->showMessage(msg, 6000); });
     return new ViewFrame(view, panel);
 }
 
@@ -1245,6 +1255,10 @@ ViewFrame* MainWindow::wrapSkewT(SkewTView* view) {
     addAxisLimitControls(panel, view, {tr("Temperature (°C)"), tr("Min / max"), -150.0, 150.0, 1},
                          &SkewTView::setTemperatureAuto, &SkewTView::setTemperatureLimits,
                          &SkewTView::temperatureRangeChanged);
+    installFigureExport(
+        view, [view] { return soundingFigureStem(view->sounding()); },
+        [view] { return Figure{view}; },
+        [this](const QString& msg) { statusBar()->showMessage(msg, 6000); });
     return new ViewFrame(view, panel);
 }
 
@@ -1253,6 +1267,9 @@ ViewFrame* MainWindow::wrapTimeSeries(TimeSeriesView* view) {
     addAxisLimitControls(panel, view, {tr("Value"), tr("Min / max"), -1e12, 1e12, 3},
                          &TimeSeriesView::setValueAuto, &TimeSeriesView::setValueLimits,
                          &TimeSeriesView::valueRangeChanged);
+    installFigureExport(
+        view, [view] { return seriesFigureStem(view->series()); }, [view] { return Figure{view}; },
+        [this](const QString& msg) { statusBar()->showMessage(msg, 6000); });
     return new ViewFrame(view, panel);
 }
 

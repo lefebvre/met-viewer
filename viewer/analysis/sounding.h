@@ -21,8 +21,13 @@ struct SoundingLevel {
     float heightGpm = std::numeric_limits<float>::quiet_NaN();  // geopotential height
 };
 
+// `validTime` and `member` are those of the temperature fields the levels were
+// read from, so a sounding still says which time it shows after the time slider
+// has moved on to another.
 struct Sounding {
     core::LatLon point;
+    core::TimePoint validTime{};
+    int member = -1;                    // ensemble member, -1 = deterministic
     std::vector<SoundingLevel> levels;  // sorted top (low p) to bottom (high p)
 };
 

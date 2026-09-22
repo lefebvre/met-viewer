@@ -77,6 +77,9 @@ CrossSection extractCrossSection(const std::vector<std::pair<double, core::Field
     cs.distancesKm = path.distancesKm;
     if (!levelStack.front().second.meta.units.empty())
         cs.units = levelStack.front().second.meta.units;
+    cs.varName = levelStack.front().second.meta.varName;
+    cs.validTime = levelStack.front().second.meta.validTime;
+    cs.member = levelStack.front().second.meta.member;
 
     // Sort by pressure ascending (top of atmosphere first) so the pressure axis
     // is monotonic regardless of the caller's ordering — the view's log-p level
@@ -124,6 +127,9 @@ CrossSection extractCrossSectionModelLevels(
     cs.distancesKm = path.distancesKm;
     if (!levelStack.front().second.meta.units.empty())
         cs.units = levelStack.front().second.meta.units;
+    cs.varName = levelStack.front().second.meta.varName;
+    cs.validTime = levelStack.front().second.meta.validTime;
+    cs.member = levelStack.front().second.meta.member;
 
     // Sample value and pressure per level (keyed by model-level index), building a
     // per-column pressure profile, then order levels by their mean pressure.
