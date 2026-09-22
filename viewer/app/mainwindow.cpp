@@ -57,6 +57,7 @@
 #include "viewer/app/controlpanel.h"
 #include "viewer/app/crosssectionview.h"
 #include "viewer/app/datasetdock.h"
+#include "viewer/app/exportname.h"
 #include "viewer/app/extractions.h"
 #include "viewer/app/figureexport.h"
 #include "viewer/app/hoverreadout.h"
@@ -1089,7 +1090,7 @@ ViewFrame* MainWindow::buildPlotFrame() {
     panel->addRow(icons_->iconLabel("wind-barb", 20, tr("Wind")), plotWindCombo_);
 
     installFigureExport(
-        plot_, QStringLiteral("plot"),
+        plot_, [this] { return plotFigureStem(plot_->field()); },
         [this] { return Figure{plot_, &plot_->colormap(), plot_->units()}; },
         [this](const QString& msg) { statusBar()->showMessage(msg, 6000); });
     return new ViewFrame(plot_, panel);
@@ -1222,7 +1223,7 @@ ViewFrame* MainWindow::wrapCrossSection(CrossSectionView* view) {
                          &CrossSectionView::setDistanceAuto, &CrossSectionView::setDistanceLimits,
                          &CrossSectionView::distanceRangeChanged);
     installFigureExport(
-        view, QStringLiteral("cross-section"),
+        view, [view] { return sectionFigureStem(view->section()); },
         [view] { return Figure{view, &view->colormap(), view->units()}; },
         [this](const QString& msg) { statusBar()->showMessage(msg, 6000); });
     return new ViewFrame(view, panel);
@@ -1255,7 +1256,8 @@ ViewFrame* MainWindow::wrapSkewT(SkewTView* view) {
                          &SkewTView::setTemperatureAuto, &SkewTView::setTemperatureLimits,
                          &SkewTView::temperatureRangeChanged);
     installFigureExport(
-        view, QStringLiteral("skewt"), [view] { return Figure{view}; },
+        view, [view] { return soundingFigureStem(view->sounding()); },
+        [view] { return Figure{view}; },
         [this](const QString& msg) { statusBar()->showMessage(msg, 6000); });
     return new ViewFrame(view, panel);
 }
@@ -1266,7 +1268,7 @@ ViewFrame* MainWindow::wrapTimeSeries(TimeSeriesView* view) {
                          &TimeSeriesView::setValueAuto, &TimeSeriesView::setValueLimits,
                          &TimeSeriesView::valueRangeChanged);
     installFigureExport(
-        view, QStringLiteral("time-series"), [view] { return Figure{view}; },
+        view, [view] { return seriesFigureStem(view->series()); }, [view] { return Figure{view}; },
         [this](const QString& msg) { statusBar()->showMessage(msg, 6000); });
     return new ViewFrame(view, panel);
 }

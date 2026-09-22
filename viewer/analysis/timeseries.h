@@ -10,9 +10,13 @@
 
 namespace met::analysis {
 
-// A time series of a variable at a fixed point.
+// A time series of a variable at a fixed point. `varName`, `level` and `member`
+// are those of the fields it was sampled from.
 struct TimeSeries {
     core::LatLon point;
+    std::string varName;
+    core::VerticalLevel level;
+    int member = -1;  // ensemble member, -1 = deterministic
     std::vector<core::TimePoint> times;
     std::vector<float> values;  // NaN where off-grid/missing
     std::string units;

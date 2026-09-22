@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cmath>
 
 #include <QAction>
 #include <QActionGroup>
@@ -30,6 +29,7 @@
 #include <QVBoxLayout>
 #include <QVariant>
 
+#include "viewer/app/exportname.h"
 #include "viewer/app/pointprofilemodel.h"
 #include "viewer/core/timeaxis.h"
 #include "viewer/core/units.h"
@@ -522,12 +522,7 @@ void PointProfileDock::copyToClipboard() {
 }
 
 QString PointProfileDock::suggestedCsvName() const {
-    const core::LatLon p = point();
-    QString name = QStringLiteral("profile_%1%2_%3%4")
-                       .arg(QString::number(std::abs(p.lat), 'f', 2),
-                            p.lat >= 0.0 ? QStringLiteral("N") : QStringLiteral("S"),
-                            QString::number(std::abs(p.lon), 'f', 2),
-                            p.lon >= 0.0 ? QStringLiteral("E") : QStringLiteral("W"));
+    QString name = QStringLiteral("profile_") + latLonTag(point());
     // The profile's own valid time, not whatever the map is showing when the file
     // is written: the export is a snapshot of the table. Basic format here
     // because a file name cannot carry the ":" of the extended one the CSV body

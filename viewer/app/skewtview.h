@@ -25,6 +25,7 @@ public:
     // Whether the sounding carries geopotential height at all, i.e. whether the
     // labels toggle has anything to show.
     [[nodiscard]] bool hasHeights() const;
+    [[nodiscard]] const analysis::Sounding& sounding() const { return s_; }
     // Decimals for the point's lat/lon in the title, from the source grid spacing
     // (see app::coordPrecision). The sounding carries no grid, so MainWindow sets it.
     void setCoordPrecision(int digits) { coordPrec_ = digits; }

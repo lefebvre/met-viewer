@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <cmath>
+#include <string>
 
 #include "viewer/analysis/crosssection.h"
 #include "viewer/analysis/sounding.h"
@@ -222,4 +223,67 @@ TEST(TimeSeries, SamplesEachTime) {
     EXPECT_NEAR(ts.values[1] - ts.values[0], 1.0f, 1e-3);
     EXPECT_NEAR(ts.values[2] - ts.values[1], 1.0f, 1e-3);
     EXPECT_EQ(ts.units, "K");
+}
+
+// A view that follows the time slider can still be showing the previous time while
+// the next one extracts, so what it shows has to come from the result, not from the
+// slider. Each result carries the time, member and variable of the fields it was
+// read from.
+namespace {
+core::Field2D stampedField(double bias, const std::string& var, core::TimePoint t, int member) {
+    core::Field2D f = linearField(bias);
+    f.meta.varName = var;
+    f.meta.validTime = t;
+    f.meta.member = member;
+    f.meta.level = {core::VerticalLevel::Type::PressureHPa, 500.0};
+    return f;
+}
+}  // namespace
+
+TEST(Sounding, CarriesTheTimeAndMemberOfItsFields) {
+    const core::TimePoint t{core::timegmUtc(2024, 5, 1, 12, 0, 0)};
+    const std::vector<std::pair<double, core::Field2D>> temp = {
+        {500.0, stampedField(0.0, "t", t, 3)}, {850.0, stampedField(21.0, "t", t, 3)}};
+
+    const auto s = analysis::extractSounding(temp, {}, {64, 12});
+    EXPECT_EQ(s.validTime.epochSeconds, t.epochSeconds);
+    EXPECT_EQ(s.member, 3);
+}
+
+TEST(Sounding, ModelLevelsCarryTheTimeAndMemberOfTheirFields) {
+    const core::TimePoint t{core::timegmUtc(1948, 1, 1, 6, 0, 0)};
+    core::Field2D p1 = linearField(0.0), p2 = linearField(0.0);
+    p1.meta.units = p2.meta.units = "hPa";
+    p1.values.assign(p1.values.size(), 500.0f);
+    p2.values.assign(p2.values.size(), 850.0f);
+    const std::vector<std::pair<double, core::Field2D>> presStack = {{1.0, p1}, {2.0, p2}};
+    const std::vector<std::pair<double, core::Field2D>> temp = {
+        {1.0, stampedField(0.0, "t", t, -1)}, {2.0, stampedField(21.0, "t", t, -1)}};
+
+    const auto s = analysis::extractSoundingModelLevels(temp, presStack, {}, {64, 12});
+    EXPECT_EQ(s.validTime.epochSeconds, t.epochSeconds);
+    EXPECT_EQ(s.member, -1);
+}
+
+TEST(CrossSection, CarriesTheVariableTimeAndMemberOfItsFields) {
+    const core::TimePoint t{core::timegmUtc(2024, 5, 1, 12, 0, 0)};
+    const std::vector<std::pair<double, core::Field2D>> stack = {
+        {500.0, stampedField(0.0, "gh", t, 7)}, {850.0, stampedField(21.0, "gh", t, 7)}};
+
+    const auto cs = analysis::extractCrossSection(stack, {{68, 4}, {58, 26}}, 16);
+    EXPECT_EQ(cs.varName, "gh");
+    EXPECT_EQ(cs.validTime.epochSeconds, t.epochSeconds);
+    EXPECT_EQ(cs.member, 7);
+}
+
+TEST(TimeSeries, CarriesTheVariableLevelAndMemberOfItsFields) {
+    const std::vector<std::pair<core::TimePoint, core::Field2D>> stack = {
+        {core::TimePoint{100}, stampedField(0.0, "t", core::TimePoint{100}, 2)},
+        {core::TimePoint{200}, stampedField(1.0, "t", core::TimePoint{200}, 2)}};
+
+    const auto ts = analysis::extractTimeSeries(stack, {64, 12});
+    EXPECT_EQ(ts.varName, "t");
+    EXPECT_EQ(ts.level.type, core::VerticalLevel::Type::PressureHPa);
+    EXPECT_DOUBLE_EQ(ts.level.value, 500.0);
+    EXPECT_EQ(ts.member, 2);
 }

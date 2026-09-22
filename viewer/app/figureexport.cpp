@@ -94,17 +94,19 @@ bool exportFigureToPdf(const Figure& fig, const QString& path, QString* error) {
     return true;
 }
 
-void installFigureExport(QWidget* canvas, const QString& stem, std::function<Figure()> figureFor,
+void installFigureExport(QWidget* canvas, std::function<QString()> stemFor,
+                         std::function<Figure()> figureFor,
                          std::function<void(const QString&)> onError) {
     canvas->setContextMenuPolicy(Qt::CustomContextMenu);
     QObject::connect(canvas, &QWidget::customContextMenuRequested, canvas,
-                     [canvas, stem, figureFor = std::move(figureFor),
+                     [canvas, stemFor = std::move(stemFor), figureFor = std::move(figureFor),
                       onError = std::move(onError)](const QPoint& pos) {
                          QMenu menu(canvas);
                          QAction* act = menu.addAction(QObject::tr("Export Figure…"));
                          if (menu.exec(canvas->mapToGlobal(pos)) != act) return;
                          const QString path = QFileDialog::getSaveFileName(
-                             canvas, QObject::tr("Export figure"), stem + QStringLiteral(".pdf"),
+                             canvas, QObject::tr("Export figure"),
+                             stemFor() + QStringLiteral(".pdf"),
                              QObject::tr("PDF documents (*.pdf);;All files (*)"));
                          if (path.isEmpty()) return;
                          QString error;

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -17,7 +18,13 @@ namespace met::analysis {
 // no height field. It is genuinely two-dimensional even for isobaric data — a
 // pressure surface tilts along the path — which is why it is a field to contour
 // rather than a second tick set on the vertical axis.
+//
+// `varName`, `validTime` and `member` are those of the fields the section was read
+// from, so it still says what it shows after the time slider has moved on.
 struct CrossSection {
+    std::string varName;
+    core::TimePoint validTime{};
+    int member = -1;                             // ensemble member, -1 = deterministic
     std::vector<core::LatLon> points;            // path sample points
     std::vector<double> distancesKm;             // cumulative distance along the path
     std::vector<std::vector<double>> pressures;  // [level][sample], hPa

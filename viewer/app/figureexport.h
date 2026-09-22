@@ -40,12 +40,14 @@ struct Figure {
 
 // Give `canvas` a right-click "Export Figure…" menu.
 //
-// `figureFor` is asked for the figure at the moment the menu is used, not when it
-// is installed: the colormap and its range move while a view is open, and the page
-// has to carry what the canvas is showing right then. Failures go to `onError`,
-// which is how the caller gets them in front of the user (a status bar, typically) —
-// this has no view of its own to report into.
-void installFigureExport(QWidget* canvas, const QString& stem, std::function<Figure()> figureFor,
+// `figureFor` and `stemFor` (the save dialog's default name, without ".pdf") are
+// asked at the moment the menu is used, not when it is installed: the colormap, its
+// range and the time shown all move while a view is open, and both the page and its
+// name have to carry what the canvas is showing right then. Failures go to
+// `onError`, which is how the caller gets them in front of the user (a status bar,
+// typically) — this has no view of its own to report into.
+void installFigureExport(QWidget* canvas, std::function<QString()> stemFor,
+                         std::function<Figure()> figureFor,
                          std::function<void(const QString&)> onError);
 
 }  // namespace met::app

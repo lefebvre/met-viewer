@@ -308,6 +308,7 @@ Field2D GribDataset::readField(const FieldKey& key) {
     field.meta.standardName = getString(raw, "cfName");
     field.meta.level = mapLevel(raw);
     field.meta.validTime = mapTime(raw);
+    field.meta.member = key.member;
     // resolutionAndComponentFlags bit 3 (0x08): u/v are grid-relative.
     if (hasKey(raw, "resolutionAndComponentFlags"))
         field.meta.gridRelativeWind = (getLong(raw, "resolutionAndComponentFlags") & 0x08) != 0;

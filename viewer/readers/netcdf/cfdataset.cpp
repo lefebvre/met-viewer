@@ -441,6 +441,7 @@ core::Field2D CfDataset::readField(const core::FieldKey& key) {
     field.meta.standardName = info.standardName;
     field.meta.level = key.level;
     field.meta.validTime = key.validTime;
+    field.meta.member = key.member;
     return field;
 }
 
