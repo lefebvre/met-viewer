@@ -11,6 +11,7 @@
 #include <QWidget>
 
 #include "viewer/analysis/crosssection.h"
+#include "viewer/app/axisrange.h"
 #include "viewer/render/colormap.h"
 
 class QPainter;
@@ -41,6 +42,15 @@ public:
     // Decimals for the cursor readout's lat/lon, from the source grid spacing
     // (see app::coordPrecision). The section carries no grid, so MainWindow sets it.
     void setCoordPrecision(int digits) { coordPrec_ = digits; }
+
+    // Axis limits. Automatic fits the section: the full pressure extent of the
+    // data, and the whole path. Pinned limits are a window onto it — they move the
+    // sampling, not just the labels, so the field is re-rendered over the narrower
+    // span at full resolution rather than being magnified.
+    void setPressureAuto(bool on);
+    void setPressureLimits(double topHpa, double bottomHpa);  // top < bottom, hPa
+    void setDistanceAuto(bool on);
+    void setDistanceLimits(double loKm, double hiKm);
     [[nodiscard]] const render::Colormap& colormap() const { return cmap_; }
     [[nodiscard]] QString units() const { return QString::fromStdString(cs_.units); }
 
@@ -60,11 +70,16 @@ signals:
     // height. The control panel is built before the first section arrives, so the
     // height-contour toggle learns whether it has anything to show from here.
     void heightsAvailableChanged(bool available);
+    // The axes actually drawn, fitted or pinned, so the control panel's spin boxes
+    // can follow the fit while they are not the ones driving it.
+    void pressureRangeChanged(double topHpa, double bottomHpa);
+    void distanceRangeChanged(double loKm, double hiKm);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void applyAutoRange();  // scan cs_ values -> min_/max_ + cmap_ range
@@ -74,10 +89,31 @@ private:
     // image and the hovered value can never disagree about the mapping.
     struct Layout {
         QRectF rect;
-        double pTop = 0, pBot = 0;  // hPa
+        double pTop = 0, pBot = 0;  // hPa, the drawn pressure window
+        double kmLo = 0, kmHi = 0;  // the drawn window along the path
+        double totalKm = 0;         // the whole path, which kmLo/kmHi index into
+        int ns = 0;                 // path samples
         bool valid = false;
+
+        // The two mappings the image, the contours, the axis labels and the cursor
+        // readout all have to agree on. They were written out four times before
+        // there were limits to get wrong; once the axes can be narrowed, a copy
+        // that disagrees is a readout that lies about what is under the cursor.
+        [[nodiscard]] double pressAt(double fy) const;   // 0 at the top .. 1 at the bottom
+        [[nodiscard]] double columnAt(double fx) const;  // 0 at the left .. 1 at the right
     };
     [[nodiscard]] Layout layout() const;
+    void publishRanges();  // re-read the drawn axes and emit them, if they moved
+
+    // The axis window a cached raster was built for. Limits move the sampling, so a
+    // raster kept across a limit change would be the wrong data under the right axes.
+    struct AxisKey {
+        double pTop = 0, pBot = 0, kmLo = 0, kmHi = 0;
+        bool operator==(const AxisKey&) const = default;
+    };
+    [[nodiscard]] static AxisKey axisKey(const Layout& lay) {
+        return {lay.pTop, lay.pBot, lay.kmLo, lay.kmHi};
+    }
     void rebuildImage(const Layout& lay);  // regenerate img_ if its key changed
 
     // One height isopleth: its value (gpm) and the line segments that draw it, in
@@ -93,6 +129,10 @@ private:
     render::Colormap cmap_ = render::Colormap::builtin("turbo");
     double min_ = 0, max_ = 1;
     bool autoRange_ = true;
+    AxisRange press_, dist_;
+    // The axes last emitted, so an unchanged pair is not re-announced into a spin
+    // box the user may be part-way through typing in.
+    double sentPTop_ = 0, sentPBot_ = 0, sentKmLo_ = 0, sentKmHi_ = 0;
     int coordPrec_ = 2;  // lat/lon decimals in the cursor readout
 
     // Rendered field cache. Each pixel costs a log-p scan of every level, so
@@ -102,6 +142,7 @@ private:
     quint64 imgSection_ = 0;  // cs_ generation the image was built from
     QString imgCmap_;
     double imgMin_ = 0, imgMax_ = 0;
+    AxisKey imgAxes_;
     quint64 sectionSeq_ = 0;  // bumped by setSection()
 
     // Height isopleths, cached on the same terms as img_ and for the same reason:
@@ -110,7 +151,8 @@ private:
     bool showHeights_ = true;
     std::vector<HeightContour> heightContours_;
     QSize contourSize_;
-    quint64 contourSection_ = 0;  // 0 = nothing built (sectionSeq_ starts at 1)
+    quint64 contourSection_ = 0;
+    AxisKey contourAxes_;  // 0 = nothing built (sectionSeq_ starts at 1)
 
     // Cursor readout state; cleared when the cursor leaves.
     bool hoverActive_ = false;
