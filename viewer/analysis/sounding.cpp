@@ -35,6 +35,13 @@ float heightAt(const core::Field2D* zfield, core::LatLon point) {
     if (std::isnan(raw)) return std::numeric_limits<float>::quiet_NaN();
     return static_cast<float>(core::toGeopotentialMeters(raw, zfield->meta.units));
 }
+
+// Take the time and member from the fields the sounding is read from.
+void stampFrom(const std::vector<std::pair<double, core::Field2D>>& tStack, Sounding& s) {
+    if (tStack.empty()) return;
+    s.validTime = tStack.front().second.meta.validTime;
+    s.member = tStack.front().second.meta.member;
+}
 }  // namespace
 
 float dewpointFromRH(float tempK, float rhPercent) {
@@ -71,6 +78,7 @@ Sounding extractSounding(const std::vector<std::pair<double, core::Field2D>>& tS
                          const std::vector<std::pair<double, core::Field2D>>& zStack) {
     Sounding s;
     s.point = point;
+    stampFrom(tStack, s);
     for (const auto& [pressure, tfield] : tStack) {
         SoundingLevel lvl;
         lvl.pressure = pressure;
@@ -109,6 +117,7 @@ Sounding extractSoundingModelLevels(const std::vector<std::pair<double, core::Fi
                                     const std::vector<std::pair<double, core::Field2D>>& zStack) {
     Sounding s;
     s.point = point;
+    stampFrom(tStack, s);
     for (const auto& [levelKey, tfield] : tStack) {
         const core::Field2D* pfield = fieldAtKey(presStack, levelKey);
         if (!pfield) continue;  // no pressure at this level -> cannot place it

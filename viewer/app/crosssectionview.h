@@ -39,6 +39,7 @@ public:
     // Whether the section carries geopotential height at all, i.e. whether the
     // contour toggle has anything to show.
     [[nodiscard]] bool hasHeights() const { return !cs_.heights.empty(); }
+    [[nodiscard]] const analysis::CrossSection& section() const { return cs_; }
     // Decimals for the cursor readout's lat/lon, from the source grid spacing
     // (see app::coordPrecision). The section carries no grid, so MainWindow sets it.
     void setCoordPrecision(int digits) { coordPrec_ = digits; }

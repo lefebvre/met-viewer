@@ -30,6 +30,7 @@ struct FieldMeta {
     std::string standardName;  // CF standard_name if known ("air_temperature")
     VerticalLevel level;
     TimePoint validTime;
+    int member = -1;  // ensemble member, -1 = deterministic
     // For wind components: true when u/v are resolved along the grid axes
     // (grid-relative) rather than east/north (earth-relative).
     bool gridRelativeWind = false;

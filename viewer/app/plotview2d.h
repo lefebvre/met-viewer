@@ -47,6 +47,7 @@ public:
 
     [[nodiscard]] const render::Colormap& colormap() const { return cmap_; }
     [[nodiscard]] bool hasField() const { return field_ != nullptr; }
+    [[nodiscard]] const core::Field2D* field() const { return field_.get(); }
     [[nodiscard]] QString units() const {
         return field_ ? QString::fromStdString(field_->meta.units) : QString();
     }
