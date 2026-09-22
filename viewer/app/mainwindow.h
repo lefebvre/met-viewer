@@ -51,6 +51,7 @@ class CrossSectionView;
 class JobMonitor;
 class PointProfileDock;
 class SkewTView;
+class TimeSeriesView;
 class ViewFrame;
 
 class MainWindow : public QMainWindow {
@@ -154,6 +155,9 @@ private:
     ViewFrame* wrapCrossSection(CrossSectionView* view);
     // Wrap a skew-T view in a ViewFrame with its display toggles.
     ViewFrame* wrapSkewT(SkewTView* view);
+    // Wrap a time series in a ViewFrame. It carries no colormap and no toggles, so
+    // it went straight into a dock until it had axis limits to offer.
+    ViewFrame* wrapTimeSeries(TimeSeriesView* view);
     // Add an analysis view as a closable, dockable, floatable panel in the view
     // area (drag its tab to split/tab/float). Deleted on close. Returns the dock.
     QDockWidget* addAnalysisDock(QWidget* frame, const QString& title);

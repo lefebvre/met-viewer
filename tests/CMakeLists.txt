@@ -66,6 +66,7 @@ gtest_discover_tests(met_tests DISCOVERY_MODE PRE_TEST)
 find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets Gui)
 add_executable(met_app_tests
     test_main_app.cpp
+    app/axislimits_test.cpp
     app/fieldcache_test.cpp
     app/hoverreadout_test.cpp
     app/plotview2d_test.cpp

@@ -6,6 +6,7 @@
 #include <QWidget>
 
 #include "viewer/analysis/sounding.h"
+#include "viewer/app/axisrange.h"
 
 namespace met::app {
 
@@ -28,6 +29,18 @@ public:
     // (see app::coordPrecision). The sounding carries no grid, so MainWindow sets it.
     void setCoordPrecision(int digits) { coordPrec_ = digits; }
 
+    // Axis limits. Each axis fits the sounding until it is pinned.
+    //
+    // A pinned axis is taken literally: the frame is exactly what was asked for, at
+    // the conventional skew, and whatever falls outside it is clipped. That is the
+    // difference between asking for limits and asking the diagram to make room —
+    // the fit relaxes the skew to keep every level on the page (see fitFrame), and
+    // doing that to a frame someone chose would be answering a different question.
+    void setPressureAuto(bool on);
+    void setPressureLimits(double topHpa, double bottomHpa);  // top < bottom, hPa
+    void setTemperatureAuto(bool on);
+    void setTemperatureLimits(double minC, double maxC);
+
     // The cursor readout currently on screen, one string per badge line; empty when
     // no readout is showing. Lets callers (and tests) read what the user is seeing.
     [[nodiscard]] QStringList hoverText() const {
@@ -41,11 +54,19 @@ signals:
     // height. The control panel is built before the first sounding arrives, so the
     // height-labels toggle learns whether it has anything to show from here.
     void heightsAvailableChanged(bool available);
+    // The frame actually drawn, fitted or pinned. Lets the control panel's spin
+    // boxes track the fit while they are not the ones driving it, so handing an
+    // axis from automatic to manual does not move the diagram.
+    void pressureRangeChanged(double topHpa, double bottomHpa);
+    void temperatureRangeChanged(double minC, double maxC);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void leaveEvent(QEvent* event) override;
+    // The fit depends on the plot's width and height — the skew is defined in pixels
+    // per pixel — so a resize can move an automatic frame and the spin boxes with it.
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     // The diagram area and its skew-T log-p transform, in both directions. Shared
@@ -67,8 +88,15 @@ private:
         [[nodiscard]] double tOfX(double x, double y) const;   // x at row y -> temp (°C)
     };
     [[nodiscard]] Layout layout() const;
+    // Re-read the drawn frame and emit it, if it moved since the last time.
+    void publishFrame();
 
     analysis::Sounding s_;
+    AxisRange press_, temp_;
+    // The frame last emitted, so an unchanged one is not re-announced: the control
+    // panel writes the spin boxes from these signals, and a spin box that rewrites
+    // itself mid-edit is a spin box the user cannot type in.
+    double sentPTop_ = 0, sentPBot_ = 0, sentTMin_ = 0, sentTMax_ = 0;
     int coordPrec_ = 2;  // lat/lon decimals in the title
     bool showHeights_ = true;
 
