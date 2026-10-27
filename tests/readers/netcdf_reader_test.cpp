@@ -249,6 +249,25 @@ TEST(CfReader, VariableWithAnUnselectableDimensionIsSkipped) {
     EXPECT_EQ(ds->catalog().find("w"), nullptr);
 }
 
+// CMIP names its hybrid sigma-pressure axis `lev`, a name that elsewhere means
+// pressure. The standard_name decides, so the levels are hybrid coefficients rather
+// than "0.99 hPa".
+TEST(CfReader, StandardNameOutranksTheAxisName) {
+    NcBuilder nc("cmip_lev");
+    const int time = nc.coord("time", {0.0}, "days since 2000-01-01");
+    const int lev = nc.coord("lev", {0.99, 0.5, 0.1}, "1");
+    nc.text(nc.varid("lev"), "standard_name", "atmosphere_hybrid_sigma_pressure_coordinate");
+    const int lat = nc.coord("lat", {20.0, 10.0, 0.0}, "degrees_north");
+    const int lon = nc.coord("lon", {0.0, 10.0, 20.0, 30.0}, "degrees_east");
+    nc.put(nc.var("ta", NC_FLOAT, {time, lev, lat, lon}), digits({1, 3, kNLat, kNLon}));
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto* v = ds->catalog().find("ta");
+    ASSERT_NE(v, nullptr);
+    ASSERT_EQ(v->levels.size(), 3u);
+    for (const auto& lvl : v->levels) EXPECT_EQ(lvl.type, core::VerticalLevel::Type::Hybrid);
+}
+
 // ERA5 ensembles carry a `number` dimension. Each member is its own record, and
 // reading one returns that member's slab rather than member 0 labelled
 // deterministic.
