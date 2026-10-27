@@ -326,6 +326,7 @@ analysis::PointProfile computePointProfile(readers::IDataset& ds, core::TimePoin
         analysis::fillProfilePressures(p, presStack);
     }
 
+    analysis::orderGroundFirst(p);
     return p;
 }
 

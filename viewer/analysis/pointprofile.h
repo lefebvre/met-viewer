@@ -123,11 +123,16 @@ struct ProfileColumnChoices {
     const std::vector<core::VariableEntry>& vars);
 
 // Build the empty table: one row per level, one cell per column, every cell
-// NoRecord until filled. Rows come out **ground first** -- highest pressure and
-// lowest altitude at the top. That is the opposite of Sounding, which is ordered
-// top-down to match how a skew-T is drawn; a table of site conditions is read
-// from the ground up, so the default follows the reader rather than the sibling
-// struct. The view can sort it either way.
+// NoRecord until filled. Rows are meant to read **ground first** -- highest
+// pressure and lowest altitude at the top. That is the opposite of Sounding,
+// which is ordered top-down to match how a skew-T is drawn; a table of site
+// conditions is read from the ground up, so the default follows the reader
+// rather than the sibling struct. The view can sort it either way.
+//
+// On an isobaric or height axis the level value alone fixes that order. On a
+// native model axis it does not: ECMWF numbers its hybrid levels from the top
+// (137 is the lowest) and WRF/HRRR from the ground (1 is the lowest), so this
+// order is provisional there until orderGroundFirst() has the pressures.
 [[nodiscard]] PointProfile makeProfile(const std::vector<core::VerticalLevel>& levels,
                                        const std::vector<ProfileColumn>& columns,
                                        core::LatLon point);
@@ -152,5 +157,13 @@ void fillProfileHeights(PointProfile& p, const ProfileStack& z, const std::strin
 // Fill the pressure coordinate from a `pres` stack, for native model levels.
 // On an isobaric axis makeProfile() has already set it from the level value.
 void fillProfilePressures(PointProfile& p, const ProfileStack& pres);
+
+// Put the rows ground first by a physical coordinate, once one is filled in:
+// pressure descending when every row has one, else MSL height ascending when
+// every row has one, else the order makeProfile() gave. Run after the fills; on
+// an HRRR native-level profile it is what turns a top-first table the right way
+// up. A coordinate missing on some rows is not used, since rows without it
+// would have no defined place.
+void orderGroundFirst(PointProfile& p);
 
 }  // namespace met::analysis

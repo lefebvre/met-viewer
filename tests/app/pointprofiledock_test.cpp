@@ -126,6 +126,28 @@ TEST(PointProfileDock, PutsTheGroundInTheFirstRow) {
     EXPECT_EQ(dock.cellText(1, 0), "500 hPa");
 }
 
+// A cell with no number goes to the bottom whichever way its column is sorted.
+// Qt compares an empty sort value with a number as unordered, so those rows used
+// to land wherever the sort left them.
+TEST(PointProfileDock, SortsCellsWithNoNumberLastInBothDirections) {
+    ScopedUnitSettings restore;
+    analysis::PointProfile p = profile();
+    analysis::ProfileLevel mid = p.levels[0];
+    mid.level = {core::VerticalLevel::Type::PressureHPa, 850.0};
+    mid.pressureHpa = 850.0;
+    mid.values = {270.0f, 15.0f};
+    p.levels.insert(p.levels.begin() + 1, mid);  // 1000 (283 K), 850 (270 K), 500 (missing)
+
+    PointProfileDock dock;
+    dock.setProfile(p);
+    dock.sortBy(3, /*ascending=*/true);
+    EXPECT_EQ(dock.cellText(0, 3), "270.00");
+    EXPECT_EQ(dock.cellText(2, 3), "—");
+    dock.sortBy(3, /*ascending=*/false);
+    EXPECT_EQ(dock.cellText(0, 3), "283.15");
+    EXPECT_EQ(dock.cellText(2, 3), "—");
+}
+
 // The three ways a cell can have no number are one blank on screen, so the
 // tooltip is where the difference has to reach the reader.
 TEST(PointProfileDock, RendersAMissingCellAsADashAndSaysWhyInItsTooltip) {
