@@ -176,3 +176,41 @@ TEST(Arl, PolarStereographicCellsMeasureSizeAtTheReferenceLatitude) {
     EXPECT_NEAR(a.lat, 60.0, 1e-6);
     EXPECT_NEAR(core::greatCircleKm(a, b), 100.0, 0.5);
 }
+
+// Every fuzzing seed must be a valid file: a seed the reader refuses only teaches
+// the mutator what an error looks like. tools/make_arl_fuzz_seeds.py writes the
+// projected/hybrid/sub-hourly and the wide-grid seeds; this keeps them honest.
+TEST(Arl, EveryFuzzSeedOpensAndDecodes) {
+    const auto corpus = std::filesystem::path(MET_FIXTURE_DIR) / ".." / "fuzz" / "corpus";
+    int seeds = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(corpus)) {
+        if (entry.path().extension() != ".arl") continue;
+        ++seeds;
+        SCOPED_TRACE(entry.path().filename().string());
+        auto ds = readers::openDataset(entry.path());
+        for (const auto& v : ds->catalog().variables())
+            for (const auto& lvl : v.levels)
+                for (const auto& t : v.times)
+                    EXPECT_GT(ds->readField(core::FieldKey{v.varName, lvl, t, -1}).width(), 0);
+    }
+    EXPECT_GE(seeds, 3);
+}
+
+// The two shapes the seeds exist to carry, checked directly.
+TEST(Arl, FuzzSeedsCarryTheShapesTheyAreFor) {
+    const auto corpus = std::filesystem::path(MET_FIXTURE_DIR) / ".." / "fuzz" / "corpus";
+
+    auto lambert = readers::openDataset(corpus / "lambert_hybrid.arl");
+    const auto* t = lambert->catalog().find("t");
+    ASSERT_NE(t, nullptr);
+    EXPECT_EQ(t->levels.front().type, core::VerticalLevel::Type::Hybrid);
+    EXPECT_EQ(t->times.size(), 2u);  // 00 and 15 minutes
+    const auto lf = lambert->readField(core::FieldKey{"t", t->levels.front(), t->times[0], -1});
+    EXPECT_TRUE(std::holds_alternative<core::ProjectedGrid>(lf.grid));
+
+    auto wide = readers::openDataset(corpus / "wide_1001x2.arl");
+    const auto& v = wide->catalog().variables().front();
+    const auto wf = wide->readField(core::FieldKey{v.varName, v.levels.front(), v.times[0], -1});
+    EXPECT_EQ(wf.width(), 1001);
+    EXPECT_EQ(wf.height(), 2);
+}
