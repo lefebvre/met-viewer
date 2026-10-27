@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "viewer/core/log.h"
+#include "viewer/core/pathutil.h"
 #include "viewer/readers/arl/arlreader.h"
 #include "viewer/readers/grib/gribreader.h"
 #include "viewer/readers/multidataset.h"
@@ -30,7 +31,7 @@ const std::vector<std::unique_ptr<IFormatReader>>& registry() {
 
 std::vector<std::byte> readHead(const std::filesystem::path& path, std::size_t n) {
     std::ifstream in(path, std::ios::binary);
-    if (!in) throw ReadError("cannot open file: " + path.string());
+    if (!in) throw ReadError("cannot open file: " + core::pathToUtf8(path));
     std::vector<std::byte> buf(n);
     in.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(n));
     buf.resize(static_cast<std::size_t>(in.gcount()));
@@ -40,22 +41,22 @@ std::vector<std::byte> readHead(const std::filesystem::path& path, std::size_t n
 }  // namespace
 
 std::unique_ptr<IDataset> openDataset(const std::filesystem::path& path) {
-    if (!std::filesystem::exists(path)) throw ReadError("no such file: " + path.string());
+    if (!std::filesystem::exists(path)) throw ReadError("no such file: " + core::pathToUtf8(path));
 
     const std::vector<std::byte> head = readHead(path, 4096);
 
     const IFormatReader* best = nullptr;
     int bestScore = 0;
     for (const auto& reader : registry()) {
-        const int score = reader->probe(head, path.string());
+        const int score = reader->probe(head, core::pathToUtf8(path));
         if (score > bestScore) {
             bestScore = score;
             best = reader.get();
         }
     }
 
-    if (!best) throw ReadError("no reader recognizes file: " + path.string());
-    core::logf(core::LogLevel::Debug, "{}: opening as {} (probe score {})", path.string(),
+    if (!best) throw ReadError("no reader recognizes file: " + core::pathToUtf8(path));
+    core::logf(core::LogLevel::Debug, "{}: opening as {} (probe score {})", core::pathToUtf8(path),
                best->name(), bestScore);
     return best->open(path);
 }
@@ -70,7 +71,7 @@ OpenResult openDatasets(const std::vector<std::filesystem::path>& paths) {
         try {
             sources.emplace_back(std::shared_ptr<IDataset>(openDataset(path)));
         } catch (const std::exception& e) {
-            core::logf(core::LogLevel::Warn, "skipping {}: {}", path.string(), e.what());
+            core::logf(core::LogLevel::Warn, "skipping {}: {}", core::pathToUtf8(path), e.what());
             result.skipped.push_back(path);
         }
     }

@@ -17,6 +17,7 @@
 #include <netcdf.h>
 
 #include "viewer/core/log.h"
+#include "viewer/core/pathutil.h"
 #include "viewer/core/timeaxis.h"
 
 namespace met::readers::netcdf {
@@ -236,7 +237,7 @@ TimeUnits parseTimeUnits(const std::string& units, const std::string& calendar,
     if (pos == std::string::npos) {
         MET_LOG_WARN("{}: time units '{}' are not '<unit> since <date>'; reading them as "
                      "seconds since 1970-01-01",
-                     path.string(), units);
+                     core::pathToUtf8(path), units);
         return tu;
     }
 
@@ -260,9 +261,9 @@ TimeUnits parseTimeUnits(const std::string& units, const std::string& calendar,
         MET_LOG_WARN("{}: time is counted in '{}', which CF defines as a fixed UDUNITS "
                      "interval, not a calendar {}; times may not fall on the dates the "
                      "producer intended",
-                     path.string(), unitWord, unitWord[0] == 'm' ? "month" : "year");
+                     core::pathToUtf8(path), unitWord, unitWord[0] == 'm' ? "month" : "year");
     } else {
-        MET_LOG_WARN("{}: unrecognized time unit '{}'; reading it as seconds", path.string(),
+        MET_LOG_WARN("{}: unrecognized time unit '{}'; reading it as seconds", core::pathToUtf8(path),
                      unitWord);
     }
 
@@ -271,7 +272,7 @@ TimeUnits parseTimeUnits(const std::string& units, const std::string& calendar,
     if (parseReference(units.substr(pos + 7), f) < 3) {
         MET_LOG_WARN("{}: cannot read the reference date in time units '{}'; using "
                      "1970-01-01",
-                     path.string(), units);
+                     core::pathToUtf8(path), units);
         f[0] = 1970, f[1] = 1, f[2] = 1, f[3] = f[4] = f[5] = 0;
     }
     tu.y = f[0], tu.mo = f[1], tu.d = f[2], tu.hh = f[3], tu.mm = f[4], tu.ss = f[5];
@@ -288,7 +289,7 @@ TimeUnits parseTimeUnits(const std::string& units, const std::string& calendar,
     } else {
         MET_LOG_WARN("{}: calendar '{}' is not supported; times are converted as if it "
                      "were Gregorian and may be off by days",
-                     path.string(), calendar);
+                     core::pathToUtf8(path), calendar);
     }
     return tu;
 }
@@ -352,12 +353,12 @@ void checkUniform(const std::vector<double>& axis, const char* what,
     for (double v : axis)
         if (!std::isfinite(v))
             throw ReadError(std::string("NetCDF: ") + what + " coordinate holds a value that is "
-                            "not a number: " + path.string());
+                            "not a number: " + core::pathToUtf8(path));
     if (axis.size() < 3) return;  // two points just define the spacing
     const double step = axis[1] - axis[0];
     if (step == 0.0)
         throw ReadError(std::string("NetCDF: ") + what + " axis has a zero step in " +
-                        path.string());
+                        core::pathToUtf8(path));
     const double tol = std::abs(step) * 0.01;
     const double mean = (axis.back() - axis.front()) / static_cast<double>(axis.size() - 1);
     for (std::size_t i = 1; i < axis.size(); ++i) {
@@ -365,11 +366,11 @@ void checkUniform(const std::vector<double>& axis, const char* what,
         const double drift = axis[i] - (axis.front() + mean * static_cast<double>(i));
         if (std::abs(d - step) > tol || std::abs(drift) > tol) {
             MET_LOG_ERROR("{}: {} axis is not evenly spaced (step {} at index {}, expected {})",
-                          path.string(), what, d, i, step);
+                          core::pathToUtf8(path), what, d, i, step);
             throw ReadError(std::string("NetCDF: ") + what +
                             " axis is not evenly spaced; irregular and Gaussian grids are "
                             "not supported: " +
-                            path.string());
+                            core::pathToUtf8(path));
         }
     }
 }
@@ -383,8 +384,9 @@ std::mutex& CfDataset::libraryMutex() {
 
 CfDataset::CfDataset(std::filesystem::path path) : path_(std::move(path)) {
     std::lock_guard<std::mutex> lock(libraryMutex());
-    if (nc_open(path_.string().c_str(), NC_NOWRITE, &ncid_) != NC_NOERR)
-        throw ReadError("NetCDF: cannot open " + path_.string());
+    // Not UTF-8: on Windows netcdf-c reads the path in the system code page.
+    if (nc_open(core::pathForCodePageApi(path_).c_str(), NC_NOWRITE, &ncid_) != NC_NOERR)
+        throw ReadError("NetCDF: cannot open " + core::pathToUtf8(path_));
     try {
         scan();
     } catch (...) {
@@ -507,7 +509,7 @@ void CfDataset::scan() {
         if (!std::isfinite(levels[i])) {
             levelUsable[i] = false;
             MET_LOG_WARN("{}: vertical coordinate {} is not a number; skipping that level",
-                         path_.string(), i);
+                         core::pathToUtf8(path_), i);
         }
 
     // Valid times. One whose value is a fill or otherwise unusable is skipped
@@ -525,7 +527,7 @@ void CfDataset::scan() {
             times.push_back(validTime(tu, raw[i]));
             if (!times.back())
                 MET_LOG_WARN("{}: time {} ({}) is not a usable value; skipping that time",
-                             path_.string(), i, raw[i]);
+                             core::pathToUtf8(path_), i, raw[i]);
         }
     }
 
@@ -597,7 +599,7 @@ void CfDataset::scan() {
         if (!unselectable.empty()) {
             MET_LOG_WARN("{}: skipping '{}': its dimension '{}' is not a time, vertical or "
                          "ensemble axis, so no single slab of it can be shown",
-                         path_.string(), nm, unselectable);
+                         core::pathToUtf8(path_), nm, unselectable);
             continue;
         }
 

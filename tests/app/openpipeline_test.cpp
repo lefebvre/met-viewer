@@ -105,3 +105,13 @@ TEST(OpenBatch, EmptyRequestYieldsEmptyBatch) {
     EXPECT_TRUE(batch.skipped.isEmpty());
     EXPECT_TRUE(batch.grids.empty());
 }
+
+// A file chosen in the dialog under a non-ASCII name must reach the readers as
+// the same file. The UTF-8 bytes of toStdString() were read in the ANSI code page
+// on Windows, so C:\Users\José\era5.nc came back as "no such file".
+TEST(PathsToOpen, KeepsANonAsciiFileNameIntact) {
+    const QString name = QString::fromUtf8("data/donn\xC3\xA9" "es/\xE6\x97\xA5\xE6\x9C\xAC.nc");
+    const auto out = app::pathsToOpen(QStringList{name}, {}, /*replace=*/true);
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(QString::fromStdU16String(out.front().u16string()), name);
+}

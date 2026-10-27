@@ -708,7 +708,7 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
     // Recent files stays a pool of individually re-openable files; only record when a
     // single file was opened so a folder/multi-open doesn't flood the 10-entry list.
     if (batch.opened.size() == 1)
-        addRecentFile(QString::fromStdString(batch.opened.front().first.string()));
+        addRecentFile(QString::fromStdU16String(batch.opened.front().first.u16string()));
 
     // Restore the prior field (add) or show the first available one (replace/no prior).
     const auto& vars = dataset_->catalog().variables();
@@ -791,7 +791,7 @@ void MainWindow::updatePointProfileAvailability() {
         QString sources;
         for (const std::filesystem::path& source : loadedPaths_) {
             if (!sources.isEmpty()) sources += QStringLiteral(", ");
-            sources += QString::fromStdString(source.filename().string());
+            sources += QString::fromStdU16String(source.filename().u16string());
         }
         pointProfileDock_->setContext(
             sources,

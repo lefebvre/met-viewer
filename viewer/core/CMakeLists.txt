@@ -6,6 +6,7 @@ add_library(met_core STATIC
     field.cpp
     grid.cpp
     log.cpp
+    pathutil.cpp
     timeaxis.cpp
     catalog.cpp
     units.cpp

@@ -5,6 +5,7 @@
 #include <set>
 
 #include "viewer/core/log.h"
+#include "viewer/core/pathutil.h"
 #include "viewer/readers/detect.h"
 
 namespace met::app {
@@ -42,7 +43,10 @@ std::vector<std::filesystem::path> pathsToOpen(
     std::vector<std::filesystem::path> out;
     for (const QString& p : requested) {
         if (p.isEmpty()) continue;
-        std::filesystem::path fp(p.toStdString());
+        // UTF-16 to path is exact on every platform. toStdString() is UTF-8, which
+        // path's narrow constructor reads in the ANSI code page on Windows, so a
+        // file under C:\Users\José came back as "no such file".
+        std::filesystem::path fp(p.toStdU16String());
         if (existing.count(fp) || !seen.insert(fp).second) continue;
         out.push_back(std::move(fp));
     }
@@ -63,8 +67,8 @@ OpenBatch openBatch(const std::vector<std::filesystem::path>& paths, JobProgress
         } catch (const std::exception& e) {
             // Keep the reason (e.g. "no reader recognizes file") so the skipped list
             // tells the user why, not just which.
-            MET_LOG_WARN("could not open {}: {}", path.string(), e.what());
-            batch.skipped << (QString::fromStdString(path.filename().string()) + ": " +
+            MET_LOG_WARN("could not open {}: {}", core::pathToUtf8(path), e.what());
+            batch.skipped << (QString::fromStdU16String(path.filename().u16string()) + ": " +
                               QString::fromUtf8(e.what()));
         }
         if (progress) progress->done.fetch_add(1, std::memory_order_relaxed);
