@@ -5,6 +5,7 @@
 #include <vector>
 
 #include <QAbstractTableModel>
+#include <QSortFilterProxyModel>
 #include <QString>
 
 #include "viewer/analysis/pointprofile.h"
@@ -103,6 +104,19 @@ private:
 
     analysis::PointProfile profile_;
     std::map<std::string, std::string> unitChoice_;
+};
+
+// Sorts on PointProfileModel::kSortRole with cells that have no number last,
+// whichever way the column is sorted. QSortFilterProxyModel compares an empty
+// QVariant with a number as unordered, so those rows used to land wherever the
+// sort left them -- at the top of the default pressure-descending order, for one.
+class PointProfileSortProxy : public QSortFilterProxyModel {
+    Q_OBJECT
+public:
+    explicit PointProfileSortProxy(QObject* parent = nullptr);
+
+protected:
+    [[nodiscard]] bool lessThan(const QModelIndex& left, const QModelIndex& right) const override;
 };
 
 }  // namespace met::app

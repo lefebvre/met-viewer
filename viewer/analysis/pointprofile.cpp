@@ -225,4 +225,23 @@ void fillProfilePressures(PointProfile& p, const ProfileStack& pres) {
     }
 }
 
+void orderGroundFirst(PointProfile& p) {
+    const bool allPressures = std::all_of(p.levels.begin(), p.levels.end(), [](const auto& r) {
+        return r.pressureStatus == CellStatus::Ok && std::isfinite(r.pressureHpa);
+    });
+    if (allPressures) {
+        std::stable_sort(p.levels.begin(), p.levels.end(), [](const auto& a, const auto& b) {
+            return a.pressureHpa > b.pressureHpa;
+        });
+        return;
+    }
+    const bool allHeights = std::all_of(p.levels.begin(), p.levels.end(), [](const auto& r) {
+        return r.heightStatus == CellStatus::Ok && std::isfinite(r.heightGpm);
+    });
+    if (allHeights)
+        std::stable_sort(p.levels.begin(), p.levels.end(), [](const auto& a, const auto& b) {
+            return a.heightGpm < b.heightGpm;
+        });
+}
+
 }  // namespace met::analysis

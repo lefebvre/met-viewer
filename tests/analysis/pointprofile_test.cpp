@@ -154,10 +154,41 @@ TEST(FillProfilePressures, TakesEachRowsPressureFromThePresFieldOnANativeAxis) {
     EXPECT_EQ(p.levels[0].pressureStatus, CellStatus::NoRecord);
 
     fillProfilePressures(p, pres);
-    // Ground first means the higher-index hybrid level leads.
+    // Before the pressures are known the order is the provisional one by level
+    // index, higher index first (ECMWF's convention).
     EXPECT_DOUBLE_EQ(p.levels[0].pressureHpa, 850.0);
     EXPECT_DOUBLE_EQ(p.levels[1].pressureHpa, 950.0);
     EXPECT_EQ(p.levels[0].pressureStatus, CellStatus::Ok);
+}
+
+// HRRR numbers its native levels from the ground, so ordering by index put the
+// table top-first. Once the pressures are in, the rows go ground first by them.
+TEST(OrderGroundFirst, UsesThePressuresOnANativeAxisWhateverTheNumbering) {
+    const core::VerticalLevel m1{core::VerticalLevel::Type::Hybrid, 1.0};
+    const core::VerticalLevel m2{core::VerticalLevel::Type::Hybrid, 2.0};
+    const core::VerticalLevel m3{core::VerticalLevel::Type::Hybrid, 3.0};
+    const ProfileStack pres = {{1.0, uniformField(95000.0f, "Pa")},
+                               {2.0, uniformField(85000.0f, "Pa")},
+                               {3.0, uniformField(70000.0f, "Pa")}};
+    PointProfile p = makeProfile({m1, m2, m3}, {}, kInside);
+    fillProfilePressures(p, pres);
+    orderGroundFirst(p);
+    ASSERT_EQ(p.levels.size(), 3u);
+    EXPECT_DOUBLE_EQ(p.levels[0].pressureHpa, 950.0);
+    EXPECT_DOUBLE_EQ(p.levels[1].pressureHpa, 850.0);
+    EXPECT_DOUBLE_EQ(p.levels[2].pressureHpa, 700.0);
+    EXPECT_DOUBLE_EQ(p.levels[0].level.value, 1.0);
+}
+
+// A coordinate missing on some rows gives those rows no defined place, so it is
+// not used to reorder; the provisional order stands.
+TEST(OrderGroundFirst, LeavesTheOrderAloneWhenNoCoordinateCoversEveryRow) {
+    const core::VerticalLevel m1{core::VerticalLevel::Type::Hybrid, 1.0};
+    const core::VerticalLevel m2{core::VerticalLevel::Type::Hybrid, 2.0};
+    PointProfile p = makeProfile({m1, m2}, {}, kInside);
+    fillProfilePressures(p, {{1.0, uniformField(95000.0f, "Pa")}});
+    orderGroundFirst(p);
+    EXPECT_DOUBLE_EQ(p.levels[0].level.value, 2.0);
 }
 
 TEST(FillProfileWind, DerivesSpeedAndDirectionWithNorthAtZeroAndTheDirectionItBlowsFrom) {

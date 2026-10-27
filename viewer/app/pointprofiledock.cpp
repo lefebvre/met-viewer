@@ -78,11 +78,8 @@ const QString kLegacyUnitSettingsGroup = QStringLiteral("pointProfile/units");
 
 PointProfileDock::PointProfileDock(QWidget* parent) : QWidget(parent) {
     model_ = new PointProfileModel(this);
-    proxy_ = new QSortFilterProxyModel(this);
+    proxy_ = new PointProfileSortProxy(this);
     proxy_->setSourceModel(model_);
-    // Sort on the raw number, never the displayed string: 1000 would otherwise
-    // sort before 850.
-    proxy_->setSortRole(PointProfileModel::kSortRole);
 
     table_ = new QTableView(this);
     table_->setModel(proxy_);

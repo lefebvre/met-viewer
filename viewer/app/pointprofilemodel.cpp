@@ -220,3 +220,24 @@ QVariant PointProfileModel::headerData(int section, Qt::Orientation orientation,
 }
 
 }  // namespace met::app
+
+namespace met::app {
+
+PointProfileSortProxy::PointProfileSortProxy(QObject* parent) : QSortFilterProxyModel(parent) {
+    // Sort on the raw number, never the displayed string: 1000 would otherwise
+    // sort before 850.
+    setSortRole(PointProfileModel::kSortRole);
+}
+
+bool PointProfileSortProxy::lessThan(const QModelIndex& left, const QModelIndex& right) const {
+    const bool l = left.data(sortRole()).isValid();
+    const bool r = right.data(sortRole()).isValid();
+    if (l && r) return QSortFilterProxyModel::lessThan(left, right);
+    if (l == r) return false;
+    // Exactly one is missing. A descending sort reverses the comparison, so the
+    // missing one has to compare greater when ascending and smaller when
+    // descending to end up last both times.
+    return sortOrder() == Qt::AscendingOrder ? l : r;
+}
+
+}  // namespace met::app
