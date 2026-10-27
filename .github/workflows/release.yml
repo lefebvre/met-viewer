@@ -17,6 +17,11 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # A dry run from any branch: every build, test, package and smoke-test step
+  # runs and the installers are uploaded as workflow artifacts, but no release is
+  # created. The packaging steps only ever run here, so this is how a change to
+  # them is tried before it meets a real tag.
+  workflow_dispatch:
 
 concurrency:
   group: release-${{ github.ref }}
@@ -29,7 +34,8 @@ permissions:
 
 jobs:
   # Runs first, in seconds, so a version mismatch fails here rather than after an
-  # hour of building. The AppImage and the portable zip are named from the tag,
+  # hour of building. The AppImage and the portable zip are named from the tag
+  # (on a dry run, from the sources),
   # while CPack names the Windows installer from project(VERSION) and the app
   # reports that same version via --version and its tile-server User-Agent. Those
   # are only consistent if the tag agrees with the sources, so that is checked
@@ -38,22 +44,28 @@ jobs:
   version-check:
     name: Version consistency
     runs-on: ubuntu-latest
+    # The version every asset is named with, for the jobs below. On a tag it is
+    # the tag's; on a dry run there is no tag, so it is the sources'.
+    outputs:
+      version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Tag must match project(VERSION) and vcpkg.json
+        id: check
         run: |
           set -euo pipefail
-          tag="${GITHUB_REF_NAME#v}"
           cmake_ver=$(sed -nE 's/^project\([^)]*VERSION[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)
           vcpkg_ver=$(python3 -c "import json; print(json.load(open('vcpkg.json'))['version'])")
-          echo "tag:            $tag"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then tag="${GITHUB_REF_NAME#v}"; else tag="$cmake_ver"; fi
+          echo "tag:            $tag ($GITHUB_REF_TYPE $GITHUB_REF_NAME)"
           echo "CMakeLists.txt: $cmake_ver"
           echo "vcpkg.json:     $vcpkg_ver"
           if [ -z "$cmake_ver" ]; then
             echo "::error::could not parse project(VERSION) from CMakeLists.txt"
             exit 1
           fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
           if [ "$tag" != "$cmake_ver" ] || [ "$tag" != "$vcpkg_ver" ]; then
             echo "::error::version mismatch — release assets would carry different" \
                  "version numbers and the app's --version would disagree with its" \
@@ -168,7 +180,7 @@ jobs:
         # version in the URL and the digest beside it.
         run: |
           set -euxo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ needs.version-check.outputs.version }}"
           curl -fsSLO https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
           curl -fsSLO https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage
           sha256sum -c - <<'EOF'
@@ -282,10 +294,10 @@ jobs:
       # Zipped here rather than left to upload-artifact, because the release job
       # *downloads* artifacts before attaching them — an uploaded directory would
       # arrive expanded, and a release asset has to be a single file.
-      # Named from the tag, matching the AppImage.
+      # Named from the version-check job's version, matching the AppImage.
       - name: Zip portable build
         run: |
-          $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          $version = "${{ needs.version-check.outputs.version }}"
           Compress-Archive -Path dist/met-viewer `
                            -DestinationPath "met-viewer-$version-windows-x64.zip"
 
@@ -301,6 +313,9 @@ jobs:
   release:
     name: Draft GitHub Release
     needs: [linux, windows]
+    # Never on a dry run: action-gh-release would create a draft named after the
+    # branch, and the installers are already downloadable from the run itself.
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
       contents: write   # the only job that needs it
