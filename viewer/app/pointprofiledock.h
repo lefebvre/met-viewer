@@ -54,7 +54,14 @@ public:
     [[nodiscard]] core::LatLon point() const;
     [[nodiscard]] bool hasPoint() const { return hasPoint_; }
 
+    // The columns the current dataset can show of the user's selection.
     [[nodiscard]] std::vector<std::string> selectedColumns() const;
+    // The user's selection whole, including columns this dataset lacks, which come
+    // back when a file that has them is opened. This is what persists.
+    [[nodiscard]] const std::vector<std::string>& preferredColumns() const { return preferred_; }
+    // Whether a selection exists yet, chosen or restored -- as opposed to the
+    // empty one before any dataset has offered columns.
+    [[nodiscard]] bool hasSelection() const { return selectionInitialized_; }
     void setSelectedColumns(const std::vector<std::string>& ids);
 
     // Show one column in `unit` instead of its native unit. `columnKey` is the
@@ -124,10 +131,12 @@ signals:
     void columnsChanged();
 
 private:
-    // Asks for a path and writes it, reporting any failure in the panel. Kept
+    // Asks for a path and writes it, reporting any failure in a dialog. Kept
     // beside the table rather than pushed up to the window, which the standing
     // review asks not to grow further.
     void onExport();
+    // The ids from `ids` the current dataset offers, in order.
+    [[nodiscard]] std::vector<std::string> offeredFrom(const std::vector<std::string>& ids) const;
     void rebuildColumnMenu();
     void rebuildUnitMenu();
     void applyUnitChoice();
@@ -153,7 +162,8 @@ private:
     QTimer* debounce_ = nullptr;
 
     analysis::ProfileColumnChoices choices_;
-    std::vector<std::string> selected_;
+    std::vector<std::string> preferred_;  // the user's selection, whole
+    std::vector<std::string> selected_;   // what of it this dataset offers
     // Display unit per column key, as PointProfileModel::setUnitChoice takes it.
     std::map<std::string, std::string> unitChoice_;
     QString datasetLabel_;

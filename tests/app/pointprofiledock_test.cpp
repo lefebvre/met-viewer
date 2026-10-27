@@ -9,6 +9,7 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QItemSelectionModel>
+#include <QMenu>
 #include <QSettings>
 #include <QTableView>
 #include <QTemporaryDir>
@@ -533,4 +534,52 @@ TEST(PointProfileDock, NamesAProfileValidAtTheEpochItself) {
     dock.setProfile(p);
 
     EXPECT_EQ(dock.suggestedCsvName(), "profile_63.00N_10.00E_19700101T0000Z.csv");
+}
+
+// A column the current file lacks is hidden, not forgotten: opening a file
+// without humidity used to drop it from the selection for good, and the next
+// file that had it came up without it.
+TEST(PointProfileDock, RemembersAColumnThroughAFileThatLacksIt) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    dock.setChoices(choices());
+    dock.setSelectedColumns({"t", "r"});
+
+    analysis::ProfileColumnChoices leaner = choices();
+    leaner.available = {{"t", "Temperature", "K", analysis::ProfileColumnKind::Variable}};
+    dock.setChoices(leaner);
+    EXPECT_EQ(dock.selectedColumns(), (std::vector<std::string>{"t"}));
+    EXPECT_EQ(dock.preferredColumns(), (std::vector<std::string>{"t", "r"}));
+
+    dock.setChoices(choices());
+    EXPECT_EQ(dock.selectedColumns(), (std::vector<std::string>{"t", "r"}));
+}
+
+// Rebuilding the Units menu, which happens on every profile, must not leave the
+// previous rebuild's submenus behind.
+TEST(PointProfileDock, RebuildingTheUnitsMenuDoesNotAccumulateSubmenus) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    for (int i = 0; i < 20; ++i) dock.setProfile(profile());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    const int after20 = static_cast<int>(dock.findChildren<QMenu*>().size());
+    for (int i = 0; i < 20; ++i) dock.setProfile(profile());
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    EXPECT_EQ(static_cast<int>(dock.findChildren<QMenu*>().size()), after20);
+}
+
+// Ctrl+C copies from the table only when the table (or something in it) has
+// focus; window-wide, it replaced the clipboard from anywhere in the app.
+TEST(PointProfileDock, ScopesItsCopyShortcutToTheTable) {
+    ScopedUnitSettings restore;
+    PointProfileDock dock;
+    auto* table = dock.findChild<QTableView*>();
+    ASSERT_TRUE(table != nullptr);
+    bool found = false;
+    for (QAction* a : table->actions())
+        if (a->shortcut() == QKeySequence(QKeySequence::Copy)) {
+            found = true;
+            EXPECT_EQ(a->shortcutContext(), Qt::WidgetWithChildrenShortcut);
+        }
+    EXPECT_TRUE(found);
 }
