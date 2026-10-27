@@ -23,8 +23,14 @@ std::string lower(std::string s) {
 // Normalize common spellings to a canonical token.
 std::string canon(const std::string& units) {
     const std::string u = lower(units);
-    if (u == "k" || u == "kelvin") return "K";
-    if (u == "c" || u == "cel" || u == "celsius" || u == "degc" || u == "deg_c" || u == "°c")
+    if (u == "k" || u == "kelvin" || u == "degk" || u == "deg_k" || u == "degree_kelvin" ||
+        u == "degrees_kelvin")
+        return "K";
+    // "degree_Celsius" is the CF/UDUNITS spelling, so the one a CF file is most
+    // likely to carry; it and its plural were missing, and a temperature in them
+    // was taken for Kelvin.
+    if (u == "c" || u == "cel" || u == "celsius" || u == "degc" || u == "deg_c" || u == "°c" ||
+        u == "degree_celsius" || u == "degrees_celsius" || u == "degree_c" || u == "degrees_c")
         return "Cel";
     if (u == "pa" || u == "pascal") return "Pa";
     if (u == "hpa" || u == "millibar" || u == "mb" || u == "mbar") return "hPa";
@@ -37,7 +43,9 @@ std::string canon(const std::string& units) {
     if (u == "m2/s2" || u == "m**2 s**-2" || u == "m2 s-2" || u == "m^2/s^2") return "m2/s2";
     // "gpdm" is a geopotential *decametre* — the unit 500 hPa charts are drawn in.
     // It belongs with dam, not gpm: reading it as gpm is a silent factor of ten.
-    if (u == "dam" || u == "decameter" || u == "dm" || u == "gpdm") return "dam";
+    // Plain "dm" is deliberately absent: in UDUNITS and SI it is the decimetre,
+    // a hundredth of a decametre.
+    if (u == "dam" || u == "decameter" || u == "decametre" || u == "gpdm") return "dam";
     // Deliberately no "1" here: a dimensionless unit is used for mixing ratios,
     // fractional RH, land-sea masks and more, so mapping it to kg/kg would offer a
     // bogus x1000 conversion on unrelated fields.
@@ -49,6 +57,8 @@ std::string canon(const std::string& units) {
 }
 
 }  // namespace
+
+std::string canonicalUnit(const std::string& units) { return canon(units); }
 
 std::optional<double> convert(double value, const std::string& from, const std::string& to) {
     const std::string f = canon(from);

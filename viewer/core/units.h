@@ -15,6 +15,11 @@ namespace met::core {
 [[nodiscard]] std::optional<double> convert(double value, const std::string& from,
                                             const std::string& to);
 
+// The one spelling convert() works in for a unit it recognizes ("K", "Cel",
+// "hPa", "m/s", ...), or the string unchanged when it does not. For code that
+// needs to ask "is this Celsius?" without keeping its own list of spellings.
+[[nodiscard]] std::string canonicalUnit(const std::string& units);
+
 // Convert a pressure sample to hPa. Uses convert() when `units` is recognized,
 // otherwise falls back to a magnitude heuristic (values > ~2000 are assumed Pa)
 // and warns once per unrecognized unit, so a mislabelled field leaves a trace

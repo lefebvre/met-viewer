@@ -8,6 +8,8 @@
 #include <string>
 #include <variant>
 
+#include "viewer/core/units.h"
+
 namespace met::analysis {
 namespace {
 constexpr float kNaN = std::numeric_limits<float>::quiet_NaN();
@@ -102,8 +104,14 @@ float windSpeedFrom(float u, float v) {
 
 float windDirectionFrom(float u, float v) {
     if (std::isnan(u) || std::isnan(v)) return kNaN;
+    // Calm air has no direction; the convention is 0. Left to atan2, u = v = 0
+    // became atan2(-0, -0) = -π, i.e. 180° -- "from the south" -- in the field,
+    // the profile table and the CSV.
+    if (u == 0.0f && v == 0.0f) return 0.0f;
     double dir = std::atan2(-u, -v) * 180.0 / std::numbers::pi;  // direction wind comes FROM
     if (dir < 0) dir += 360.0;
+    // A tiny negative angle rounds to exactly 360 when 360 is added; north is 0.
+    if (dir >= 360.0) dir -= 360.0;
     return static_cast<float>(dir);
 }
 
@@ -139,14 +147,14 @@ std::optional<core::Field2D> asTemperatureKelvin(const core::Field2D& f) {
     };
     const std::string sn = lower(f.meta.standardName);
     const std::string vn = lower(f.meta.varName);
-    const std::string& u = f.meta.units;  // keep case: 'K' is distinct from 'k'
-    const std::string ul = lower(u);
 
     const bool nameTemp = sn == "air_temperature" || sn == "temperature" || vn == "t" ||
                           vn == "temp" || vn == "t2m" || vn == "2t" || vn == "tmp";
-    const bool kelvin = u == "K" || ul == "kelvin" || ul == "degk" || ul == "deg_k";
-    const bool celsius = ul == "c" || ul == "degc" || ul == "celsius" || ul == "degrees_celsius" ||
-                         ul == "deg_c" || u == "°C";
+    // The units module owns the spellings. A private list here once missed
+    // "degree_Celsius", so θ came out of a Celsius field read as Kelvin.
+    const std::string unit = core::canonicalUnit(f.meta.units);
+    const bool kelvin = unit == "K";
+    const bool celsius = unit == "Cel";
 
     // Reject clearly non-temperature fields (geopotential, wind, RH, pressure…).
     if (!nameTemp && !kelvin && !celsius) return std::nullopt;
