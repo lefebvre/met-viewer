@@ -4,6 +4,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <deque>
+#include <exception>
 #include <functional>
 #include <limits>
 #include <mutex>
@@ -106,10 +107,19 @@ public:
         }
         cv_.notify_all();
 
-        body(0);
+        // Workers hold pointers to `batch` and `body`, both of which live in this
+        // frame, so the wait below must happen even if chunk 0 throws.
+        std::exception_ptr error;
+        try {
+            body(0);
+        } catch (...) {
+            error = std::current_exception();
+        }
 
         std::unique_lock<std::mutex> lock(batch.mutex);
         batch.cv.wait(lock, [&batch] { return batch.remaining == 0; });
+        lock.unlock();
+        if (error) std::rethrow_exception(error);
     }
 
 private:
@@ -147,10 +157,11 @@ private:
                 // A chunk that throws still has to release its batch or the caller
                 // waits forever. Warp bodies do not throw; this is the backstop.
             }
-            {
-                std::lock_guard<std::mutex> lock(task.batch->mutex);
-                --task.batch->remaining;
-            }
+            // Notify while still holding the lock. Once `remaining` reaches zero the
+            // caller may return and destroy the batch, condition variable included;
+            // the lock is what keeps it alive until notify_one has finished with it.
+            std::lock_guard<std::mutex> lock(task.batch->mutex);
+            --task.batch->remaining;
             task.batch->cv.notify_one();
         }
     }
@@ -210,11 +221,16 @@ void warpRegular(const core::Field2D& field, const RegularLatLonGrid& g, const C
         okRow[static_cast<std::size_t>(py)] = (fy >= 0.0 && fy <= g.nlat - 1.0) ? 1 : 0;
     }
 
+    // Row pointers come from one bits() call made here, on this thread. The non-const
+    // scanLine() goes through QImage::detach(), which bumps a counter non-atomically,
+    // so calling it from every chunk at once is a data race even on an unshared image.
+    uchar* const bits = img.bits();
+    const qsizetype bytesPerLine = img.bytesPerLine();
     runRows(view.height, threads, [&](int y0, int y1) {
         for (int py = y0; py < y1; ++py) {
             if (!okRow[static_cast<std::size_t>(py)]) continue;
             const double fy = fyRow[static_cast<std::size_t>(py)];
-            auto* scan = reinterpret_cast<QRgb*>(img.scanLine(py));
+            auto* scan = reinterpret_cast<QRgb*>(bits + py * bytesPerLine);
             for (int px = 0; px < view.width; ++px) {
                 if (!okCol[static_cast<std::size_t>(px)]) continue;
                 writePixel(
@@ -248,6 +264,11 @@ void warpProjected(const core::Field2D& field, const ProjectedGrid& g, const Col
             tile::worldYToLat(view.topLeftWorldY + py + 0.5, view.zoom);
 
     const std::size_t stride = static_cast<std::size_t>(view.width);
+    // Row pointers come from one bits() call made here, on this thread. The non-const
+    // scanLine() goes through QImage::detach(), which bumps a counter non-atomically,
+    // so calling it from every chunk at once is a data race even on an unshared image.
+    uchar* const bits = img.bits();
+    const qsizetype bytesPerLine = img.bytesPerLine();
     runRows(view.height, threads, [&](int y0, int y1) {
         const std::size_t rows = static_cast<std::size_t>(y1 - y0);
         std::vector<double> a(rows * stride), b(rows * stride);  // lon/lat -> x/y in place
@@ -263,7 +284,7 @@ void warpProjected(const core::Field2D& field, const ProjectedGrid& g, const Col
 
         for (int py = y0; py < y1; ++py) {
             const std::size_t row = static_cast<std::size_t>(py - y0) * stride;
-            auto* scan = reinterpret_cast<QRgb*>(img.scanLine(py));
+            auto* scan = reinterpret_cast<QRgb*>(bits + py * bytesPerLine);
             for (int px = 0; px < view.width; ++px) {
                 const double x = a[row + static_cast<std::size_t>(px)];
                 const double y = b[row + static_cast<std::size_t>(px)];

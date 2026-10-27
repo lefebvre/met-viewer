@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <thread>
+#include <vector>
 
 #include "viewer/core/field.h"
 #include "viewer/core/grid.h"
@@ -108,6 +110,31 @@ TEST(Warp, SingleAndMultiThreadedAgree) {
     QImage b2 = warpToMercator(f, cmap, view, 1.0, 4);
     ASSERT_EQ(a.size(), b2.size());
     EXPECT_EQ(a, b2);  // identical pixels regardless of thread count
+}
+
+// Many short multi-threaded warps from several callers at once. Each batch ends
+// with a worker handing completion back to a caller whose stack frame is about to
+// unwind, which is where the pool once notified a condition variable the caller
+// had already destroyed. The pixels are checked too, but the point is to give the
+// sanitizer jobs a tight loop over that hand-off.
+TEST(Warp, ConcurrentCallersShareThePool) {
+    auto f = linearField(32, 24, 70, 0, -2, 2);
+    auto cmap = Colormap::builtin("turbo");
+    cmap.setRange(250.0, 280.0);
+    const core::BBox b = core::gridBBox(f.grid);
+    const MercatorViewport view =
+        viewportFor(b, 64, 48, tile::zoomForLonSpan(b.maxLon - b.minLon, 64));
+    const QImage reference = warpToMercator(f, cmap, view, 1.0, 1);
+
+    std::atomic<int> mismatches{0};
+    std::vector<std::thread> callers;
+    for (int c = 0; c < 4; ++c)
+        callers.emplace_back([&] {
+            for (int k = 0; k < 200; ++k)
+                if (warpToMercator(f, cmap, view, 1.0, 4) != reference) ++mismatches;
+        });
+    for (auto& t : callers) t.join();
+    EXPECT_EQ(mismatches.load(), 0);
 }
 
 TEST(Warp, ProjectedGridProducesField) {
