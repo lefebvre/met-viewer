@@ -57,6 +57,16 @@ using GridDef = std::variant<RegularLatLonGrid, ProjectedGrid>;
 // Sets GridIndex::inDomain=false when the point lies outside the grid.
 [[nodiscard]] GridIndex latlonToIndex(const GridDef& g, LatLon ll);
 
+// How far `lon` lies from the grid's column 0, measured the way the columns run
+// and wrapped to one turn: [0, 360) for an eastward grid (dlon > 0), (-360, 0]
+// for a westward one. Divided by dlon it is the fractional column. Accepts any
+// longitude convention (-170 and 190 give the same answer).
+//
+// Folding into (-180, 180] instead, as this once did, only reaches half of a
+// grid's possible span: on a 100E-300E Pacific subset everything east of 280E
+// came out as a negative column, off the grid.
+[[nodiscard]] double lonOffsetAlongGrid(const RegularLatLonGrid& g, double lon);
+
 // Inverse of latlonToIndex for integer or fractional indices.
 [[nodiscard]] LatLon indexToLatLon(const GridDef& g, double x, double y);
 

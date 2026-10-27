@@ -247,3 +247,18 @@ TEST(Warp, PerformanceTripwire) {
     ASSERT_FALSE(img.isNull());
     EXPECT_LT(ms, 750.0);
 }
+
+// The warp folds longitudes the same way the probe does, so the far side of a
+// regional grid wider than 180 degrees is drawn rather than left blank.
+TEST(Warp, RegionalGridWiderThan180DegreesIsDrawnToItsFarEdge) {
+    auto f = linearField(201, 21, 40, 100, -1, 1);  // 100E .. 300E, 40N .. 20N
+    auto cmap = Colormap::builtin("viridis");
+    cmap.setRange(250.0, 320.0);
+    const int z = 3;
+    // A viewport centred on 290E (= -70) at 30N.
+    const double cx = tile::lonToWorldX(-70.0, z);
+    const double cy = tile::latToWorldY(30.0, z);
+    const MercatorViewport view{cx - 32, cy - 32, z, 64, 64};
+    const QImage img = warpToMercator(f, cmap, view, 1.0, 1);
+    EXPECT_EQ(qAlpha(img.pixel(32, 32)), 255) << "290E is inside the grid";
+}
