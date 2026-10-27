@@ -109,9 +109,7 @@ double gridNorthAngle(const core::GridDef& grid, double i, double j) {
     const core::LatLon b = core::indexToLatLon(grid, i, j0 + step);
     if (std::isnan(a.lat) || std::isnan(b.lat)) return 0.0;  // inverse failed
 
-    double dlon = b.lon - a.lon;
-    while (dlon > 180.0) dlon -= 360.0;
-    while (dlon < -180.0) dlon += 360.0;
+    const double dlon = core::wrapLon180(b.lon - a.lon);
     const double east = dlon * std::cos(a.lat * std::numbers::pi / 180.0);
     const double north = b.lat - a.lat;
     // Bearing of grid-north east of true north.

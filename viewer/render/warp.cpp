@@ -200,10 +200,7 @@ void warpRegular(const core::Field2D& field, const RegularLatLonGrid& g, const C
     std::vector<unsigned char> okCol(static_cast<std::size_t>(view.width), 0);
     for (int px = 0; px < view.width; ++px) {
         const double lon = tile::worldXToLon(view.topLeftWorldX + px + 0.5, view.zoom);
-        double delta = lon - g.lon0;
-        while (delta > 180.0) delta -= 360.0;
-        while (delta <= -180.0) delta += 360.0;
-        double fx = g.dlon != 0.0 ? delta / g.dlon : 0.0;
+        double fx = g.dlon != 0.0 ? core::lonOffsetAlongGrid(g, lon) / g.dlon : 0.0;
         bool ok = g.globalWrapLon ? true : (fx >= 0.0 && fx <= g.nlon - 1.0);
         if (g.globalWrapLon && g.nlon > 0) {
             const double n = g.nlon;

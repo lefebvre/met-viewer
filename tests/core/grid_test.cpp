@@ -117,3 +117,43 @@ TEST(Grid, SameGridDistinguishesAlternativesAndProjections) {
     q.crs = Crs("+proj=lcc +lat_1=38.5 +lat_2=38.5 +lat_0=38.5 +lon_0=0 +R=6371200 +units=m");
     EXPECT_FALSE(sameGrid(GridDef{p}, GridDef{q}));
 }
+
+// A regional grid may span more than 180 degrees of longitude. Folding a point's
+// offset into (-180, 180] lost the far half of such a grid: on this 100E-300E
+// Pacific subset, everything east of 280E came out off the grid.
+TEST(Grid, RegionalGridWiderThan180DegreesReachesItsFarSide) {
+    RegularLatLonGrid g;
+    g.lat0 = 60.0;
+    g.lon0 = 100.0;
+    g.dlat = -1.0;
+    g.dlon = 0.25;
+    g.nlon = 801;  // 100E .. 300E
+    g.nlat = 61;
+    const GridDef def = g;
+
+    const GridIndex far = latlonToIndex(def, {30.0, 290.0});
+    EXPECT_TRUE(far.inDomain);
+    EXPECT_DOUBLE_EQ(far.x, 760.0);
+    // The same point in the other longitude convention.
+    const GridIndex farNeg = latlonToIndex(def, {30.0, -70.0});
+    EXPECT_TRUE(farNeg.inDomain);
+    EXPECT_DOUBLE_EQ(farNeg.x, 760.0);
+    // West of the first column is still off the grid.
+    EXPECT_FALSE(latlonToIndex(def, {30.0, 99.0}).inDomain);
+}
+
+// A grid whose columns run westward (dlon < 0) measures the offset westward.
+TEST(Grid, WestwardGridMeasuresItsOffsetWestward) {
+    RegularLatLonGrid g;
+    g.lat0 = 10.0;
+    g.lon0 = 20.0;
+    g.dlat = -1.0;
+    g.dlon = -1.0;
+    g.nlon = 41;  // 20E .. 20W
+    g.nlat = 11;
+    EXPECT_DOUBLE_EQ(lonOffsetAlongGrid(g, 20.0), 0.0);
+    EXPECT_DOUBLE_EQ(lonOffsetAlongGrid(g, -10.0), -30.0);
+    const GridIndex p = latlonToIndex(GridDef{g}, {5.0, 350.0});
+    EXPECT_TRUE(p.inDomain);
+    EXPECT_DOUBLE_EQ(p.x, 30.0);
+}

@@ -8,19 +8,9 @@
 namespace met::core {
 namespace {
 
-// Bring `lon` as close as possible to the grid's column-0 longitude so that a
-// point given in a different longitude convention (e.g. -170 vs 190) still maps
-// onto the grid. Returns a longitude offset (in degrees) relative to lon0.
-double relativeLon(const RegularLatLonGrid& g, double lon) {
-    double delta = lon - g.lon0;
-    while (delta > 180.0) delta -= 360.0;
-    while (delta <= -180.0) delta += 360.0;
-    return delta;
-}
-
 GridIndex latlonToIndexReg(const RegularLatLonGrid& grid, LatLon ll) {
     GridIndex out;
-    if (grid.dlon != 0.0) out.x = relativeLon(grid, ll.lon) / grid.dlon;
+    if (grid.dlon != 0.0) out.x = lonOffsetAlongGrid(grid, ll.lon) / grid.dlon;
     if (grid.dlat != 0.0) out.y = (ll.lat - grid.lat0) / grid.dlat;
 
     const double maxX = static_cast<double>(grid.nlon - 1);
@@ -50,6 +40,12 @@ GridIndex latlonToIndexProj(const ProjectedGrid& grid, LatLon ll) {
 }
 
 }  // namespace
+
+double lonOffsetAlongGrid(const RegularLatLonGrid& g, double lon) {
+    const double east = wrapLon360(lon - g.lon0);  // [0, 360)
+    if (g.dlon >= 0.0) return east;
+    return east == 0.0 ? 0.0 : east - 360.0;  // (-360, 0]
+}
 
 namespace {
 // Relative tolerance so grids that are identical up to representational noise
