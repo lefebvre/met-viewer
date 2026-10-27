@@ -10,6 +10,7 @@
 #include <ctime>
 #include <fstream>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -121,13 +122,21 @@ std::optional<Label> parseLabel(const char* p) {
     return l;
 }
 
-TimePoint labelTime(const Label& l) {
+// `minutes` comes from the period's INDX record: a label carries the hour only,
+// so a sub-hourly file (15-minute WRF-ARL) has four periods per labelled hour.
+TimePoint labelTime(const Label& l, int minutes) {
     // ARL stores a two-digit year with no century. The split at 48 is a HYSPLIT-era
     // convention: the archive begins in 1948 (the NCEP/NCAR reanalysis epoch), so
     // 48-99 is 20th century and 00-47 is 21st. Data outside 1948-2047 cannot be
     // represented in this format at all — do not "fix" this by moving the pivot.
     const int year = l.iy >= 48 ? 1900 + l.iy : 2000 + l.iy;
-    return TimePoint{core::timegmUtc(year, l.im, l.id, l.ih, 0, 0)};
+    return TimePoint{core::timegmUtc(year, l.im, l.id, l.ih, minutes, 0)};
+}
+
+// The minutes field of an INDX data section (I2 at offset 7), 0 when blank.
+int indxMinutes(const char* data) {
+    const auto m = fInt(data, 7, 2);
+    return m && *m >= 0 && *m < 60 ? static_cast<int>(*m) : 0;
 }
 
 // Map an ARL 4-char variable name to (canonical name, units, long name).
@@ -157,6 +166,23 @@ VarMeta mapVar(const std::string& kvar) {
     std::string lower = kvar;
     for (char& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return {lower, "", kvar};
+}
+
+// The scale factor of a conformal projection at (lat, lon): projected distance
+// over true distance, measured along a short stretch of the parallel. 1 when it
+// cannot be measured (at a pole, or if the transform fails), which is the scale
+// every projection here has at its own true-scale latitude.
+double scaleFactorAt(const core::Crs& crs, double lat, double lon, double radius) {
+    constexpr double kStepDeg = 0.01;
+    const double coslat = std::cos(lat * std::numbers::pi / 180.0);
+    if (std::abs(coslat) < 1e-6) return 1.0;
+    double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+    if (!crs.forward(lon - kStepDeg / 2, lat, x0, y0) || !crs.forward(lon + kStepDeg / 2, lat, x1, y1))
+        return 1.0;
+    const double projected = std::hypot(x1 - x0, y1 - y0);
+    const double trueDist = radius * coslat * kStepDeg * std::numbers::pi / 180.0;
+    const double k = projected / trueDist;
+    return std::isfinite(k) && k > 0.0 ? k : 1.0;
 }
 
 // Build the grid from the parsed INDX floats. size_km == 0 => regular lat/lon;
@@ -204,8 +230,16 @@ GridDef buildGrid(const std::array<double, 12>& g, int nx, int ny) {
     p.crs = core::Crs(proj);
     p.nx = nx;
     p.ny = ny;
-    p.dx = size_km * 1000.0;
-    p.dy = size_km * 1000.0;
+    // SIZE is the grid spacing true at (REF_LAT, REF_LON) -- HYSPLIT sets the
+    // grid with cmapf's stcm1p, which scales the map so a cell measures SIZE
+    // there -- while the projection is true-scale at TANG_LAT. In projection
+    // metres a cell is therefore SIZE times the scale factor at the reference
+    // point. Taking SIZE as projection metres directly was right only when the
+    // two latitudes coincide (HRRR's do); a polar-stereographic grid with
+    // TANG 90 and REF 60 came out scaled 7% wrong.
+    const double k = scaleFactorAt(p.crs, ref_lat, ref_lon, R);
+    p.dx = size_km * 1000.0 * k;
+    p.dy = size_km * 1000.0 * k;
     // Anchor: project the sync point's lat/lon, then back off to grid point (0,0).
     double sx = 0, sy = 0;
     if (!p.crs.forward(sync_lon, sync_lat, sx, sy)) throw ReadError("ARL: projection failed");
@@ -314,11 +348,20 @@ void ArlDataset::scan() {
         off += 8 + static_cast<int>(*nvar) * 8;
     }
 
-    // Infer the vertical coordinate type from the level values. ARL stores
-    // pressure (hPa), sigma (0..1), or height (m) depending on the source model;
-    // choose by magnitude instead of assuming pressure everywhere.
+    // The vertical coordinate. The header says which it is in K_FLAG (I2 at
+    // offset 102): 1 sigma, 2 pressure, 3 terrain-following, 4 hybrid. Only when
+    // that is missing or unknown is the type inferred from the level values'
+    // magnitude, which cannot tell a hybrid level (an offset plus a fraction,
+    // tens to hundreds) from a pressure.
     VerticalLevel::Type levelType = VerticalLevel::Type::PressureHPa;
-    {
+    const std::optional<long> kflag = fInt(p, 102, 2);
+    if (kflag == 1 || kflag == 3) {
+        levelType = VerticalLevel::Type::Sigma;
+    } else if (kflag == 2) {
+        levelType = VerticalLevel::Type::PressureHPa;
+    } else if (kflag == 4) {
+        levelType = VerticalLevel::Type::Hybrid;
+    } else {
         double maxAbs = 0.0;
         bool anyUpper = false;
         for (int l = 1; l < nz; ++l) {
@@ -339,6 +382,7 @@ void ArlDataset::scan() {
     in.seekg(0, std::ios::end);
     const std::int64_t fileSize = static_cast<std::int64_t>(in.tellg());
     const std::int64_t nrec = fileSize / recLen_;
+    int minutes = indxMinutes(p);  // of the period the records belong to
     for (std::int64_t r = 0; r < nrec; ++r) {
         const std::int64_t base = r * recLen_;
         in.seekg(static_cast<std::streamoff>(base), std::ios::beg);
@@ -354,7 +398,12 @@ void ArlDataset::scan() {
                 "{} is probably wrong",
                 base, r, nrec, recLen_));
         const Label& lab = *parsed;
-        if (lab.kvar == "INDX") continue;
+        if (lab.kvar == "INDX") {
+            // Each period opens with its own INDX; its minutes apply until the next.
+            char head[9];
+            minutes = in.read(head, sizeof head) ? indxMinutes(head) : 0;
+            continue;
+        }
 
         VerticalLevel level;
         if (lab.ll <= 0) {
@@ -365,7 +414,7 @@ void ArlDataset::scan() {
             level.value = h;
         }
         const VarMeta vm = mapVar(lab.kvar);
-        catalog_.addRecord(vm.name, vm.longName, vm.units, "", level, labelTime(lab), -1,
+        catalog_.addRecord(vm.name, vm.longName, vm.units, "", level, labelTime(lab, minutes), -1,
                            static_cast<core::RecordHandle>(base));
     }
     catalog_.finalize();
