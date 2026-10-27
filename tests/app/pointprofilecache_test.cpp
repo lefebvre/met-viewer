@@ -232,8 +232,7 @@ TEST(DeliverProfile, DropsAResultReadFromADatasetThatHasSinceBeenReplaced) {
     cache.setEpoch(2);
     ASSERT_EQ(planProfileRequest(cache, key({"t"}), 9).action, ProfileAction::Wait);
 
-    const ProfileDelivery stale =
-        deliverProfile(cache, key({"t"}), kDenver, profileAt(kDenver));
+    const ProfileDelivery stale = deliverProfile(cache, key({"t"}), kDenver, profileAt(kDenver));
     EXPECT_FALSE(stale.display);
     EXPECT_TRUE(stale.again) << "the new dataset still has to be read";
     EXPECT_TRUE(cache.entries.empty());

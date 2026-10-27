@@ -80,24 +80,37 @@ std::vector<double> attDoubles(int ncid, int varid, const char* name) {
 // commonly used for data.
 std::optional<double> defaultFill(nc_type type) {
     switch (type) {
-        case NC_SHORT: return NC_FILL_SHORT;
-        case NC_USHORT: return NC_FILL_USHORT;
-        case NC_INT: return NC_FILL_INT;
-        case NC_UINT: return NC_FILL_UINT;
-        case NC_INT64: return static_cast<double>(NC_FILL_INT64);
-        case NC_UINT64: return static_cast<double>(NC_FILL_UINT64);
-        case NC_FLOAT: return static_cast<double>(NC_FILL_FLOAT);
-        case NC_DOUBLE: return NC_FILL_DOUBLE;
-        default: return std::nullopt;
+        case NC_SHORT:
+            return NC_FILL_SHORT;
+        case NC_USHORT:
+            return NC_FILL_USHORT;
+        case NC_INT:
+            return NC_FILL_INT;
+        case NC_UINT:
+            return NC_FILL_UINT;
+        case NC_INT64:
+            return static_cast<double>(NC_FILL_INT64);
+        case NC_UINT64:
+            return static_cast<double>(NC_FILL_UINT64);
+        case NC_FLOAT:
+            return static_cast<double>(NC_FILL_FLOAT);
+        case NC_DOUBLE:
+            return NC_FILL_DOUBLE;
+        default:
+            return std::nullopt;
     }
 }
 
 int integerBits(nc_type type) {
     switch (type) {
-        case NC_BYTE: return 8;
-        case NC_SHORT: return 16;
-        case NC_INT: return 32;
-        default: return 0;
+        case NC_BYTE:
+            return 8;
+        case NC_SHORT:
+            return 16;
+        case NC_INT:
+            return 32;
+        default:
+            return 0;
     }
 }
 
@@ -148,8 +161,8 @@ bool classifyVertical(const std::string& units, const std::string& standardName,
 
     const bool pressureUnit =
         u == "hpa" || u == "pa" || u == "millibar" || u == "mb" || u == "mbar";
-    const bool lengthUnit = u == "m" || u == "metre" || u == "metres" || u == "meter" ||
-                            u == "meters" || u == "km";
+    const bool lengthUnit =
+        u == "m" || u == "metre" || u == "metres" || u == "meter" || u == "meters" || u == "km";
     auto set = [&](VerticalLevel::Type t) {
         type = t;
         if (t == VerticalLevel::Type::PressureHPa) scale = (u == "pa") ? 0.01 : 1.0;
@@ -217,7 +230,8 @@ int parseReference(const std::string& ref, int (&out)[6]) {
         // time field by ':', except at the date/time boundary.
         if (i >= ref.size()) break;
         const char sep = ref[i];
-        const bool ok = (n < 3 && sep == '-') || (n == 3 && (sep == ' ' || sep == 'T' || sep == 't')) ||
+        const bool ok = (n < 3 && sep == '-') ||
+                        (n == 3 && (sep == ' ' || sep == 'T' || sep == 't')) ||
                         (n > 3 && n < 6 && sep == ':');
         if (!ok) break;
         ++i;
@@ -235,9 +249,10 @@ TimeUnits parseTimeUnits(const std::string& units, const std::string& calendar,
     const std::string l = lower(units);
     const auto pos = l.find(" since ");
     if (pos == std::string::npos) {
-        MET_LOG_WARN("{}: time units '{}' are not '<unit> since <date>'; reading them as "
-                     "seconds since 1970-01-01",
-                     core::pathToUtf8(path), units);
+        MET_LOG_WARN(
+            "{}: time units '{}' are not '<unit> since <date>'; reading them as "
+            "seconds since 1970-01-01",
+            core::pathToUtf8(path), units);
         return tu;
     }
 
@@ -258,21 +273,23 @@ TimeUnits parseTimeUnits(const std::string& units, const std::string& calendar,
     else if (is({"week", "weeks"})) tu.perUnit = 7 * 86400.0;
     else if (is({"month", "months"}) || is({"year", "years", "yr", "yrs"})) {
         tu.perUnit = unitWord[0] == 'm' ? kUdunitsYear / 12.0 : kUdunitsYear;
-        MET_LOG_WARN("{}: time is counted in '{}', which CF defines as a fixed UDUNITS "
-                     "interval, not a calendar {}; times may not fall on the dates the "
-                     "producer intended",
-                     core::pathToUtf8(path), unitWord, unitWord[0] == 'm' ? "month" : "year");
+        MET_LOG_WARN(
+            "{}: time is counted in '{}', which CF defines as a fixed UDUNITS "
+            "interval, not a calendar {}; times may not fall on the dates the "
+            "producer intended",
+            core::pathToUtf8(path), unitWord, unitWord[0] == 'm' ? "month" : "year");
     } else {
-        MET_LOG_WARN("{}: unrecognized time unit '{}'; reading it as seconds", core::pathToUtf8(path),
-                     unitWord);
+        MET_LOG_WARN("{}: unrecognized time unit '{}'; reading it as seconds",
+                     core::pathToUtf8(path), unitWord);
     }
 
     int f[6] = {1970, 1, 1, 0, 0, 0};
     // A bare date (no time-of-day) is valid; require at least Y-M-D to trust it.
     if (parseReference(units.substr(pos + 7), f) < 3) {
-        MET_LOG_WARN("{}: cannot read the reference date in time units '{}'; using "
-                     "1970-01-01",
-                     core::pathToUtf8(path), units);
+        MET_LOG_WARN(
+            "{}: cannot read the reference date in time units '{}'; using "
+            "1970-01-01",
+            core::pathToUtf8(path), units);
         f[0] = 1970, f[1] = 1, f[2] = 1, f[3] = f[4] = f[5] = 0;
     }
     tu.y = f[0], tu.mo = f[1], tu.d = f[2], tu.hh = f[3], tu.mm = f[4], tu.ss = f[5];
@@ -287,9 +304,10 @@ TimeUnits parseTimeUnits(const std::string& units, const std::string& calendar,
     } else if (cal == "360_day") {
         tu.calendar = TimeUnits::Calendar::Day360;
     } else {
-        MET_LOG_WARN("{}: calendar '{}' is not supported; times are converted as if it "
-                     "were Gregorian and may be off by days",
-                     core::pathToUtf8(path), calendar);
+        MET_LOG_WARN(
+            "{}: calendar '{}' is not supported; times are converted as if it "
+            "were Gregorian and may be off by days",
+            core::pathToUtf8(path), calendar);
     }
     return tu;
 }
@@ -352,8 +370,10 @@ void checkUniform(const std::vector<double>& axis, const char* what,
                   const std::filesystem::path& path) {
     for (double v : axis)
         if (!std::isfinite(v))
-            throw ReadError(std::string("NetCDF: ") + what + " coordinate holds a value that is "
-                            "not a number: " + core::pathToUtf8(path));
+            throw ReadError(std::string("NetCDF: ") + what +
+                            " coordinate holds a value that is "
+                            "not a number: " +
+                            core::pathToUtf8(path));
     if (axis.size() < 3) return;  // two points just define the spacing
     const double step = axis[1] - axis[0];
     if (step == 0.0)
@@ -519,9 +539,9 @@ void CfDataset::scan() {
     if (timeDim >= 0) {
         std::vector<double> raw(dimLen[static_cast<std::size_t>(timeDim)]);
         nc_get_var_double(ncid_, timeVar, raw.data());
-        const TimeUnits tu = parseTimeUnits(
-            attText(ncid_, timeVar, "units").value_or("seconds since 1970-01-01"),
-            attText(ncid_, timeVar, "calendar").value_or(""), path_);
+        const TimeUnits tu =
+            parseTimeUnits(attText(ncid_, timeVar, "units").value_or("seconds since 1970-01-01"),
+                           attText(ncid_, timeVar, "calendar").value_or(""), path_);
         times.reserve(raw.size());
         for (std::size_t i = 0; i < raw.size(); ++i) {
             times.push_back(validTime(tu, raw[i]));
@@ -597,9 +617,10 @@ void CfDataset::scan() {
         // more than one entry: reading index 0 of it and presenting the slab as the
         // whole variable is a silently wrong field, so the variable is left out.
         if (!unselectable.empty()) {
-            MET_LOG_WARN("{}: skipping '{}': its dimension '{}' is not a time, vertical or "
-                         "ensemble axis, so no single slab of it can be shown",
-                         core::pathToUtf8(path_), nm, unselectable);
+            MET_LOG_WARN(
+                "{}: skipping '{}': its dimension '{}' is not a time, vertical or "
+                "ensemble axis, so no single slab of it can be shown",
+                core::pathToUtf8(path_), nm, unselectable);
             continue;
         }
 

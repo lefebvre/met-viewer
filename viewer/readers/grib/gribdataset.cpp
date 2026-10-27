@@ -384,18 +384,20 @@ void GribDataset::scan() {
                     fmt::format("{} since +{}{}", m.window.type, m.window.start, m.window.units));
         }
         for (std::size_t i = 0; i < qualifiers.size(); ++i)
-            name += (i == 0 ? " (" : ", ") + qualifiers[i] + (i + 1 == qualifiers.size() ? ")" : "");
+            name +=
+                (i == 0 ? " (" : ", ") + qualifiers[i] + (i + 1 == qualifiers.size() ? ")" : "");
 
         // Anything that still lands on an occupied cell is a field this reader
         // has no way to tell apart. Say so, and keep the first, rather than let
         // the catalog quietly keep whichever came last.
-        if (!seen.emplace(name, core::levelSortKey(m.level.level), static_cast<int>(m.level.level.type),
-                          m.time.epochSeconds, m.member)
+        if (!seen.emplace(name, core::levelSortKey(m.level.level),
+                          static_cast<int>(m.level.level.type), m.time.epochSeconds, m.member)
                  .second) {
-            MET_LOG_WARN("{}: a second '{}' at {} {} is indistinguishable from the first; "
-                         "keeping the first",
-                         core::pathToUtf8(path_), name, core::formatLevel(m.level.level),
-                         core::formatTime(m.time));
+            MET_LOG_WARN(
+                "{}: a second '{}' at {} {} is indistinguishable from the first; "
+                "keeping the first",
+                core::pathToUtf8(path_), name, core::formatLevel(m.level.level),
+                core::formatTime(m.time));
             continue;
         }
         catalog_.addRecord(name, m.longName, m.units, m.cfName, m.level.level, m.time, m.member,

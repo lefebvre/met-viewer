@@ -65,7 +65,8 @@ public:
     GribFile(const std::string& stem, const std::vector<std::string>& messages) {
         path_ = std::filesystem::temp_directory_path() / (stem + ".grib2");
         std::ofstream out(path_, std::ios::binary);
-        for (const std::string& m : messages) out.write(m.data(), static_cast<std::streamsize>(m.size()));
+        for (const std::string& m : messages)
+            out.write(m.data(), static_cast<std::streamsize>(m.size()));
     }
     ~GribFile() {
         std::error_code ec;

@@ -19,8 +19,8 @@ namespace {
 // equivalent there (WideCharToMultiByte would otherwise substitute '?').
 bool toCodePage(const std::wstring& w, std::string& out) {
     BOOL lossy = FALSE;
-    const int n =
-        WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.c_str(), -1, nullptr, 0, nullptr, &lossy);
+    const int n = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.c_str(), -1, nullptr, 0,
+                                      nullptr, &lossy);
     if (n <= 0 || lossy) return false;
     std::string s(static_cast<std::size_t>(n), '\0');
     if (WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w.c_str(), -1, s.data(), n, nullptr,

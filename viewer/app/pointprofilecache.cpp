@@ -40,9 +40,15 @@ ProfilePlan planProfileRequest(PointProfileCache& cache, const ProfileCacheKey& 
     const CachePlan<analysis::PointProfile> shared = planRequest(cache, key);
     plan.cached = shared.cached;
     switch (shared.action) {
-        case CacheAction::Serve: plan.action = ProfileAction::Serve; break;
-        case CacheAction::Wait: plan.action = ProfileAction::Wait; break;
-        case CacheAction::Extract: plan.action = ProfileAction::Extract; break;
+        case CacheAction::Serve:
+            plan.action = ProfileAction::Serve;
+            break;
+        case CacheAction::Wait:
+            plan.action = ProfileAction::Wait;
+            break;
+        case CacheAction::Extract:
+            plan.action = ProfileAction::Extract;
+            break;
     }
     return plan;
 }

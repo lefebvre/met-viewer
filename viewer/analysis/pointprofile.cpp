@@ -239,9 +239,8 @@ void orderGroundFirst(PointProfile& p) {
         return r.heightStatus == CellStatus::Ok && std::isfinite(r.heightGpm);
     });
     if (allHeights)
-        std::stable_sort(p.levels.begin(), p.levels.end(), [](const auto& a, const auto& b) {
-            return a.heightGpm < b.heightGpm;
-        });
+        std::stable_sort(p.levels.begin(), p.levels.end(),
+                         [](const auto& a, const auto& b) { return a.heightGpm < b.heightGpm; });
 }
 
 }  // namespace met::analysis

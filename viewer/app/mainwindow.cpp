@@ -234,12 +234,13 @@ void addAxisLimitControls(ControlPanel* panel, View* view, const AxisSpec& spec,
     };
     QObject::connect(loS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
     QObject::connect(hiS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
-    QObject::connect(view, changed, view, [loS, hiS, minDecimals = spec.decimals](double lo, double hi) {
-        const QSignalBlocker b1(loS), b2(hiS);
-        fitSpinBoxes(loS, hiS, lo, hi, minDecimals);
-        loS->setValue(lo);
-        hiS->setValue(hi);
-    });
+    QObject::connect(view, changed, view,
+                     [loS, hiS, minDecimals = spec.decimals](double lo, double hi) {
+                         const QSignalBlocker b1(loS), b2(hiS);
+                         fitSpinBoxes(loS, hiS, lo, hi, minDecimals);
+                         loS->setValue(lo);
+                         hiS->setValue(hi);
+                     });
 }
 
 // Group icon-only toggles into one horizontal strip instead of giving each its
@@ -690,7 +691,7 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
     if (replace) {
         loadedPaths_.clear();
         loadedSources_.clear();
-        fieldCache_.clear();  // a fresh set invalidates cached fields
+        fieldCache_.clear();   // a fresh set invalidates cached fields
         prefetching_.clear();  // and what was being fetched into it
         ++datasetEpoch_;       // and invalidates the per-tab analysis caches
         // A U/V decode still running reads the old set. Supersede it, so a request
@@ -923,28 +924,30 @@ void MainWindow::decodeCurrent() {
     auto prog = std::make_shared<JobProgress>();
     beginJob(QString(), prog);
     const quint64 epoch = datasetEpoch_;
-    submitDecode(*pool_, dataset_, key, gen, this, [this, gen, epoch, key, prog](DecodeOutcome outcome) {
-        endJob(prog);
-        // A FieldKey does not name its dataset. A decode from a set that has since
-        // been replaced must not reach the cache, or the new set reads it back for
-        // any key the two share (overlapping valid times of two model runs).
-        if (epoch != datasetEpoch_) return;
-        if (!outcome.field) {
-            if (outcome.generation == generation_) {
-                probeLabel_->setText(tr("Decode error: %1").arg(outcome.error));
-                fieldReadyForStep_ = true;  // treat a bad frame as "settled" so playback continues
-                maybeAdvancePlayback();
-            }
-            return;
-        }
-        fieldCache_.put(key, outcome.field);
-        if (outcome.generation != generation_) return;  // superseded; kept in cache
-        currentRaw_ = outcome.field;
-        presentField();
-        prefetchAhead();
-        fieldReadyForStep_ = true;
-        maybeAdvancePlayback();  // field ready → advance if analyses are ready too
-    });
+    submitDecode(*pool_, dataset_, key, gen, this,
+                 [this, gen, epoch, key, prog](DecodeOutcome outcome) {
+                     endJob(prog);
+                     // A FieldKey does not name its dataset. A decode from a set that has since
+                     // been replaced must not reach the cache, or the new set reads it back for
+                     // any key the two share (overlapping valid times of two model runs).
+                     if (epoch != datasetEpoch_) return;
+                     if (!outcome.field) {
+                         if (outcome.generation == generation_) {
+                             probeLabel_->setText(tr("Decode error: %1").arg(outcome.error));
+                             fieldReadyForStep_ =
+                                 true;  // treat a bad frame as "settled" so playback continues
+                             maybeAdvancePlayback();
+                         }
+                         return;
+                     }
+                     fieldCache_.put(key, outcome.field);
+                     if (outcome.generation != generation_) return;  // superseded; kept in cache
+                     currentRaw_ = outcome.field;
+                     presentField();
+                     prefetchAhead();
+                     fieldReadyForStep_ = true;
+                     maybeAdvancePlayback();  // field ready → advance if analyses are ready too
+                 });
 }
 
 void MainWindow::maybeAdvancePlayback() {
@@ -1468,10 +1471,9 @@ void MainWindow::refreshCrossSectionTab(QPointer<CrossSectionView> view, std::st
                 // the old section up would show the previous file's data.
                 view->setSection(usable ? ncs : analysis::CrossSection{});
                 if (!usable)
-                    statusBar()->showMessage(
-                        tr("Cross-section: '%1' has no multi-level data here")
-                            .arg(QString::fromStdString(var)),
-                        4000);
+                    statusBar()->showMessage(tr("Cross-section: '%1' has no multi-level data here")
+                                                 .arg(QString::fromStdString(var)),
+                                             4000);
             }
             if (delivered.again) refreshCrossSectionTab(view, var, path, tab);
             maybeAdvancePlayback();  // this tab's load settled → maybe advance
@@ -1647,14 +1649,13 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
             addAnalysisDock(frame, tr("Series: %1").arg(QString::fromStdString(var)));
             statusBar()->clearMessage();
             // The series spans all times; just move its marker with the slider.
-            analyses_.push_back({frame,
-                                 [this, v = QPointer<TimeSeriesView>(view)]() {
-                                     if (v && timeIdx_ >= 0 &&
-                                         timeIdx_ < static_cast<int>(currentTimes_.size()))
-                                         v->setCurrentTime(
-                                             currentTimes_[static_cast<std::size_t>(timeIdx_)]);
-                                 },
-                                 []() { return false; }});  // marker move only; never "loading"
+            analyses_.push_back(
+                {frame,
+                 [this, v = QPointer<TimeSeriesView>(view)]() {
+                     if (v && timeIdx_ >= 0 && timeIdx_ < static_cast<int>(currentTimes_.size()))
+                         v->setCurrentTime(currentTimes_[static_cast<std::size_t>(timeIdx_)]);
+                 },
+                 []() { return false; }});  // marker move only; never "loading"
         });
 }
 

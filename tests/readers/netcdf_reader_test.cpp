@@ -280,7 +280,8 @@ TEST(CfReader, DefaultFillIsMissingWithoutAFillValueAttribute) {
     nc.put(nc.var("v", NC_FLOAT, {a.lat, a.lon}), values);
     auto ds = readers::openDataset(nc.finish());
 
-    const auto f = ds->readField(core::FieldKey{"v", kSurface, ds->catalog().find("v")->times[0], -1});
+    const auto f =
+        ds->readField(core::FieldKey{"v", kSurface, ds->catalog().find("v")->times[0], -1});
     EXPECT_TRUE(std::isnan(f.at(1, 1)));  // flat index 5
     EXPECT_FLOAT_EQ(f.at(2, 1), 12.0f);
 }
@@ -295,12 +296,13 @@ TEST(CfReader, ValidRangeAndEveryMissingValueAreMasked) {
     nc.put(v, digits({kNLat, kNLon}));  // 0..3, 10..13, 20..23
     auto ds = readers::openDataset(nc.finish());
 
-    const auto f = ds->readField(core::FieldKey{"v", kSurface, ds->catalog().find("v")->times[0], -1});
+    const auto f =
+        ds->readField(core::FieldKey{"v", kSurface, ds->catalog().find("v")->times[0], -1});
     EXPECT_FLOAT_EQ(f.at(0, 0), 0.0f);
-    EXPECT_TRUE(std::isnan(f.at(1, 0)));   // missing_value 1
-    EXPECT_TRUE(std::isnan(f.at(2, 0)));   // missing_value 2
-    EXPECT_FLOAT_EQ(f.at(0, 2), 20.0f);    // the range is inclusive
-    EXPECT_TRUE(std::isnan(f.at(1, 2)));   // 21 > valid max
+    EXPECT_TRUE(std::isnan(f.at(1, 0)));  // missing_value 1
+    EXPECT_TRUE(std::isnan(f.at(2, 0)));  // missing_value 2
+    EXPECT_FLOAT_EQ(f.at(0, 2), 20.0f);   // the range is inclusive
+    EXPECT_TRUE(std::isnan(f.at(1, 2)));  // 21 > valid max
 }
 
 // `_Unsigned = "true"` on a short: the stored bits are an unsigned 16-bit value,
@@ -316,7 +318,8 @@ TEST(CfReader, UnsignedShortsAreReadAsUnsigned) {
     nc.putShorts(v, stored);
     auto ds = readers::openDataset(nc.finish());
 
-    const auto f = ds->readField(core::FieldKey{"v", kSurface, ds->catalog().find("v")->times[0], -1});
+    const auto f =
+        ds->readField(core::FieldKey{"v", kSurface, ds->catalog().find("v")->times[0], -1});
     EXPECT_NEAR(f.at(0, 0), 655.35f, 1e-3);
     EXPECT_NEAR(f.at(1, 0), 1.0f, 1e-6);
 }

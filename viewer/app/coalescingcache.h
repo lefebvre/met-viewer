@@ -25,10 +25,10 @@ namespace met::app {
 template <typename Key, typename Result>
 struct CoalescingCache {
     bool inFlight = false;
-    bool pending = false;              // a request arrived while one was in flight
-    std::uint64_t epoch = 0;           // the dataset generation `entries` describe
-    std::uint64_t inFlightEpoch = 0;   // the generation the running job reads
-    std::optional<Key> wanted;         // what the panel should be showing now
+    bool pending = false;             // a request arrived while one was in flight
+    std::uint64_t epoch = 0;          // the dataset generation `entries` describe
+    std::uint64_t inFlightEpoch = 0;  // the generation the running job reads
+    std::optional<Key> wanted;        // what the panel should be showing now
     std::map<Key, Result> entries;
 
     // A replaced dataset invalidates everything cached against the old one.
