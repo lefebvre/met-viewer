@@ -13,11 +13,16 @@
 
 namespace met::app {
 namespace {
-// Consecutive failures after which a tile stops being re-requested.
+// Consecutive failures after which a tile rests before it is tried again.
 constexpr int kMaxTileRetries = 3;
+// How long it rests. Long enough that a 404 costs a request a minute rather than
+// one per repaint; short enough that tiles lost to a brief network drop come
+// back on their own instead of only after a basemap switch.
+constexpr qint64 kRetryAfterMs = 60 * 1000;
 }  // namespace
 
 TileLayer::TileLayer(QObject* parent) : QObject(parent), memory_(512) {
+    clock_.start();
     nam_ = new QNetworkAccessManager(this);
 
     // Persistent disk cache so tiles survive restarts and we respect servers.
@@ -97,13 +102,17 @@ QImage TileLayer::tile(int z, int x, int y) {
     const int n = 1 << z;
     if (z < 0 || x < 0 || y < 0 || x >= n || y >= n) return {};
 
+    wantedZoom_ = z;
     const QString key = keyOf(z, x, y);
     if (QImage* img = memory_.object(key)) return *img;
 
-    // Give up on a tile after a few consecutive failures until the source changes.
-    // Repaints are frequent (every mouse-move, for the cursor readout), so without
-    // this a 404 or an offline session turns into a steady request stream.
-    if (failed_.value(key, 0) >= kMaxTileRetries) return {};
+    // Rest a tile after a few consecutive failures. Repaints are frequent (every
+    // mouse-move, for the cursor readout), so without this a 404 or an offline
+    // session turns into a steady request stream.
+    if (const auto it = failed_.constFind(key);
+        it != failed_.cend() && it->count >= kMaxTileRetries &&
+        clock_.elapsed() - it->atMs < kRetryAfterMs)
+        return {};
 
     if (!inFlight_.contains(key) && !pendingUrls_.contains(key)) {
         pendingUrls_.insert(key, urlFor(z, x, y));
@@ -117,6 +126,11 @@ void TileLayer::pump() {
     while (!pending_.isEmpty() && inFlight_.size() < maxInFlight_) {
         const QString key = pending_.dequeue();
         const QString url = pendingUrls_.take(key);
+        // A tile queued at a zoom the view has since left is no longer wanted.
+        // Zooming with the wheel queues every intermediate level, and fetching
+        // those first delayed the tiles actually on screen and spent requests
+        // against the tile servers' usage policies for nothing.
+        if (key.section(QLatin1Char('/'), 0, 0).toInt() != wantedZoom_) continue;
         QNetworkRequest req{QUrl(url)};
         // OSM's tile usage policy requires a User-Agent that identifies the app and
         // offers a way to reach its maintainer; a placeholder domain gets blocked.
@@ -164,11 +178,12 @@ void TileLayer::onFinished(QNetworkReply* reply) {
     if (!ok && reply->error() != QNetworkReply::OperationCanceledError) {
         // An abort (source switch / shutdown) is not the tile's fault, so it does
         // not count against the retry budget.
-        const int n = failed_.value(key, 0) + 1;
-        failed_.insert(key, n);
+        Failure& f = failed_[key];
+        const int n = ++f.count;
+        f.atMs = clock_.elapsed();
         if (n == kMaxTileRetries)
-            MET_LOG_WARN("tile {} failed {} times ({}); not retrying until the basemap changes",
-                         key.toStdString(), n, reply->errorString().toStdString());
+            MET_LOG_WARN("tile {} failed {} times ({}); retrying in {} s", key.toStdString(), n,
+                         reply->errorString().toStdString(), kRetryAfterMs / 1000);
         else
             MET_LOG_DEBUG("tile {} fetch failed: {}", key.toStdString(),
                           reply->errorString().toStdString());

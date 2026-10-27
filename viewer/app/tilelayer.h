@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QCache>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QImage>
 #include <QObject>
@@ -64,11 +65,17 @@ private:
     QQueue<QString> pending_;              // keys waiting for a slot
     QHash<QString, QString> pendingUrls_;  // key -> url
     QSet<QNetworkReply*> replies_;         // active replies (to abort on source switch)
-    // Keys whose fetch failed, with the number of consecutive failures. Without
-    // this a permanently-failing tile is re-requested by every repaint — and the
-    // cursor readout repaints on every mouse-move, so moving the pointer over the
-    // map would issue a request per tile per move. Cleared on setSource().
-    QHash<QString, int> failed_;
+    // Keys whose fetch failed: consecutive failures, and when the last one was.
+    // Without this a permanently-failing tile is re-requested by every repaint —
+    // and the cursor readout repaints on every mouse-move, so moving the pointer
+    // over the map would issue a request per tile per move. Cleared on setSource().
+    struct Failure {
+        int count = 0;
+        qint64 atMs = 0;
+    };
+    QHash<QString, Failure> failed_;
+    QElapsedTimer clock_;     // monotonic time for the retry cool-down
+    int wantedZoom_ = -1;     // the zoom of the most recent tile() call
     unsigned sourceGen_ = 0;  // bumped on setSource; stale replies are dropped
     int maxInFlight_ = 6;
 };
