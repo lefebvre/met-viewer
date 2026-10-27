@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 
+#include <clocale>
 #include <cmath>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <span>
+#include <string>
 #include <variant>
 
 #include "viewer/core/grid.h"
@@ -77,4 +80,29 @@ TEST(Arl, LatLonGridGeometry) {
     const core::LatLon ne = core::indexToLatLon(f.grid, 19, 9);
     EXPECT_DOUBLE_EQ(ne.lat, 48.0);
     EXPECT_DOUBLE_EQ(ne.lon, 288.0);
+}
+
+// QApplication sets the user's locale on Unix, and stod follows LC_NUMERIC: under
+// a comma-decimal locale "1000.00" stopped at the '.', and every ARL file was
+// refused. The reader parses with from_chars, which ignores the locale.
+TEST(Arl, OpensUnderACommaDecimalLocale) {
+    const std::string previous = std::setlocale(LC_NUMERIC, nullptr);
+    const char* german = nullptr;
+    for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE", "de-DE", "German"})
+        if (std::setlocale(LC_NUMERIC, name)) {
+            german = name;
+            break;
+        }
+    if (!german) GTEST_SKIP() << "no German locale installed to test against";
+    struct Restore {
+        std::string locale;
+        ~Restore() { std::setlocale(LC_NUMERIC, locale.c_str()); }
+    } restore{previous};
+    ASSERT_EQ(std::strtod("1,5", nullptr), 1.5) << german << " is not a comma-decimal locale";
+
+    auto ds = readers::openDataset(fixture("small_latlon.arl"));
+    const auto& v = ds->catalog().variables().front();
+    const auto f =
+        ds->readField(core::FieldKey{v.varName, v.levels.front(), v.times.front(), v.members.front()});
+    EXPECT_GT(f.width(), 0);
 }
