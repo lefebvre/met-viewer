@@ -220,8 +220,10 @@ private:
     // The U/V field keys for the current level/time, or nullopt when the dataset
     // has no recognizable wind pair.
     [[nodiscard]] std::optional<std::pair<core::FieldKey, core::FieldKey>> currentWindKeys() const;
-    // Earth-relative wind built from cached components, or null on a cache miss.
-    std::shared_ptr<analysis::WindField> windFromCache();
+    // Wind built from cached components, or null on a cache miss. Earth-relative
+    // by default; pass false for the components as decoded (grid-relative on a
+    // projected grid), which is what vorticity and divergence need.
+    std::shared_ptr<analysis::WindField> windFromCache(bool earthRelative = true);
     void applyWind(const std::shared_ptr<analysis::WindField>& wind);
     // Make sure the current U/V pair is in the field cache, decoding it on the pool
     // if not, then run `then(ok)` on the GUI thread. Concurrent callers wanting the

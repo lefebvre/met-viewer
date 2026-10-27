@@ -24,13 +24,16 @@ core::ProjectedGrid metreGrid(int n, double spacing) {
     return g;
 }
 
-// Build a wind field from analytic u(i,j), v(i,j) on a metre grid.
+// Build a wind field from analytic u(i,j), v(i,j) on a metre grid. The
+// components are along the grid's x/y axes, and flagged so.
 template <typename FU, typename FV>
 analysis::WindField makeWind(int n, double spacing, FU fu, FV fv) {
     analysis::WindField w;
     core::ProjectedGrid g = metreGrid(n, spacing);
     w.u.grid = g;
     w.v.grid = g;
+    w.u.meta.gridRelativeWind = true;
+    w.v.meta.gridRelativeWind = true;
     const std::size_t nn = static_cast<std::size_t>(n);
     w.u.values.resize(nn * nn);
     w.v.values.resize(nn * nn);
@@ -158,6 +161,57 @@ TEST(Derived, DivergenceOfRadialFlow) {
         7, 5000, [](double, double y) { return -1e-4 * y; },
         [](double x, double) { return 1e-4 * x; });
     EXPECT_NEAR(analysis::divergenceField(rot).values[3 * 7 + 3], 0.0f, 1e-10);
+}
+
+// Vorticity and divergence differentiate along grid rows and columns, so they
+// need the components resolved on those axes. The app once handed them
+// earth-rotated components, which mixes the two by the local meridian
+// convergence. Here a purely divergent flow sits where the polar-stereographic
+// grid is turned ~27° from true north: the answer must be the same whichever
+// frame the components arrive in.
+TEST(Derived, VorticityAndDivergenceAreTheSameFromEitherFrame) {
+    const double a = 2e-5;
+    auto w = makeWind(
+        7, 5000, [a](double x, double) { return a * x; }, [a](double, double y) { return a * y; });
+    for (auto* f : {&w.u, &w.v}) {
+        auto& g = std::get<core::ProjectedGrid>(f->grid);
+        g.x0 = 1.0e6;  // lon = atan2(x, -y) ≈ 26.6° east of lon_0
+        g.y0 = -2.0e6;
+    }
+    analysis::WindField earth = w;
+    analysis::rotateToEarthRelative(earth);
+    ASSERT_FALSE(earth.u.meta.gridRelativeWind);
+    ASSERT_GT(std::abs(earth.u.values[24] - w.u.values[24]), 0.1f) << "the rotation is real";
+
+    const int c = 3 * 7 + 3;
+    for (const auto* in : {&w, &earth}) {
+        EXPECT_NEAR(analysis::relativeVorticityField(*in).values[c], 0.0, 1e-9);
+        EXPECT_NEAR(analysis::divergenceField(*in).values[c], 2.0 * a, 1e-9);
+    }
+}
+
+// The frame flag travels with the rotation, so rotating twice is rotating once,
+// and the inverse brings the decoded components back.
+TEST(Derived, WindRotationTracksItsFrame) {
+    auto w = makeWind(
+        5, 5000, [](double, double) { return 10.0; }, [](double, double) { return 0.0; });
+    for (auto* f : {&w.u, &w.v}) {
+        auto& g = std::get<core::ProjectedGrid>(f->grid);
+        g.x0 = 1.0e6;
+        g.y0 = -2.0e6;
+    }
+    analysis::WindField once = w;
+    analysis::rotateToEarthRelative(once);
+    analysis::WindField twice = once;
+    analysis::rotateToEarthRelative(twice);
+    EXPECT_EQ(once.u.values, twice.u.values);
+
+    analysis::rotateToGridRelative(twice);
+    EXPECT_TRUE(twice.u.meta.gridRelativeWind);
+    for (std::size_t k = 0; k < w.u.values.size(); ++k) {
+        EXPECT_NEAR(twice.u.values[k], w.u.values[k], 1e-4);
+        EXPECT_NEAR(twice.v.values[k], w.v.values[k], 1e-4);
+    }
 }
 
 TEST(Derived, SphericalMetricTermOnLatLonGrid) {

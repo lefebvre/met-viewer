@@ -118,19 +118,21 @@ double gridNorthAngle(const core::GridDef& grid, double i, double j) {
     return std::atan2(east, north);
 }
 
-void rotateToEarthRelative(WindField& w) {
-    // Only conformal grids with grid-relative components need rotation.
-    if (!w.u.meta.gridRelativeWind) return;
-    if (std::holds_alternative<core::RegularLatLonGrid>(w.u.grid)) return;
+namespace {
 
+// Rotate every vector by the local meridian convergence: direction +1 takes
+// grid-relative components to earth-relative, -1 the reverse.
+void rotateByConvergence(WindField& w, double direction) {
     const int nx = w.width();
     const int ny = w.height();
     if (nx <= 0 || ny <= 0) return;
 
     // Rotate (ug, vg) by theta: grid-relative (along projected x/y) -> earth-
-    // relative (east/north). Takes cos/sin so the caller can supply an
-    // interpolated direction without an atan2 round-trip.
-    auto rotateCell = [&w, nx](int i, int j, double c, double s) {
+    // relative (east/north); a negative direction is the inverse. Takes cos/sin
+    // so the caller can supply an interpolated direction without an atan2
+    // round-trip.
+    auto rotateCell = [&w, nx, direction](int i, int j, double c, double s) {
+        s *= direction;
         const std::size_t k = static_cast<std::size_t>(j) * static_cast<std::size_t>(nx) +
                               static_cast<std::size_t>(i);
         const float ug = w.u.values[k];
@@ -200,10 +202,34 @@ void rotateToEarthRelative(WindField& w) {
             rotateCell(i, j, c, s);
         }
     }
-    // The values changed in place, so anything caching a derived product against
-    // the field id (rasters, isolines, GPU textures) must see a new field.
+}
+
+// The values changed in place, so anything caching a derived product against the
+// field id (rasters, isolines, GPU textures) must see a new field; and the flag
+// now says which frame they are in, so a second call is a no-op rather than a
+// second rotation.
+void markRotated(WindField& w, bool gridRelative) {
     w.u.id = core::nextFieldId();
     w.v.id = core::nextFieldId();
+    w.u.meta.gridRelativeWind = gridRelative;
+    w.v.meta.gridRelativeWind = gridRelative;
+}
+
+}  // namespace
+
+void rotateToEarthRelative(WindField& w) {
+    // Only conformal grids with grid-relative components need rotation.
+    if (!w.u.meta.gridRelativeWind) return;
+    if (std::holds_alternative<core::RegularLatLonGrid>(w.u.grid)) return;
+    rotateByConvergence(w, 1.0);
+    markRotated(w, false);
+}
+
+void rotateToGridRelative(WindField& w) {
+    if (w.u.meta.gridRelativeWind) return;
+    if (std::holds_alternative<core::RegularLatLonGrid>(w.u.grid)) return;
+    rotateByConvergence(w, -1.0);
+    markRotated(w, true);
 }
 
 }  // namespace met::analysis
