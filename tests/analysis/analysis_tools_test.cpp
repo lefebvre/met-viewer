@@ -287,3 +287,34 @@ TEST(TimeSeries, CarriesTheVariableLevelAndMemberOfItsFields) {
     EXPECT_DOUBLE_EQ(ts.level.value, 500.0);
     EXPECT_EQ(ts.member, 2);
 }
+
+// The skew-T's quantities are fixed, but fields arrive in the file's units: a
+// temperature stored in degC was plotted about 273 K off, and an RH stored as a
+// fraction (CF's "1") gave a dewpoint near -100 °C.
+TEST(Sounding, ReadsTemperatureAndHumidityThroughTheirUnits) {
+    core::Field2D tC = linearField(0.0);
+    tC.meta.units = "degC";
+    tC.values.assign(tC.values.size(), 15.0f);
+    core::Field2D rhPercent = linearField(0.0);
+    rhPercent.meta.units = "%";
+    rhPercent.values.assign(rhPercent.values.size(), 60.0f);
+    core::Field2D rhFraction = rhPercent;
+    rhFraction.meta.units = "1";
+    rhFraction.values.assign(rhFraction.values.size(), 0.6f);
+
+    const auto pct = analysis::extractSounding({{850.0, tC}}, {{850.0, rhPercent}}, {64, 12});
+    const auto frac = analysis::extractSounding({{850.0, tC}}, {{850.0, rhFraction}}, {64, 12});
+    ASSERT_EQ(pct.levels.size(), 1u);
+    EXPECT_NEAR(pct.levels[0].tempK, 288.15f, 1e-3f);
+    EXPECT_NEAR(frac.levels[0].dewpointK, pct.levels[0].dewpointK, 1e-3f);
+    EXPECT_GT(frac.levels[0].dewpointK, 273.15f);  // about 7 °C, not -100
+}
+
+// 10 g/kg at 1000 hPa is a vapour pressure of about 16 hPa, a dewpoint of about
+// 14 °C. The Magnus fit's three constants now come from one source.
+TEST(Sounding, DewpointFromSpecificHumidity) {
+    EXPECT_NEAR(analysis::dewpointFromSpecificHumidity(0.010f, 1000.0, 300.0f), 287.17f, 0.1f);
+    // Never above the temperature, and NaN without moisture.
+    EXPECT_LE(analysis::dewpointFromSpecificHumidity(0.030f, 1000.0, 290.0f), 290.0f);
+    EXPECT_TRUE(std::isnan(analysis::dewpointFromSpecificHumidity(0.0f, 1000.0, 290.0f)));
+}

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string>
 
 #include "viewer/analysis/sample.h"
 #include "viewer/analysis/wind.h"
@@ -36,6 +37,32 @@ float heightAt(const core::Field2D* zfield, core::LatLon point) {
     return static_cast<float>(core::toGeopotentialMeters(raw, zfield->meta.units));
 }
 
+// The skew-T's quantities are fixed (temperature in K, RH in %, q in kg/kg), but
+// the fields arrive in whatever unit the file uses, so each sample goes through
+// its own field's units. A temperature stored in degC was otherwise plotted
+// about 273 K off, and an RH stored as a fraction gave a dewpoint near -100 °C.
+// A unit that is not recognized is taken as already right, which is what the
+// sounding assumed of every field before.
+float temperatureK(const core::Field2D& f, float raw) {
+    if (std::isnan(raw)) return raw;
+    const auto k = core::convert(raw, f.meta.units, "K");
+    return k ? static_cast<float>(*k) : raw;
+}
+
+float relativeHumidityPercent(const core::Field2D& f, float raw) {
+    if (std::isnan(raw)) return raw;
+    const std::string u = core::canonicalUnit(f.meta.units);
+    // CF writes a fractional RH as the dimensionless "1".
+    if (u == "1" || u == "fraction") return raw * 100.0f;
+    return raw;
+}
+
+float specificHumidityKgKg(const core::Field2D& f, float raw) {
+    if (std::isnan(raw)) return raw;
+    const auto q = core::convert(raw, f.meta.units, "kg/kg");
+    return q ? static_cast<float>(*q) : raw;
+}
+
 // Take the time and member from the fields the sounding is read from.
 void stampFrom(const std::vector<std::pair<double, core::Field2D>>& tStack, Sounding& s) {
     if (tStack.empty()) return;
@@ -58,7 +85,9 @@ float dewpointFromRH(float tempK, float rhPercent) {
 float dewpointFromSpecificHumidity(float qKgKg, double pressureHpa, float tempK) {
     if (std::isnan(qKgKg) || qKgKg <= 0.0f || !std::isfinite(pressureHpa) || pressureHpa <= 0.0)
         return std::numeric_limits<float>::quiet_NaN();
-    const double b = 17.625, c = 243.04, es0 = 6.112;  // Magnus (°C, hPa)
+    // Alduchov-Eskridge Magnus coefficients, as dewpointFromRH uses, with their own
+    // es0 (6.1094 hPa) rather than Bolton's 6.112 beside b and c from another fit.
+    const double b = 17.625, c = 243.04, es0 = 6.1094;  // (°C, hPa)
     const double q = qKgKg;
     // Vapour pressure (hPa) from specific humidity and pressure.
     const double e = q * pressureHpa / (0.622 + 0.378 * q);
@@ -82,11 +111,11 @@ Sounding extractSounding(const std::vector<std::pair<double, core::Field2D>>& tS
     for (const auto& [pressure, tfield] : tStack) {
         SoundingLevel lvl;
         lvl.pressure = pressure;
-        lvl.tempK = sampleBilinear(tfield, point);
+        lvl.tempK = temperatureK(tfield, sampleBilinear(tfield, point));
         lvl.dewpointK = std::numeric_limits<float>::quiet_NaN();
         // Dewpoint from matching relative humidity at this pressure.
         if (const core::Field2D* rfield = fieldAtPressure(rhStack, pressure)) {
-            const float rh = sampleBilinear(*rfield, point);
+            const float rh = relativeHumidityPercent(*rfield, sampleBilinear(*rfield, point));
             lvl.dewpointK = dewpointFromRH(lvl.tempK, rh);
         }
         // Earth-relative wind from the matching U/V pair at this pressure. Rotating
@@ -125,10 +154,10 @@ Sounding extractSoundingModelLevels(const std::vector<std::pair<double, core::Fi
         if (std::isnan(rawP)) continue;
         SoundingLevel lvl;
         lvl.pressure = core::toHpa(rawP, pfield->meta.units);
-        lvl.tempK = sampleBilinear(tfield, point);
+        lvl.tempK = temperatureK(tfield, sampleBilinear(tfield, point));
         lvl.dewpointK = std::numeric_limits<float>::quiet_NaN();
         if (const core::Field2D* qf = fieldAtKey(qStack, levelKey)) {
-            const float q = sampleBilinear(*qf, point);
+            const float q = specificHumidityKgKg(*qf, sampleBilinear(*qf, point));
             lvl.dewpointK = dewpointFromSpecificHumidity(q, lvl.pressure, lvl.tempK);
         }
         const core::Field2D* ufield = fieldAtKey(uStack, levelKey);
