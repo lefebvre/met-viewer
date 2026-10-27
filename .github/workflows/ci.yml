@@ -16,9 +16,16 @@ on:
     - cron: '0 6 * * 1'
   workflow_dispatch:
 
+# The event is part of the group and only pull requests cancel: a push to master
+# shares master's ref with the weekly TSan run, and with one group per ref the
+# push cancelled the scheduled run (or the reverse) halfway through.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Nothing here writes to the repository.
+permissions:
+  contents: read
 
 jobs:
   # Formatting is its own job, deliberately not a step in the build: it needs no
@@ -29,6 +36,7 @@ jobs:
   format:
     name: Formatting
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +71,10 @@ jobs:
     # supported RHEL/Alma/Rocky 9 + 10 range, and the dnf deps below match the
     # ones documented in README.md.
     container: almalinux:9
+    # A cold dependency build (Qt from source) takes over an hour; a hang -- a
+    # modal Qt dialog, a deadlock under TSan -- would otherwise run to GitHub's
+    # six-hour limit.
+    timeout-minutes: 240
     steps:
       - name: Install system build dependencies
         run: |
@@ -115,6 +127,12 @@ jobs:
         run: |
           echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/vcpkg_bincache,readwrite" >> "$GITHUB_ENV"
 
+      # Each save goes under its own run-specific key, and a restore takes the
+      # newest save for the same dependency set, else the newest of any. Saving
+      # under the exact restore key instead meant a run that died partway through
+      # the Qt build stored its partial cache under the final key; every later
+      # run then "hit" it, rebuilt the missing ports, and never saved again until
+      # vcpkg.json changed. A runner compiler update had the same effect.
       - name: Restore vcpkg binary cache
         uses: actions/cache/restore@v4
         id: bincache
@@ -123,7 +141,9 @@ jobs:
           # vcpkg.json carries builtin-baseline, so hashing it pins both the
           # dependency list and the vcpkg commit; the overlays change the ABI too.
           key: vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}
-          restore-keys: vcpkg-bin-${{ runner.os }}-
+          restore-keys: |
+            vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}-
+            vcpkg-bin-${{ runner.os }}-
 
       # Source tarballs, cached separately and keyed more loosely. This is what
       # stops upstream hosts being re-asked for every distfile on a binary-cache
@@ -135,13 +155,35 @@ jobs:
         with:
           path: vcpkg/downloads
           key: vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-dl-${{ runner.os }}-
+          restore-keys: |
+            vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-dl-${{ runner.os }}-
+
+      # What the restore brought, so the saves below run only when vcpkg added
+      # something. Every save is a new multi-gigabyte entry now that keys are
+      # per-run, and an unchanged one would only push older ones out.
+      - name: Count restored dependency files
+        id: before
+        shell: bash
+        run: |
+          echo "bin=$(find vcpkg_bincache -type f 2>/dev/null | wc -l)" >> "$GITHUB_OUTPUT"
+          echo "dl=$(find vcpkg/downloads -maxdepth 1 -type f 2>/dev/null | wc -l)" >> "$GITHUB_OUTPUT"
 
       - name: Configure
         # -Werror here rather than only in the asan preset: the warning set
         # (-Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow) is
         # only a gate if something actually fails on it, and the tree is clean.
         run: cmake --preset dist-linux -DMET_WERROR=ON
+
+      - name: Check for new dependency files
+        id: after
+        if: always()
+        shell: bash
+        run: |
+          bin=$(find vcpkg_bincache -type f 2>/dev/null | wc -l)
+          dl=$(find vcpkg/downloads -maxdepth 1 -type f 2>/dev/null | wc -l)
+          echo "bin=$([ "$bin" != "${{ steps.before.outputs.bin }}" ] && echo changed || echo same)" >> "$GITHUB_OUTPUT"
+          echo "dl=$([ "$dl" != "${{ steps.before.outputs.dl }}" ] && echo changed || echo same)" >> "$GITHUB_OUTPUT"
 
       # Saved right after configure, which is where vcpkg does its work, and with
       # `always()` so a later build/test failure still leaves the dependency work
@@ -151,18 +193,18 @@ jobs:
         # A cache write must never fail the job: on an early failure the
         # directory may not exist yet, and that is not an error worth reporting.
         continue-on-error: true
-        if: always() && steps.bincache.outputs.cache-hit != 'true'
+        if: always() && steps.after.outputs.bin == 'changed'
         with:
           path: vcpkg_bincache
-          key: ${{ steps.bincache.outputs.cache-primary-key }}
+          key: ${{ steps.bincache.outputs.cache-primary-key }}-${{ github.run_id }}
 
       - name: Save vcpkg downloads
         uses: actions/cache/save@v4
         continue-on-error: true
-        if: always() && steps.dlcache.outputs.cache-hit != 'true'
+        if: always() && steps.after.outputs.dl == 'changed'
         with:
           path: vcpkg/downloads
-          key: ${{ steps.dlcache.outputs.cache-primary-key }}
+          key: ${{ steps.dlcache.outputs.cache-primary-key }}-${{ github.run_id }}
 
       - name: Dump vcpkg logs on failure
         if: failure()
@@ -256,6 +298,7 @@ jobs:
   windows:
     name: Windows
     runs-on: windows-latest
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
         with:
@@ -263,7 +306,7 @@ jobs:
 
       # Put MSVC (cl/link) on PATH so the Ninja-based preset can find the
       # compiler without a Visual Studio developer shell.
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1
 
       # See the Linux job for why restore/save are split.
       # Same runtime-set binary cache path as the Linux job; see there for why it
@@ -273,13 +316,16 @@ jobs:
         run: |
           echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/vcpkg_bincache,readwrite" >> "$GITHUB_ENV"
 
+      # Keys and the save conditions work as in the Linux job; see there.
       - name: Restore vcpkg binary cache
         uses: actions/cache/restore@v4
         id: bincache
         with:
           path: vcpkg_bincache
           key: vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}
-          restore-keys: vcpkg-bin-${{ runner.os }}-
+          restore-keys: |
+            vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}-
+            vcpkg-bin-${{ runner.os }}-
 
       - name: Restore vcpkg downloads
         uses: actions/cache/restore@v4
@@ -287,28 +333,49 @@ jobs:
         with:
           path: vcpkg/downloads
           key: vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-dl-${{ runner.os }}-
+          restore-keys: |
+            vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-dl-${{ runner.os }}-
+
+      - name: Count restored dependency files
+        id: before
+        shell: bash
+        run: |
+          echo "bin=$(find vcpkg_bincache -type f 2>/dev/null | wc -l)" >> "$GITHUB_OUTPUT"
+          echo "dl=$(find vcpkg/downloads -maxdepth 1 -type f 2>/dev/null | wc -l)" >> "$GITHUB_OUTPUT"
 
       - name: Configure
-        run: cmake --preset dist-windows
+        # -Werror as on Linux, so MSVC's /W4 is a gate rather than advice. Without
+        # it, warnings Linux would have refused accumulated in the Windows build.
+        run: cmake --preset dist-windows -DMET_WERROR=ON
+
+      - name: Check for new dependency files
+        id: after
+        if: always()
+        shell: bash
+        run: |
+          bin=$(find vcpkg_bincache -type f 2>/dev/null | wc -l)
+          dl=$(find vcpkg/downloads -maxdepth 1 -type f 2>/dev/null | wc -l)
+          echo "bin=$([ "$bin" != "${{ steps.before.outputs.bin }}" ] && echo changed || echo same)" >> "$GITHUB_OUTPUT"
+          echo "dl=$([ "$dl" != "${{ steps.before.outputs.dl }}" ] && echo changed || echo same)" >> "$GITHUB_OUTPUT"
 
       - name: Save vcpkg binary cache
         uses: actions/cache/save@v4
         # A cache write must never fail the job: on an early failure the
         # directory may not exist yet, and that is not an error worth reporting.
         continue-on-error: true
-        if: always() && steps.bincache.outputs.cache-hit != 'true'
+        if: always() && steps.after.outputs.bin == 'changed'
         with:
           path: vcpkg_bincache
-          key: ${{ steps.bincache.outputs.cache-primary-key }}
+          key: ${{ steps.bincache.outputs.cache-primary-key }}-${{ github.run_id }}
 
       - name: Save vcpkg downloads
         uses: actions/cache/save@v4
         continue-on-error: true
-        if: always() && steps.dlcache.outputs.cache-hit != 'true'
+        if: always() && steps.after.outputs.dl == 'changed'
         with:
           path: vcpkg/downloads
-          key: ${{ steps.dlcache.outputs.cache-primary-key }}
+          key: ${{ steps.dlcache.outputs.cache-primary-key }}-${{ github.run_id }}
 
       - name: Build
         run: cmake --build --preset dist-windows

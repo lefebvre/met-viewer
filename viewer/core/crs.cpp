@@ -24,6 +24,18 @@ std::string projDataOverride() {
 // Per-thread PROJ context and a cache of normalized lon/lat<->projected
 // transforms keyed by projection string. proj_normalize_for_visualization gives
 // consistent (lon,lat) axis order in degrees on the geographic side.
+
+// Whether an environment variable is set, even to the empty string. getenv_s on
+// MSVC, where getenv is deprecated (C4996) and the Windows build is -Werror.
+bool envIsSet(const char* name) {
+#ifdef _WIN32
+    std::size_t len = 0;
+    return getenv_s(&len, nullptr, 0, name) == 0 && len > 0;
+#else
+    return std::getenv(name) != nullptr;
+#endif
+}
+
 struct ThreadProj {
     PJ_CONTEXT* ctx = nullptr;
     std::unordered_map<std::string, PJ*> cache;
@@ -37,7 +49,7 @@ struct ThreadProj {
         //   2. A path registered via setProjDataPath() — used by installed
         //      builds, resolved relative to the executable at startup.
         //   3. The compile-time MET_PROJ_DATA fallback — the dev/build-tree path.
-        if (!std::getenv("PROJ_DATA") && !std::getenv("PROJ_LIB")) {
+        if (!envIsSet("PROJ_DATA") && !envIsSet("PROJ_LIB")) {
             const std::string override = projDataOverride();
 #ifdef MET_PROJ_DATA
             const std::string path = override.empty() ? std::string(MET_PROJ_DATA) : override;

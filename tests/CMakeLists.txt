@@ -77,7 +77,15 @@ target_compile_definitions(met_tests PRIVATE
 # post-build step. On Windows the test exe needs the Qt/vcpkg DLLs, which are
 # only deployed next to it after the build finishes; discovering at build time
 # would launch the exe before the DLLs exist and hang (missing-DLL dialog).
-gtest_discover_tests(met_tests DISCOVERY_MODE PRE_TEST)
+#
+# Each test gets a timeout, so a hang -- a deadlock, the modal missing-plugin
+# dialog cmake/QtDeploy.cmake describes -- fails that test instead of running to
+# the CI job's limit. The whole suite takes seconds; five minutes per test
+# leaves room for a sanitizer build. Discovery gets more than the 5 s default
+# because under TSan the app tests construct a QApplication before listing.
+set(MET_TEST_TIMEOUT 300)
+gtest_discover_tests(met_tests DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 60
+                     PROPERTIES TIMEOUT ${MET_TEST_TIMEOUT})
 
 # App-layer tests link the met_app library. They need a QApplication and a
 # headless platform plugin (minimal), so they are a separate target — met_tests
@@ -122,7 +130,8 @@ target_compile_definitions(met_app_tests PRIVATE
 # met_deploy_qt_runtime covers -- see cmake/QtDeploy.cmake.
 qt_import_plugins(met_app_tests INCLUDE Qt6::QMinimalIntegrationPlugin)
 met_deploy_qt_runtime(met_app_tests PLUGINS Qt6::QMinimalIntegrationPlugin)
-gtest_discover_tests(met_app_tests DISCOVERY_MODE PRE_TEST)
+gtest_discover_tests(met_app_tests DISCOVERY_MODE PRE_TEST DISCOVERY_TIMEOUT 60
+                     PROPERTIES TIMEOUT ${MET_TEST_TIMEOUT})
 
 # Fuzz harnesses are Clang-only and opt-in; see tests/fuzz/CMakeLists.txt.
 if(MET_ENABLE_FUZZING)

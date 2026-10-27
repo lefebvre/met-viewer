@@ -121,19 +121,29 @@ jobs:
         with:
           path: vcpkg_bincache
           key: vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}
-          restore-keys: vcpkg-bin-${{ runner.os }}-
+          restore-keys: |
+            vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}-
+            vcpkg-bin-${{ runner.os }}-
 
       - name: Restore vcpkg downloads
         uses: actions/cache/restore@v4
         with:
           path: vcpkg/downloads
           key: vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-dl-${{ runner.os }}-
+          restore-keys: |
+            vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-dl-${{ runner.os }}-
 
       - name: Build
         run: |
           cmake --preset dist-linux
           cmake --build --preset dist-linux
+
+      # CI does not run on tags, so this is the only test of the exact commit
+      # being released. The suite takes seconds; the timing tripwires are left
+      # to CI, where the runner is a known quantity.
+      - name: Test
+        run: ctest --preset dist-linux -E 'Warp\.(Projected)?PerformanceTripwire'
 
       - name: Dump vcpkg logs on failure
         if: failure()
@@ -151,12 +161,20 @@ jobs:
         run: cmake --install build/dist-linux --prefix "$PWD/AppDir/usr"
 
       - name: Build AppImage
+        # The packaging tools are pinned to tagged releases and checked against a
+        # recorded digest. They used to come from the moving `continuous` tag with
+        # no check, so a release was not reproducible and whatever had been
+        # uploaded there last went inside the AppImage. Bump both together: the
+        # version in the URL and the digest beside it.
         run: |
           set -euxo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          base=https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous
-          curl -fsSLO "$base/linuxdeploy-x86_64.AppImage"
-          curl -fsSLO "$base/linuxdeploy-plugin-qt-x86_64.AppImage"
+          curl -fsSLO https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          curl -fsSLO https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage
+          sha256sum -c - <<'EOF'
+          c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  linuxdeploy-x86_64.AppImage
+          15106be885c1c48a021198e7e1e9a48ce9d02a86dd0a1848f00bdbf3c1c92724  linuxdeploy-plugin-qt-x86_64.AppImage
+          EOF
           chmod +x linuxdeploy*.AppImage
           # FUSE is unavailable in containers; run the AppImages extracted.
           export APPIMAGE_EXTRACT_AND_RUN=1
@@ -188,7 +206,7 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1
 
       - name: Install NSIS
         run: choco install nsis -y --no-progress
@@ -206,19 +224,27 @@ jobs:
         with:
           path: vcpkg_bincache
           key: vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}
-          restore-keys: vcpkg-bin-${{ runner.os }}-
+          restore-keys: |
+            vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}-
+            vcpkg-bin-${{ runner.os }}-
 
       - name: Restore vcpkg downloads
         uses: actions/cache/restore@v4
         with:
           path: vcpkg/downloads
           key: vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-dl-${{ runner.os }}-
+          restore-keys: |
+            vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-dl-${{ runner.os }}-
 
       - name: Build
         run: |
           cmake --preset dist-windows
           cmake --build --preset dist-windows
+
+      # See the Linux job: the only test of the commit being released.
+      - name: Test
+        run: ctest --preset dist-windows -E 'Warp\.(Projected)?PerformanceTripwire'
 
       - name: Package (NSIS)
         # CPack runs the install (which invokes windeployqt via install(SCRIPT))
@@ -291,7 +317,8 @@ jobs:
         run: ls -lh artifacts
 
       - name: Create draft release
-        uses: softprops/action-gh-release@v2
+        # Pinned by commit: a third-party action running with contents: write.
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           draft: true
           fail_on_unmatched_files: true
