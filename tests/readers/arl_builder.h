@@ -36,7 +36,8 @@ struct ArlSpec {
     int kflag = 2;
     // POLE_LAT POLE_LON REF_LAT REF_LON SIZE ORIENT TANG_LAT SYNC_XP SYNC_YP
     // SYNC_LAT SYNC_LON (reserved); a 2-degree lat/lon grid at (30N, 250E) by default.
-    std::array<double, 12> grid = {90.0, 250.0, 2.0, 2.0, 0.0, 0.0, 0.0, 1.0, 1.0, 30.0, 250.0, 0.0};
+    std::array<double, 12> grid = {90.0, 250.0, 2.0, 2.0,  0.0,   0.0,
+                                   0.0,  1.0,   1.0, 30.0, 250.0, 0.0};
     std::vector<ArlLevel> levels = {{0.0, {"T02M"}}, {1000.0, {"TEMP"}}};
     std::vector<ArlPeriod> periods;
 };
@@ -46,7 +47,8 @@ public:
     ArlFile(const std::string& stem, const ArlSpec& spec) {
         path_ = std::filesystem::temp_directory_path() / (stem + ".arl");
         std::ofstream out(path_, std::ios::binary);
-        const std::size_t data = static_cast<std::size_t>(spec.nx) * static_cast<std::size_t>(spec.ny);
+        const std::size_t data =
+            static_cast<std::size_t>(spec.nx) * static_cast<std::size_t>(spec.ny);
         for (const ArlPeriod& per : spec.periods) {
             out << label(per, "INDX", 0, 0, 0.0);
             std::string h = header(spec, per);

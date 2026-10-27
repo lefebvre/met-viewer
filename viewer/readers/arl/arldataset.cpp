@@ -177,7 +177,8 @@ double scaleFactorAt(const core::Crs& crs, double lat, double lon, double radius
     const double coslat = std::cos(lat * std::numbers::pi / 180.0);
     if (std::abs(coslat) < 1e-6) return 1.0;
     double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
-    if (!crs.forward(lon - kStepDeg / 2, lat, x0, y0) || !crs.forward(lon + kStepDeg / 2, lat, x1, y1))
+    if (!crs.forward(lon - kStepDeg / 2, lat, x0, y0) ||
+        !crs.forward(lon + kStepDeg / 2, lat, x1, y1))
         return 1.0;
     const double projected = std::hypot(x1 - x0, y1 - y0);
     const double trueDist = radius * coslat * kStepDeg * std::numbers::pi / 180.0;

@@ -204,8 +204,8 @@ TEST(Derived, VorticityAndDivergenceAreTheSameFromEitherFrame) {
 // The frame flag travels with the rotation, so rotating twice is rotating once,
 // and the inverse brings the decoded components back.
 TEST(Derived, WindRotationTracksItsFrame) {
-    auto w = makeWind(
-        5, 5000, [](double, double) { return 10.0; }, [](double, double) { return 0.0; });
+    auto w =
+        makeWind(5, 5000, [](double, double) { return 10.0; }, [](double, double) { return 0.0; });
     for (auto* f : {&w.u, &w.v}) {
         auto& g = std::get<core::ProjectedGrid>(f->grid);
         g.x0 = 1.0e6;

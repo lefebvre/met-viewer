@@ -146,10 +146,9 @@ std::string csvQuote(const std::string& field, char separator) {
     // shows the quotes literally on a tab-separated paste, so every level label
     // would arrive with the quotes inside the cell.
     // A bare carriage return ends a record too, for RFC 4180 and for Excel.
-    const bool needs = field.find(separator) != std::string::npos ||
-                       field.find('"') != std::string::npos ||
-                       field.find('\n') != std::string::npos ||
-                       field.find('\r') != std::string::npos;
+    const bool needs =
+        field.find(separator) != std::string::npos || field.find('"') != std::string::npos ||
+        field.find('\n') != std::string::npos || field.find('\r') != std::string::npos;
     if (!needs) return field;
     std::string out = "\"";
     for (const char ch : field) {

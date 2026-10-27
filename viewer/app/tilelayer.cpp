@@ -109,9 +109,9 @@ QImage TileLayer::tile(int z, int x, int y) {
     // Rest a tile after a few consecutive failures. Repaints are frequent (every
     // mouse-move, for the cursor readout), so without this a 404 or an offline
     // session turns into a steady request stream.
-    if (const auto it = failed_.constFind(key);
-        it != failed_.cend() && it->count >= kMaxTileRetries &&
-        clock_.elapsed() - it->atMs < kRetryAfterMs)
+    if (const auto it = failed_.constFind(key); it != failed_.cend() &&
+                                                it->count >= kMaxTileRetries &&
+                                                clock_.elapsed() - it->atMs < kRetryAfterMs)
         return {};
 
     if (!inFlight_.contains(key) && !pendingUrls_.contains(key)) {

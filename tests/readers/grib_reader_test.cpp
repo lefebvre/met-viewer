@@ -104,8 +104,9 @@ TEST(GribReader, LocatesEveryMessageInAFileWithBytesBetweenThem) {
         std::filesystem::temp_directory_path() / "met_grib_offsets_test.grib2";
     {
         std::ofstream out(path, std::ios::binary);
-        out << "SOME HEADER\r\r\n" << bytes(dir / "regular_ll_t500.grib2")
-            << std::string("\0\0PAD", 5) << bytes(dir / "wind_uv_850.grib2");
+        out << "SOME HEADER\r\r\n"
+            << bytes(dir / "regular_ll_t500.grib2") << std::string("\0\0PAD", 5)
+            << bytes(dir / "wind_uv_850.grib2");
     }
     struct Cleanup {
         std::filesystem::path p;
@@ -186,5 +187,6 @@ TEST(GribReader, KeepsFieldsApartThatWouldShareACatalogCell) {
     ASSERT_NE(t, nullptr);
     ASSERT_EQ(t->levels.size(), 2u);
     const core::VerticalLevel hPa04{core::VerticalLevel::Type::PressureHPa, 0.4};
-    EXPECT_FLOAT_EQ(ds->readField(core::FieldKey{"t", hPa04, t->times.front(), -1}).at(0, 0), 40.0f);
+    EXPECT_FLOAT_EQ(ds->readField(core::FieldKey{"t", hPa04, t->times.front(), -1}).at(0, 0),
+                    40.0f);
 }

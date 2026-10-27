@@ -104,8 +104,8 @@ TEST(Arl, OpensUnderACommaDecimalLocale) {
 
     auto ds = readers::openDataset(fixture("small_latlon.arl"));
     const auto& v = ds->catalog().variables().front();
-    const auto f =
-        ds->readField(core::FieldKey{v.varName, v.levels.front(), v.times.front(), v.members.front()});
+    const auto f = ds->readField(
+        core::FieldKey{v.varName, v.levels.front(), v.times.front(), v.members.front()});
     EXPECT_GT(f.width(), 0);
 }
 

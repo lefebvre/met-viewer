@@ -268,6 +268,4 @@ TEST(ProfileToCsv, KeepsAMultiLineDatasetLabelOnOneCommentLine) {
         EXPECT_FALSE(contains(csv, "\n" + line));
 }
 
-TEST(CsvQuote, QuotesABareCarriageReturn) {
-    EXPECT_EQ(csvQuote("a\rb", ','), "\"a\rb\"");
-}
+TEST(CsvQuote, QuotesABareCarriageReturn) { EXPECT_EQ(csvQuote("a\rb", ','), "\"a\rb\""); }
