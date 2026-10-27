@@ -334,12 +334,28 @@ jobs:
           # Windows runner they would only add flakiness.
           ctest --preset dist-windows -E 'Warp\.(Projected)?PerformanceTripwire'
 
-      # A self-contained tree to download and run: `cmake --install` triggers the
-      # windeployqt script from cmake/Packaging.cmake, which copies the Qt DLLs
-      # and plugins next to the executable, and PROJ's data lands in share/proj
-      # where main.cpp's executable-relative probe finds it.
+      # A self-contained tree to download and run: `cmake --install` copies the
+      # dependency DLLs and the MSVC runtime beside the executable, then runs the
+      # windeployqt script from cmake/Packaging.cmake for Qt's plugins, and PROJ's
+      # data lands in share/proj where main.cpp's executable-relative probe finds it.
       - name: Stage portable build
         run: cmake --install build/dist-windows --prefix "${{ github.workspace }}/dist/met-viewer"
+
+      # Start the *installed* executable with nothing but the OS on PATH. The
+      # build tree always runs, because vcpkg's applocal step puts every DLL beside
+      # it; the install tree is assembled by different rules, and once shipped
+      # without PROJ, ecCodes, netCDF or Qt's own dependencies while every check
+      # above stayed green. A missing DLL fails here as 0xC0000135.
+      - name: Smoke-test the installed build
+        run: |
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $exe = "${{ github.workspace }}\dist\met-viewer\bin\met_viewer.exe"
+          $p = Start-Process -FilePath $exe -ArgumentList '--version' -Wait -PassThru `
+                             -NoNewWindow -RedirectStandardOutput version.txt
+          Get-Content version.txt
+          if ($p.ExitCode -ne 0) {
+            throw ("installed met_viewer.exe exited 0x{0:X8}" -f $p.ExitCode)
+          }
 
       - name: Upload portable build
         uses: actions/upload-artifact@v4

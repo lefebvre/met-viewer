@@ -10,9 +10,55 @@
 include(GNUInstallDirs)
 
 # --- Application executable ---------------------------------------------------
-install(TARGETS met_viewer
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+if(WIN32)
+    install(TARGETS met_viewer
+        RUNTIME_DEPENDENCY_SET met_runtime_deps
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+else()
+    install(TARGETS met_viewer
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+endif()
+
+# --- Non-Qt dependency DLLs (Windows) -----------------------------------------
+# The build tree runs only because vcpkg's applocal post-build step copies every
+# imported DLL beside the executable. Nothing carries those into the install
+# tree: windeployqt deploys Qt and nothing else, so an installed met_viewer.exe
+# had no PROJ, ecCodes, netCDF, HDF5 or fmt and would not start on any machine
+# that lacked them on PATH. CMake walks the executable's imports instead and
+# installs whatever resolves under the vcpkg bin directory.
+#
+# Qt's DLLs are deliberately left in the walk even though windeployqt installs
+# them too: an excluded DLL is not walked, and vcpkg's Qt imports pcre2, zstd,
+# harfbuzz, freetype, libpng and more, none of which windeployqt copies. Both
+# install the same file, so the overlap is harmless. api-ms-*/ext-ms-* are
+# API-set forwarders the loader resolves, and anything found under system32 is
+# the OS's or the MSVC runtime, which is installed separately below.
+if(POLICY CMP0207)
+    cmake_policy(SET CMP0207 NEW)  # match the exclusions against normalized paths
+endif()
+if(WIN32)
+    if(NOT DEFINED VCPKG_INSTALLED_DIR OR NOT DEFINED VCPKG_TARGET_TRIPLET)
+        message(FATAL_ERROR
+            "Packaging on Windows needs the vcpkg toolchain: the dependency DLLs are "
+            "collected from VCPKG_INSTALLED_DIR/<triplet>/bin.")
+    endif()
+    set(_met_vcpkg_root "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}")
+    install(RUNTIME_DEPENDENCY_SET met_runtime_deps
+        DIRECTORIES "${_met_vcpkg_root}/bin" "${_met_vcpkg_root}/debug/bin"
+        PRE_EXCLUDE_REGEXES "^api-ms-" "^ext-ms-"
+        POST_EXCLUDE_REGEXES "[/\\\\][Ss]ystem32[/\\\\]"
+        DESTINATION ${CMAKE_INSTALL_BINDIR}
+    )
+
+    # The MSVC runtime, app-local. vcomp140.dll is the OpenMP runtime: the vcpkg
+    # ecCodes on Windows is built with OpenMP locking and imports it.
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION ${CMAKE_INSTALL_BINDIR})
+    set(CMAKE_INSTALL_OPENMP_LIBRARIES ON)
+    set(CMAKE_INSTALL_UCRT_LIBRARIES OFF)  # part of Windows 10 and later
+    include(InstallRequiredSystemLibraries)
+endif()
 
 # --- Qt runtime bundling ------------------------------------------------------
 # On Windows, windeployqt copies the Qt DLLs and plugins the executable needs next
@@ -38,11 +84,16 @@ if(WIN32)
     # Runs as part of `cmake --install` (and therefore of cpack), against the exe
     # already placed in the install tree, so both the NSIS package and the
     # portable build get the same self-contained payload.
+    #
+    # --no-compiler-runtime: the runtime DLLs are installed app-locally above.
+    # Left to itself windeployqt drops vc_redist.x64.exe into bin/, which nothing
+    # ever runs, so it only added 25 MB.
     install(CODE "
         set(_met_exe \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/met_viewer.exe\")
         message(STATUS \"Deploying Qt runtime with ${MET_WINDEPLOYQT}\")
         execute_process(
-            COMMAND \"${MET_WINDEPLOYQT}\" --no-translations \"\${_met_exe}\"
+            COMMAND \"${MET_WINDEPLOYQT}\" --no-translations --no-compiler-runtime
+                    \"\${_met_exe}\"
             RESULT_VARIABLE _met_deploy_result)
         if(NOT _met_deploy_result EQUAL 0)
             message(FATAL_ERROR \"windeployqt failed (\${_met_deploy_result})\")
