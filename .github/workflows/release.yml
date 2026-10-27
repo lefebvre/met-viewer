@@ -240,6 +240,19 @@ jobs:
       - name: Stage portable build
         run: cmake --install build/dist-windows --prefix "${{ github.workspace }}/dist/met-viewer"
 
+      # Same check as ci.yml: the installed exe must start with only the OS on
+      # PATH, or the installer and zip would ship a program that cannot load.
+      - name: Smoke-test the installed build
+        run: |
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
+          $exe = "${{ github.workspace }}\dist\met-viewer\bin\met_viewer.exe"
+          $p = Start-Process -FilePath $exe -ArgumentList '--version' -Wait -PassThru `
+                             -NoNewWindow -RedirectStandardOutput version.txt
+          Get-Content version.txt
+          if ($p.ExitCode -ne 0) {
+            throw ("installed met_viewer.exe exited 0x{0:X8}" -f $p.ExitCode)
+          }
+
       # Zipped here rather than left to upload-artifact, because the release job
       # *downloads* artifacts before attaching them — an uploaded directory would
       # arrive expanded, and a release asset has to be a single file.
