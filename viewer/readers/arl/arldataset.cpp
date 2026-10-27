@@ -15,6 +15,7 @@
 #include <fmt/format.h>
 
 #include "viewer/core/crs.h"
+#include "viewer/core/pathutil.h"
 #include "viewer/core/timeaxis.h"
 
 namespace met::readers::arl {
@@ -242,7 +243,7 @@ ArlDataset::ArlDataset(std::filesystem::path path) : path_(std::move(path)) { sc
 
 void ArlDataset::scan() {
     std::ifstream in(path_, std::ios::binary);
-    if (!in) throw ReadError("ARL: cannot open " + path_.string());
+    if (!in) throw ReadError("ARL: cannot open " + core::pathToUtf8(path_));
 
     // Read the first label + INDX header.
     char label[50];
@@ -372,7 +373,7 @@ Field2D ArlDataset::readField(const core::FieldKey& key) {
     if (!handle) throw ReadError("ARL: field not in catalog");
 
     std::ifstream in(path_, std::ios::binary);
-    if (!in) throw ReadError("ARL: cannot reopen " + path_.string());
+    if (!in) throw ReadError("ARL: cannot reopen " + core::pathToUtf8(path_));
     in.seekg(static_cast<std::streamoff>(*handle), std::ios::beg);
 
     char label[50];

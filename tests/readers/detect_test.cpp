@@ -3,8 +3,10 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
 
+#include "viewer/core/pathutil.h"
 #include "viewer/readers/detect.h"
 #include "viewer/readers/ireader.h"
 
@@ -16,13 +18,19 @@ std::filesystem::path fixture(const char* name) {
     return std::filesystem::path(MET_FIXTURE_DIR) / name;
 }
 
+// Distinguishes this test process's files from another's running in parallel.
+// getpid() did the same, under a name MSVC deprecates.
+std::string runToken() {
+    static const std::string token = std::to_string(std::random_device{}());
+    return token;
+}
+
 // A temporary file with exactly these bytes, removed when the test ends.
 class TempFile {
 public:
     explicit TempFile(const std::string& contents) {
         path_ = std::filesystem::temp_directory_path() /
-                ("met_detect_test_" + std::to_string(::getpid()) + "_" + std::to_string(counter()) +
-                 ".bin");
+                ("met_detect_test_" + runToken() + "_" + std::to_string(counter()) + ".bin");
         std::ofstream out(path_, std::ios::binary);
         out.write(contents.data(), static_cast<std::streamsize>(contents.size()));
     }
@@ -44,6 +52,48 @@ private:
 };
 
 }  // namespace
+
+// Windows' narrow file APIs read a path in the ANSI code page, so a reader that
+// passes one through them cannot open a file under, say, C:\Users\José or a
+// Japanese folder name. Every reader has to take any path the OS can name.
+TEST(Detect, OpensEveryFormatFromADirectoryWhoseNameIsNotAscii) {
+    const std::string token = runToken();
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        std::filesystem::path(u8"met_\u00e9t\u00e9_\u65e5\u672c_" +
+                              std::u8string(token.begin(), token.end()));
+    std::filesystem::create_directories(dir);
+    struct Cleanup {
+        std::filesystem::path dir;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::remove_all(dir, ec);
+        }
+    } cleanup{dir};
+
+    for (const char* name : {"regular_ll_t500.grib2", "era5_t_pl.nc", "small_latlon.arl"}) {
+        const std::filesystem::path copy = dir / name;
+        std::filesystem::copy_file(fixture(name), copy);
+        // netcdf-c takes the path in the system code page, so a name that does
+        // not fit it opens only through its 8.3 short form. A volume with short
+        // names disabled has no way to name the file to netcdf-c at all, which
+        // is the environment's limit rather than the reader's.
+        if (std::string(name).ends_with(".nc") &&
+            core::pathForCodePageApi(copy) == core::pathToUtf8(copy)) {
+            std::printf("[  NOTE    ] %s: no code-page or 8.3 form of this path; skipped\n", name);
+            continue;
+        }
+        try {
+            auto ds = readers::openDataset(copy);
+            const auto& v = ds->catalog().variables().front();
+            const auto f = ds->readField(core::FieldKey{v.varName, v.levels.front(),
+                                                        v.times.front(), v.members.front()});
+            EXPECT_GT(f.width(), 0) << name;
+        } catch (const std::exception& e) {
+            ADD_FAILURE() << name << ": " << e.what();
+        }
+    }
+}
 
 TEST(Detect, RecognizesEachFixtureFormat) {
     EXPECT_EQ(readers::openDataset(fixture("regular_ll_t500.grib2"))->formatName(), "GRIB");

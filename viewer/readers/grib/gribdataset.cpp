@@ -14,6 +14,7 @@
 #include <fmt/format.h>
 
 #include "viewer/core/crs.h"
+#include "viewer/core/pathutil.h"
 #include "viewer/core/timeaxis.h"
 
 namespace met::readers::grib {
@@ -254,8 +255,8 @@ GribDataset::GribDataset(std::filesystem::path path) : path_(std::move(path)) { 
 
 void GribDataset::scan() {
     FileGuard fg;
-    fg.f = std::fopen(path_.string().c_str(), "rb");
-    if (!fg.f) throw ReadError("GRIB: cannot open " + path_.string());
+    fg.f = core::openForReading(path_);
+    if (!fg.f) throw ReadError("GRIB: cannot open " + core::pathToUtf8(path_));
 
     int err = 0;
     while (true) {
@@ -283,8 +284,8 @@ Field2D GribDataset::readField(const FieldKey& key) {
     if (!handle) throw ReadError("GRIB: field not in catalog");
 
     FileGuard fg;
-    fg.f = std::fopen(path_.string().c_str(), "rb");
-    if (!fg.f) throw ReadError("GRIB: cannot reopen " + path_.string());
+    fg.f = core::openForReading(path_);
+    if (!fg.f) throw ReadError("GRIB: cannot reopen " + core::pathToUtf8(path_));
     // 64-bit seek so GRIB messages past 2 GB in a large file are reachable.
     if (seek64(fg.f, static_cast<long long>(*handle), SEEK_SET) != 0)
         throw ReadError("GRIB: seek failed");
