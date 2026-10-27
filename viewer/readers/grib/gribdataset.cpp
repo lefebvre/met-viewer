@@ -39,6 +39,15 @@ inline int seek64(std::FILE* f, long long offset, int origin) {
 #endif
 }
 
+// Its counterpart, the current position as a 64-bit value.
+inline long long tell64(std::FILE* f) {
+#if defined(_WIN32)
+    return _ftelli64(f);
+#else
+    return static_cast<long long>(::ftello(f));
+#endif
+}
+
 // RAII for a codes_handle.
 struct HandleGuard {
     codes_handle* h = nullptr;
@@ -269,7 +278,15 @@ void GribDataset::scan() {
         if (grid != "regular_ll" && grid != "lambert" && grid != "polar_stereographic")
             continue;  // supported grids: regular lat/lon + Lambert + polar-stereographic
 
-        const auto offset = static_cast<core::RecordHandle>(getLong(raw, "offset"));
+        // Where the message starts, from the file position rather than the
+        // "offset" key: ecCodes hands that back as a C `long`, which is 32 bits on
+        // Windows, so every message past 2 GB came back truncated and readField
+        // seeked to the wrong place. Reading a message leaves the file at its end,
+        // and the message itself is far smaller than 2 GB.
+        const long long end = tell64(fg.f);
+        const long length = getLong(raw, "totalLength");
+        if (end < 0 || length <= 0 || length > end) throw ReadError("GRIB: cannot locate message");
+        const auto offset = static_cast<core::RecordHandle>(end - length);
         catalog_.addRecord(getString(raw, "shortName"), getString(raw, "name"),
                            getString(raw, "units"), getString(raw, "cfName"), mapLevel(raw),
                            mapTime(raw), memberOf(raw), offset);
