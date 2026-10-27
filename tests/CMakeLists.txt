@@ -79,6 +79,7 @@ find_package(Qt6 CONFIG REQUIRED COMPONENTS Widgets Gui)
 add_executable(met_app_tests
     test_main_app.cpp
     app/axislimits_test.cpp
+    app/coalescingcache_test.cpp
     app/exportname_test.cpp
     app/fieldcache_test.cpp
     app/figureexport_test.cpp

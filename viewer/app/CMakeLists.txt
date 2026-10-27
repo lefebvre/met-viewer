@@ -20,6 +20,7 @@ add_library(met_app STATIC
     openpipeline.h
     pointprofilecache.cpp
     pointprofilecache.h
+    coalescingcache.h
     pointprofilemodel.cpp
     pointprofilemodel.h
     pointprofiledock.cpp

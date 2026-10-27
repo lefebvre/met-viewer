@@ -127,11 +127,14 @@ TEST(PlanProfileRequest, QueuesASecondRequestBehindTheRunningOneRatherThanStarti
     EXPECT_EQ(second.action, ProfileAction::Wait);
     EXPECT_TRUE(cache.pending);
 
-    // When the first lands it is cached, and the queued request is chased.
+    // When the first lands it is cached, and the queued request is chased. It is
+    // not shown: the slider is already on the later time, and showing the earlier
+    // one's numbers meanwhile would put the wrong time's data under it.
     const ProfileDelivery delivered =
         deliverProfile(cache, key({"t"}), kDenver, profileAt(kDenver));
-    EXPECT_TRUE(delivered.display);
+    EXPECT_FALSE(delivered.display);
     EXPECT_TRUE(delivered.again);
+    EXPECT_EQ(cache.entries.size(), 1u);
     EXPECT_FALSE(cache.pending) << "the queued request is taken, not left to fire twice";
 }
 
@@ -185,6 +188,56 @@ TEST(PointProfileCache, ForgetsEverythingWhenThePointMoves) {
     ASSERT_TRUE(deliverProfile(cache, key({"t"}), kBoulder, profileAt(kBoulder)).display);
     cache.setPoint(kBoulder);
     EXPECT_EQ(cache.entries.size(), 1u);
+}
+
+// The reported bug: step to a new time (extraction starts), step back to a cached
+// one (served), and the first extraction then replaced the panel when it landed,
+// showing the later time's numbers while the slider read the earlier one.
+TEST(DeliverProfile, DoesNotShowAResultThePanelHasSinceMovedOffOf) {
+    PointProfileCache cache;
+    cache.setPoint(kDenver);
+    ASSERT_EQ(planProfileRequest(cache, key({"t"}), 9).action, ProfileAction::Extract);
+    ASSERT_TRUE(deliverProfile(cache, key({"t"}), kDenver, profileAt(kDenver)).display);
+
+    ASSERT_EQ(planProfileRequest(cache, key({"t"}, kLater), 9).action, ProfileAction::Extract);
+    ASSERT_EQ(planProfileRequest(cache, key({"t"}), 9).action, ProfileAction::Serve);
+
+    const ProfileDelivery late =
+        deliverProfile(cache, key({"t"}, kLater), kDenver, profileAt(kDenver));
+    EXPECT_FALSE(late.display) << "the panel is back on the earlier time";
+    EXPECT_FALSE(late.again) << "and that one was served, so nothing is left to fetch";
+    EXPECT_EQ(cache.entries.size(), 2u) << "the later time is still worth keeping";
+}
+
+// Same shape with "nothing to read": un-ticking every column while an extraction
+// runs must leave the panel saying so, not have the old selection reappear.
+TEST(DeliverProfile, DoesNotReplaceTheNothingToReadStateWhenAnOldResultLands) {
+    PointProfileCache cache;
+    cache.setPoint(kDenver);
+    ASSERT_EQ(planProfileRequest(cache, key({"t"}), 9).action, ProfileAction::Extract);
+    ASSERT_EQ(planProfileRequest(cache, key({}), 0).action, ProfileAction::NothingToRead);
+
+    EXPECT_FALSE(deliverProfile(cache, key({"t"}), kDenver, profileAt(kDenver)).display);
+}
+
+// The reported bug: a profile extracted from the previous dataset landed after
+// File > Open had replaced it, and was cached and shown as the new set's answer.
+TEST(DeliverProfile, DropsAResultReadFromADatasetThatHasSinceBeenReplaced) {
+    PointProfileCache cache;
+    cache.setEpoch(1);
+    cache.setPoint(kDenver);
+    ASSERT_EQ(planProfileRequest(cache, key({"t"}), 9).action, ProfileAction::Extract);
+
+    // The replace, and the panel asking again for the same time on the new set.
+    cache.setEpoch(2);
+    ASSERT_EQ(planProfileRequest(cache, key({"t"}), 9).action, ProfileAction::Wait);
+
+    const ProfileDelivery stale =
+        deliverProfile(cache, key({"t"}), kDenver, profileAt(kDenver));
+    EXPECT_FALSE(stale.display);
+    EXPECT_TRUE(stale.again) << "the new dataset still has to be read";
+    EXPECT_TRUE(cache.entries.empty());
+    EXPECT_EQ(planProfileRequest(cache, key({"t"}), 9).action, ProfileAction::Extract);
 }
 
 TEST(PointProfileCache, ForgetsEverythingWhenTheDatasetIsReplaced) {
