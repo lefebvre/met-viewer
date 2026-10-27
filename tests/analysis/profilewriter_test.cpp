@@ -245,3 +245,29 @@ TEST(CsvQuote, QuotesOnlyWhatWouldBreakAParseAndDoublesAnEmbeddedQuote) {
     EXPECT_EQ(csvQuote("a,b", '\t'), "a,b");  // not a separator here
     EXPECT_EQ(csvQuote("say \"hi\"", ','), "\"say \"\"hi\"\"\"");
 }
+
+// A unit the column cannot convert to is not used for the header either. The
+// values once fell back to the native unit while the header still named the
+// requested one, which could put Kelvin numbers under "(degC)".
+TEST(ProfileToCsv, KeepsTheHeaderAndTheValuesInOneUnitWhenAChoiceCannotConvert) {
+    ProfileUnits units;
+    units.columns = {"kt", ""};  // knots for a temperature column
+    const std::string csv = profileToCsv(sampleProfile(), {}, units);
+    EXPECT_EQ(headerLine(csv), "level,pressure (hPa),height MSL (gpm),t (K),wspd (m/s)");
+    EXPECT_EQ(dataLines(csv)[0], "1000 hPa,1000.00,110.9,273.15,10.00");
+}
+
+// A newline in a dataset label would start an uncommented line in the middle of
+// the '#' provenance block.
+TEST(ProfileToCsv, KeepsAMultiLineDatasetLabelOnOneCommentLine) {
+    ProfileExportInfo info;
+    info.datasetLabel = "a.nc\nb.nc\r\nc.nc";
+    const std::string csv = profileToCsv(sampleProfile(), info);
+    EXPECT_TRUE(contains(csv, "# dataset: a.nc b.nc  c.nc\n"));
+    for (const std::string& line : {std::string("b.nc"), std::string("c.nc")})
+        EXPECT_FALSE(contains(csv, "\n" + line));
+}
+
+TEST(CsvQuote, QuotesABareCarriageReturn) {
+    EXPECT_EQ(csvQuote("a\rb", ','), "\"a\rb\"");
+}
