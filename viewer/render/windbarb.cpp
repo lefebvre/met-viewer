@@ -1,12 +1,17 @@
 #include "viewer/render/windbarb.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace met::render {
 
 BarbCount quantizeBarb(double speedKnots) {
+    // NaN or a nonsense speed has no barb: lround of NaN is unspecified and the
+    // "* 5" below can overflow an int for a huge one. A thousand knots is far
+    // past anything real and still a drawable barb.
+    if (!(speedKnots > 0.0)) return {};
+    speedKnots = std::min(speedKnots, 1000.0);
     int n = static_cast<int>(std::lround(speedKnots / 5.0)) * 5;  // nearest 5 kt
-    if (n < 0) n = 0;
     BarbCount c;
     c.pennants = n / 50;
     n %= 50;

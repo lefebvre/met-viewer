@@ -29,6 +29,9 @@ float sampleBilinearIndex(const core::Field2D& field, double x, double y) {
     // would punch a dlon-wide NaN stripe through an otherwise global field (the
     // map warp already wraps, so the probe would disagree with what is drawn).
     const double maxX = wrapX ? static_cast<double>(w) : w - 1.0;
+    // NaN fails every comparison below, so it has to be refused explicitly: it
+    // would pass the range check and reach a float-to-int cast, which is UB.
+    if (!std::isfinite(x) || !std::isfinite(y)) return kNaN;
     if (x < 0.0 || y < 0.0 || x > maxX || y > h - 1.0) return kNaN;
 
     // Take the fractional parts before wrapping the cell index — wrapping first

@@ -3,9 +3,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include "viewer/analysis/wind.h"
 #include "viewer/core/grid.h"
+#include "viewer/render/tilemath.h"
 #include "viewer/render/windbarb.h"
 
 using namespace met;
@@ -43,6 +45,24 @@ TEST(Wind, BarbQuantization) {
     // Rounds to nearest 5.
     EXPECT_EQ(render::quantizeBarb(12.0).full, 1);  // 12 -> 10
     EXPECT_EQ(render::quantizeBarb(13.0).half, 1);  // 13 -> 15 -> 1 full + 1 half
+}
+
+// No barb for a speed that is not a number, and a bounded one for a huge speed
+// rather than an int overflow in the 5 kt rounding.
+TEST(Wind, BarbQuantizationRefusesNonsenseSpeeds) {
+    const auto nan = render::quantizeBarb(std::numeric_limits<double>::quiet_NaN());
+    EXPECT_EQ(nan.pennants + nan.full + nan.half, 0);
+    const auto huge = render::quantizeBarb(1e12);
+    EXPECT_EQ(huge.pennants, 20);
+    EXPECT_EQ(render::quantizeBarb(-10.0).pennants, 0);
+}
+
+// worldSize is exact at every zoom the map uses and defined outside it.
+TEST(TileMath, WorldSizeIsDefinedForAnyZoom) {
+    EXPECT_DOUBLE_EQ(render::tile::worldSize(0), 256.0);
+    EXPECT_DOUBLE_EQ(render::tile::worldSize(19), 256.0 * 524288.0);
+    EXPECT_DOUBLE_EQ(render::tile::worldSize(-1), 128.0);
+    EXPECT_GT(render::tile::worldSize(40), 0.0);
 }
 
 namespace {
