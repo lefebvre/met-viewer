@@ -2,10 +2,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <limits>
 #include <mutex>
 #include <optional>
 #include <set>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -185,8 +187,17 @@ std::optional<UnitFactor> parseFactor(const std::string& token) {
     if (digits == rest.size()) return std::nullopt;
     for (std::size_t k = digits; k < rest.size(); ++k)
         if (!std::isdigit(static_cast<unsigned char>(rest[k]))) return std::nullopt;
-    f.exponent = std::stoi(rest);
-    if (f.exponent == 0) return std::nullopt;
+    // from_chars rather than stoi: an exponent too large for an int ("s**-99999999999"
+    // in a crafted file's units) made stoi throw out_of_range, which nothing caught
+    // on its way up through the dataset dock and terminated the app. A silly but
+    // representable exponent is no use either, so anything past a small bound
+    // leaves the unit string as written.
+    const char* first = rest.data() + (rest[0] == '+' ? 1 : 0);
+    const auto [end, ec] = std::from_chars(first, rest.data() + rest.size(), f.exponent);
+    if (ec != std::errc{} || end != rest.data() + rest.size()) return std::nullopt;
+    constexpr int kMaxExponent = 99;
+    if (f.exponent == 0 || f.exponent > kMaxExponent || f.exponent < -kMaxExponent)
+        return std::nullopt;
     return f;
 }
 
