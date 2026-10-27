@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <string>
@@ -43,10 +44,16 @@ private:
         int lonAxis = -1;
         double scale = 1.0;
         double offset = 0.0;
-        double fill = 0.0;
         bool hasScale = false;
         bool hasOffset = false;
-        bool hasFill = false;
+        // Raw (packed) values that mean "no data": _FillValue, or netCDF's default
+        // fill for the type when there is none, plus every missing_value.
+        std::vector<double> missing;
+        // valid_range / valid_min / valid_max, in packed units.
+        double validMin = -std::numeric_limits<double>::infinity();
+        double validMax = std::numeric_limits<double>::infinity();
+        // Width of an integer type flagged `_Unsigned = "true"`, else 0.
+        int unsignedBits = 0;
         std::string units;
         std::string longName;
         std::string standardName;

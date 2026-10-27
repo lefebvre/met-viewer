@@ -48,6 +48,46 @@ std::optional<double> attDouble(int ncid, int varid, const char* name) {
     return v;
 }
 
+// Every value of a numeric attribute (missing_value and valid_range may hold
+// several).
+std::vector<double> attDoubles(int ncid, int varid, const char* name) {
+    std::size_t len = 0;
+    if (nc_inq_attlen(ncid, varid, name, &len) != NC_NOERR || len == 0) return {};
+    std::vector<double> v(len);
+    if (nc_get_att_double(ncid, varid, name, v.data()) != NC_NOERR) return {};
+    return v;
+}
+
+// netCDF's default fill value for a type: what a cell holds when nothing was
+// ever written to it. CF treats it as missing when no _FillValue is given. Bytes
+// are excluded, as netCDF's own guidance says, since their whole range is
+// commonly used for data.
+std::optional<double> defaultFill(nc_type type) {
+    switch (type) {
+        case NC_SHORT: return NC_FILL_SHORT;
+        case NC_USHORT: return NC_FILL_USHORT;
+        case NC_INT: return NC_FILL_INT;
+        case NC_UINT: return NC_FILL_UINT;
+        case NC_INT64: return static_cast<double>(NC_FILL_INT64);
+        case NC_UINT64: return static_cast<double>(NC_FILL_UINT64);
+        case NC_FLOAT: return static_cast<double>(NC_FILL_FLOAT);
+        case NC_DOUBLE: return NC_FILL_DOUBLE;
+        default: return std::nullopt;
+    }
+}
+
+int integerBits(nc_type type) {
+    switch (type) {
+        case NC_BYTE: return 8;
+        case NC_SHORT: return 16;
+        case NC_INT: return 32;
+        default: return 0;
+    }
+}
+
+// A signed stored value read back as the unsigned one it encodes.
+double asUnsigned(double raw, int bits) { return raw < 0 ? raw + std::ldexp(1.0, bits) : raw; }
+
 bool isLatUnits(const std::string& u) {
     const std::string l = lower(u);
     return l == "degrees_north" || l == "degree_north" || l == "degrees_n" || l == "degreesn";
@@ -416,12 +456,33 @@ void CfDataset::scan() {
             info.offset = *o;
             info.hasOffset = true;
         }
+        // Missing data. Without a _FillValue attribute the type's default fill
+        // still marks never-written cells, unless the variable was defined in
+        // no-fill mode; ignoring it let 9.97e36 through as data and blew out the
+        // colour range. missing_value is honoured alongside, and may list several.
         if (auto f = attDouble(ncid_, v, "_FillValue")) {
-            info.fill = *f;
-            info.hasFill = true;
-        } else if (auto f2 = attDouble(ncid_, v, "missing_value")) {
-            info.fill = *f2;
-            info.hasFill = true;
+            info.missing.push_back(*f);
+        } else {
+            int noFill = 0;
+            if (nc_inq_var_fill(ncid_, v, &noFill, nullptr) == NC_NOERR && !noFill)
+                if (auto d = defaultFill(type)) info.missing.push_back(*d);
+        }
+        for (double m : attDoubles(ncid_, v, "missing_value")) info.missing.push_back(m);
+
+        const auto unsignedAttr = attText(ncid_, v, "_Unsigned");
+        if (unsignedAttr && lower(*unsignedAttr) == "true") info.unsignedBits = integerBits(type);
+
+        const std::vector<double> range = attDoubles(ncid_, v, "valid_range");
+        if (range.size() == 2) {
+            info.validMin = range[0];
+            info.validMax = range[1];
+        } else {
+            if (auto lo = attDouble(ncid_, v, "valid_min")) info.validMin = *lo;
+            if (auto hi = attDouble(ncid_, v, "valid_max")) info.validMax = *hi;
+        }
+        if (info.unsignedBits > 0) {
+            info.validMin = asUnsigned(info.validMin, info.unsignedBits);
+            info.validMax = asUnsigned(info.validMax, info.unsignedBits);
         }
         vars_[nm] = info;
 
@@ -510,7 +571,14 @@ core::Field2D CfDataset::readField(const core::FieldKey& key) {
     field.values.resize(nlat * nlon);
     for (std::size_t i = 0; i < raw.size(); ++i) {
         double v = raw[i];
-        if (info.hasFill && v == info.fill) {
+        // Fill and missing values are compared as stored, before any _Unsigned
+        // reinterpretation, since the attributes carry the stored type's bits.
+        if (std::find(info.missing.begin(), info.missing.end(), v) != info.missing.end()) {
+            field.values[i] = nan;
+            continue;
+        }
+        if (info.unsignedBits > 0) v = asUnsigned(v, info.unsignedBits);
+        if (v < info.validMin || v > info.validMax) {
             field.values[i] = nan;
             continue;
         }
