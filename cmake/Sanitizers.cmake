@@ -24,3 +24,27 @@ if(MET_ENABLE_TSAN)
     target_compile_options(met_options INTERFACE -fsanitize=thread -fno-omit-frame-pointer -g)
     target_link_options(met_options INTERFACE -fsanitize=thread)
 endif()
+
+# Clang-only (libFuzzer), so it is opt-in rather than part of the default build or
+# of CI's GCC/MSVC matrix. See tests/fuzz/ and the `fuzz` preset.
+option(MET_ENABLE_FUZZING "Build the libFuzzer harnesses (requires Clang)" OFF)
+if(MET_ENABLE_FUZZING)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        message(FATAL_ERROR
+            "MET_ENABLE_FUZZING requires Clang (libFuzzer); current compiler is "
+            "${CMAKE_CXX_COMPILER_ID}. Configure with -DCMAKE_CXX_COMPILER=clang++.")
+    endif()
+    if(MET_ENABLE_TSAN)
+        message(FATAL_ERROR "MET_ENABLE_FUZZING runs under ASan and cannot be combined "
+                            "with MET_ENABLE_TSAN.")
+    endif()
+    # The code under test has to be instrumented, not just the harness. Coverage
+    # (fuzzer-no-link) is what lets libFuzzer steer mutations into the decoder's
+    # branches, and ASan in the decoder is what reports a misaligned read inside
+    # it. With both applied only to the harness file, the fuzzer mutated blind and
+    # a read past a buffer in arldataset.cpp went unreported. The libFuzzer main
+    # itself is linked into the harness alone (tests/fuzz/CMakeLists.txt).
+    target_compile_options(met_options INTERFACE
+        -fsanitize=fuzzer-no-link,address -fno-omit-frame-pointer -g)
+    target_link_options(met_options INTERFACE -fsanitize=address)
+endif()
