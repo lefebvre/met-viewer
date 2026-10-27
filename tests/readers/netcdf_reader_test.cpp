@@ -268,6 +268,58 @@ TEST(CfReader, StandardNameOutranksTheAxisName) {
     for (const auto& lvl : v->levels) EXPECT_EQ(lvl.type, core::VerticalLevel::Type::Hybrid);
 }
 
+// A float variable without a _FillValue attribute still uses netCDF's default fill
+// for cells nothing wrote. CF counts that as missing; reading it as data put
+// 9.97e36 into the field and the colour range.
+TEST(CfReader, DefaultFillIsMissingWithoutAFillValueAttribute) {
+    NcBuilder nc("default_fill");
+    const Axes a = standardAxes(nc);
+    std::vector<double> values = digits({kNLat, kNLon});
+    values[5] = static_cast<double>(NC_FILL_FLOAT);
+    nc.put(nc.var("v", NC_FLOAT, {a.lat, a.lon}), values);
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto f = ds->readField(core::FieldKey{"v", kSurface, ds->catalog().find("v")->times[0], -1});
+    EXPECT_TRUE(std::isnan(f.at(1, 1)));  // flat index 5
+    EXPECT_FLOAT_EQ(f.at(2, 1), 12.0f);
+}
+
+// valid_range, and a missing_value attribute that lists more than one value.
+TEST(CfReader, ValidRangeAndEveryMissingValueAreMasked) {
+    NcBuilder nc("valid_range");
+    const Axes a = standardAxes(nc);
+    const int v = nc.var("v", NC_FLOAT, {a.lat, a.lon});
+    nc.numbers(v, "valid_range", NC_FLOAT, {0.0, 20.0});
+    nc.numbers(v, "missing_value", NC_FLOAT, {1.0, 2.0});
+    nc.put(v, digits({kNLat, kNLon}));  // 0..3, 10..13, 20..23
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto f = ds->readField(core::FieldKey{"v", kSurface, ds->catalog().find("v")->times[0], -1});
+    EXPECT_FLOAT_EQ(f.at(0, 0), 0.0f);
+    EXPECT_TRUE(std::isnan(f.at(1, 0)));   // missing_value 1
+    EXPECT_TRUE(std::isnan(f.at(2, 0)));   // missing_value 2
+    EXPECT_FLOAT_EQ(f.at(0, 2), 20.0f);    // the range is inclusive
+    EXPECT_TRUE(std::isnan(f.at(1, 2)));   // 21 > valid max
+}
+
+// `_Unsigned = "true"` on a short: the stored bits are an unsigned 16-bit value,
+// which netcdf-c hands back as a negative signed one.
+TEST(CfReader, UnsignedShortsAreReadAsUnsigned) {
+    NcBuilder nc("unsigned");
+    const Axes a = standardAxes(nc);
+    const int v = nc.var("v", NC_SHORT, {a.lat, a.lon});
+    nc.text(v, "_Unsigned", "true");
+    nc.number(v, "scale_factor", NC_DOUBLE, 0.01);
+    std::vector<short> stored(kNLat * kNLon, 100);
+    stored[0] = -1;  // 0xFFFF -> 65535 -> 655.35
+    nc.putShorts(v, stored);
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto f = ds->readField(core::FieldKey{"v", kSurface, ds->catalog().find("v")->times[0], -1});
+    EXPECT_NEAR(f.at(0, 0), 655.35f, 1e-3);
+    EXPECT_NEAR(f.at(1, 0), 1.0f, 1e-6);
+}
+
 // ERA5 ensembles carry a `number` dimension. Each member is its own record, and
 // reading one returns that member's slab rather than member 0 labelled
 // deterministic.
