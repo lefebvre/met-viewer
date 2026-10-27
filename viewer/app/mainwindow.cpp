@@ -2068,6 +2068,11 @@ void MainWindow::openPreferences() {
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     saveSettings();
+    // The pool is a child of the window, so its destructor waits for every job.
+    // Jobs still queued -- prefetches during playback, analyses chasing a time
+    // step -- have nobody left to deliver to, so drop them here and the close
+    // waits only for the reads already running.
+    if (pool_) pool_->clear();
     QMainWindow::closeEvent(event);
 }
 
