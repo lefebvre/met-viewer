@@ -44,13 +44,29 @@ void gridSpacing(const core::GridDef& grid, int i, int j, double& dxStep, double
     }
 }
 
+// True when the grid's columns run all the way round, so column 0 and the last
+// column are neighbours.
+bool wrapsInLongitude(const core::GridDef& grid) {
+    const auto* g = std::get_if<core::RegularLatLonGrid>(&grid);
+    return g && g->globalWrapLon;
+}
+
 // Centered horizontal derivatives of a component at (i, j). Returns false at the
-// domain boundary or when a neighbour is missing.
+// domain boundary or when a neighbour is missing. On a grid that wraps in
+// longitude the first and last columns difference across the seam; treating them
+// as a boundary left a two-column NaN stripe through Greenwich on ERA5.
 bool centralDerivatives(const core::Field2D& comp, int i, int j, double dxStep, double dyStep,
                         double& ddx, double& ddy) {
     const int w = comp.width(), h = comp.height();
-    if (i <= 0 || j <= 0 || i >= w - 1 || j >= h - 1) return false;
-    const float xp = comp.at(i + 1, j), xm = comp.at(i - 1, j);
+    if (j <= 0 || j >= h - 1) return false;
+    int ip = i + 1, im = i - 1;
+    if (wrapsInLongitude(comp.grid) && w > 2) {
+        ip %= w;
+        im = (im + w) % w;
+    } else if (i <= 0 || i >= w - 1) {
+        return false;
+    }
+    const float xp = comp.at(ip, j), xm = comp.at(im, j);
     const float yp = comp.at(i, j + 1), ym = comp.at(i, j - 1);
     if (std::isnan(xp) || std::isnan(xm) || std::isnan(yp) || std::isnan(ym)) return false;
     ddx = (xp - xm) / (2.0 * dxStep);

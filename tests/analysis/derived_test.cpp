@@ -214,6 +214,40 @@ TEST(Derived, WindRotationTracksItsFrame) {
     }
 }
 
+// On a grid whose columns span the globe, the first and last columns are
+// neighbours; treating them as a boundary left a two-column NaN stripe through
+// Greenwich on ERA5.
+TEST(Derived, VorticityIsDefinedAcrossTheLongitudeSeam) {
+    core::RegularLatLonGrid g;
+    g.nlon = 8;
+    g.nlat = 5;
+    g.lon0 = 0.0;
+    g.dlon = 45.0;
+    g.lat0 = 20.0;
+    g.dlat = -10.0;
+    g.globalWrapLon = true;
+    analysis::WindField w;
+    w.u.grid = g;
+    w.v.grid = g;
+    // v = sin(lon): a meridional wind whose east-west gradient is the vorticity.
+    w.u.values.assign(40, 0.0f);
+    w.v.values.resize(40);
+    for (int j = 0; j < 5; ++j)
+        for (int i = 0; i < 8; ++i)
+            w.v.values[static_cast<std::size_t>(j * 8 + i)] =
+                static_cast<float>(std::sin(i * 45.0 * std::numbers::pi / 180.0));
+
+    const auto vo = analysis::relativeVorticityField(w);
+    const auto dv = analysis::divergenceField(w);
+    for (int i : {0, 7}) {
+        EXPECT_FALSE(std::isnan(vo.values[static_cast<std::size_t>(2 * 8 + i)])) << "column " << i;
+        EXPECT_FALSE(std::isnan(dv.values[static_cast<std::size_t>(2 * 8 + i)])) << "column " << i;
+    }
+    // Column 0 is the mirror of column 4 (sin is odd about 180°), so the
+    // across-the-seam difference has the opposite sign and equal size.
+    EXPECT_NEAR(vo.values[2 * 8 + 0], -vo.values[2 * 8 + 4], 1e-12);
+}
+
 TEST(Derived, SphericalMetricTermOnLatLonGrid) {
     // Constant wind (u=10, v=0) on a lat/lon grid: every finite difference is
     // zero, so vorticity reduces to the spherical metric term u*tan(phi)/R and

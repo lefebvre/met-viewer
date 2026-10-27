@@ -133,3 +133,39 @@ TEST(Contour, CacheReusesTheSameFieldAndInterval) {
     EXPECT_EQ(first, second);  // same storage: nothing was rebuilt
     EXPECT_EQ(first->size(), second->size());
 }
+
+// On a grid whose columns span the globe, the cell between the last column and
+// column 0 is a real cell. Leaving it out broke every isoline on a global map at
+// the grid's first longitude (Greenwich, for ERA5).
+TEST(Contour, WrappedGridIsContouredAcrossTheSeam) {
+    // Column 7 is low and its neighbours either side (6, and 0 across the seam)
+    // are high, so the 0.5 isoline crosses both cells beside it.
+    auto f = makeField(8, 3, [](int c, int) { return c == 7 ? 0.0 : 1.0; });
+    auto& g = std::get<core::RegularLatLonGrid>(f.grid);
+    g.dlon = 45.0;
+    g.globalWrapLon = true;
+
+    auto beyondLastColumn = [](const std::vector<ContourSegment>& segs) {
+        int n = 0;
+        for (const auto& s : segs)
+            if (s.x0 > 7.0 || s.x1 > 7.0) ++n;
+        return n;
+    };
+    EXPECT_EQ(beyondLastColumn(contourAt(f, 0.5)), 0) << "off by default: a flat view has no seam";
+    const auto wrapped = contourAt(f, 0.5, /*wrapLon=*/true);
+    EXPECT_GT(beyondLastColumn(wrapped), 0);
+    for (const auto& s : wrapped) {
+        EXPECT_LE(s.x0, 8.0);
+        EXPECT_LE(s.x1, 8.0);
+    }
+}
+
+// Levels are first + k*interval, not a running sum, so they stay exact
+// multiples of the interval however many there are.
+TEST(Contour, LevelsDoNotAccumulateRoundingError) {
+    auto f = makeField(4, 4, [](int c, int r) { return 0.05 + 0.1 * (c + 4 * r); });
+    const auto levels = contourLevels(f, 0.1);
+    ASSERT_GE(levels.size(), 10u);
+    for (std::size_t k = 0; k < levels.size(); ++k)
+        EXPECT_DOUBLE_EQ(levels[k].value, levels.front().value + static_cast<double>(k) * 0.1);
+}
