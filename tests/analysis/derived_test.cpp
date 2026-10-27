@@ -84,6 +84,17 @@ TEST(Derived, WindFieldsAgreeWithTheScalarHelpersAtEveryCell) {
     }
 }
 
+// Calm air reports 0, not the 180° ("from the south") that atan2(-0, -0) gives,
+// and the result always stays in [0, 360).
+TEST(Derived, CalmWindHasDirectionZeroAndDirectionsStayBelow360) {
+    EXPECT_EQ(analysis::windDirectionFrom(0.0f, 0.0f), 0.0f);
+    EXPECT_EQ(analysis::windDirectionFrom(-0.0f, -0.0f), 0.0f);
+    // Blowing toward the south from very slightly east of north.
+    const float nearlyNorth = analysis::windDirectionFrom(1e-30f, -5.0f);
+    EXPECT_GE(nearlyNorth, 0.0f);
+    EXPECT_LT(nearlyNorth, 360.0f);
+}
+
 TEST(Derived, ScalarWindHelpersYieldNaNWhenEitherComponentIsMissing) {
     const float nan = std::numeric_limits<float>::quiet_NaN();
     EXPECT_TRUE(std::isnan(analysis::windSpeedFrom(nan, 1.0f)));
@@ -273,4 +284,17 @@ TEST(Derived, SphericalMetricTermOnLatLonGrid) {
     const auto dv = analysis::divergenceField(w);
     EXPECT_NEAR(vo.values[2 * 5 + 2], 10.0 * std::tan(phi) / R, 1e-12);  // interior at lat 45
     EXPECT_NEAR(dv.values[2 * 5 + 2], 0.0, 1e-12);
+}
+
+// asTemperatureKelvin reads units through the units module, so the CF spelling
+// "degree_Celsius" converts instead of passing through as if it were Kelvin.
+TEST(Derived, AsTemperatureKelvinConvertsTheCfCelsiusSpelling) {
+    core::Field2D t;
+    t.grid = metreGrid(2, 1000);
+    t.meta.varName = "t";
+    t.meta.units = "degree_Celsius";
+    t.values = {15.0f, 15.0f, 15.0f, 15.0f};
+    const auto k = analysis::asTemperatureKelvin(t);
+    ASSERT_TRUE(k.has_value());
+    EXPECT_NEAR(k->values[0], 288.15f, 1e-3);
 }

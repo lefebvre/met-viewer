@@ -158,3 +158,19 @@ TEST(Units, SpellsAnExportedUnitInPlainAscii) {
     EXPECT_EQ(unitLabelAscii("Cel"), "degC");
     EXPECT_EQ(unitLabelAscii("K"), "K");
 }
+
+// CF's own spelling of Celsius, and its variants. A field in "degree_Celsius" was
+// taken for Kelvin by code that asked whether it was Celsius.
+TEST(Units, RecognizesTheCfSpellingsOfCelsius) {
+    for (const char* u : {"degree_Celsius", "degrees_Celsius", "degree_C", "degrees_C", "degC"}) {
+        EXPECT_EQ(canonicalUnit(u), "Cel") << u;
+        EXPECT_NEAR(*convert(0.0, u, "K"), 273.15, 1e-9) << u;
+    }
+    EXPECT_EQ(canonicalUnit("degrees_kelvin"), "K");
+}
+
+// "dm" is the decimetre in UDUNITS and SI, not the decametre "gpdm" and "dam" are.
+TEST(Units, DecimetreIsNotTakenForADecametre) {
+    EXPECT_NE(canonicalUnit("dm"), "dam");
+    EXPECT_FALSE(convert(5.0, "dm", "gpm").has_value());
+}
