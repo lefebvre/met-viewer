@@ -2,6 +2,8 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 #include "viewer/core/grid.h"
@@ -83,4 +85,43 @@ TEST(GribReader, GridGeometryMatches) {
     const core::BBox b = core::gridBBox(f.grid);
     EXPECT_DOUBLE_EQ(b.minLat, 56.0);
     EXPECT_DOUBLE_EQ(b.maxLat, 70.0);
+}
+
+// Each record is located by where its message starts in the file. That is now
+// taken from the file position after the message is read, not from ecCodes'
+// "offset" key, which is a 32-bit long on Windows. Junk between messages (a WMO
+// bulletin header, padding) is skipped by ecCodes, so the start has to come out
+// right with bytes before and between the messages too.
+TEST(GribReader, LocatesEveryMessageInAFileWithBytesBetweenThem) {
+    const auto dir = std::filesystem::path(MET_FIXTURE_DIR);
+    auto bytes = [](const std::filesystem::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "met_grib_offsets_test.grib2";
+    {
+        std::ofstream out(path, std::ios::binary);
+        out << "SOME HEADER\r\r\n" << bytes(dir / "regular_ll_t500.grib2")
+            << std::string("\0\0PAD", 5) << bytes(dir / "wind_uv_850.grib2");
+    }
+    struct Cleanup {
+        std::filesystem::path p;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::remove(p, ec);
+        }
+    } cleanup{path};
+
+    auto combined = readers::openDataset(path);
+    for (const char* name : {"regular_ll_t500.grib2", "wind_uv_850.grib2"}) {
+        auto single = readers::openDataset(dir / name);
+        for (const auto& v : single->catalog().variables()) {
+            const core::FieldKey key{v.varName, v.levels.front(), v.times.front(),
+                                     v.members.front()};
+            const auto expected = single->readField(key);
+            const auto got = combined->readField(key);
+            EXPECT_EQ(got.values, expected.values) << name << " " << v.varName;
+        }
+    }
 }
