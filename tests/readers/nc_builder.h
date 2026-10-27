@@ -50,6 +50,12 @@ public:
         pendingDoubles_.push_back({v, values});
         return d;
     }
+    // The id of a variable already defined, e.g. a coordinate made by coord().
+    int varid(const char* name) const {
+        int id = 0;
+        check(nc_inq_varid(ncid_, name, &id), "nc_inq_varid");
+        return id;
+    }
     void text(int varid, const char* name, const std::string& value) {
         check(nc_put_att_text(ncid_, varid, name, value.size(), value.data()), "nc_put_att_text");
     }

@@ -77,6 +77,11 @@ constexpr core::RecordHandle kIndexMask = 0xFFFFFF;
 // metres for height; 1.0 otherwise). Recognizing height/sigma/hybrid/model/
 // isentropic axes — not just pressure — is what keeps a multi-level variable
 // from collapsing to a single slice.
+//
+// The evidence is weighed strongest first: standard_name, then units, then the
+// variable name. The order matters because names are reused across conventions.
+// CMIP calls its hybrid sigma-pressure axis `lev` (values near 0.99, unit "1"),
+// and a name-first match read every one of those levels as "0.99 hPa".
 bool classifyVertical(const std::string& units, const std::string& standardName,
                       const std::string& name, bool hasPositive, VerticalLevel::Type& type,
                       double& scale) {
@@ -87,36 +92,39 @@ bool classifyVertical(const std::string& units, const std::string& standardName,
 
     const bool pressureUnit =
         u == "hpa" || u == "pa" || u == "millibar" || u == "mb" || u == "mbar";
-    if (pressureUnit || s.find("air_pressure") != std::string::npos || n == "pressure_level" ||
-        n == "plev" || n == "level" || n == "lev" || n == "isobaricinhpa" || n == "isobaric") {
-        type = VerticalLevel::Type::PressureHPa;
-        scale = (u == "pa") ? 0.01 : 1.0;
+    const bool lengthUnit = u == "m" || u == "metre" || u == "metres" || u == "meter" ||
+                            u == "meters" || u == "km";
+    auto set = [&](VerticalLevel::Type t) {
+        type = t;
+        if (t == VerticalLevel::Type::PressureHPa) scale = (u == "pa") ? 0.01 : 1.0;
+        if (t == VerticalLevel::Type::HeightM) scale = (u == "km") ? 1000.0 : 1.0;
         return true;
-    }
-    if (s == "atmosphere_hybrid_sigma_pressure_coordinate" || n == "hybrid" || n == "hyblevel") {
-        type = VerticalLevel::Type::Hybrid;
-        return true;
-    }
-    if (s == "atmosphere_sigma_coordinate" || n == "sigma") {
-        type = VerticalLevel::Type::Sigma;
-        return true;
-    }
+    };
+
+    // 1. standard_name says what the axis is.
+    if (s.find("air_pressure") != std::string::npos) return set(VerticalLevel::Type::PressureHPa);
+    if (s == "atmosphere_hybrid_sigma_pressure_coordinate") return set(VerticalLevel::Type::Hybrid);
+    if (s == "atmosphere_sigma_coordinate") return set(VerticalLevel::Type::Sigma);
     if (s == "atmosphere_hybrid_height_coordinate" || s == "height" || s == "altitude" ||
-        s == "geopotential_height" || u == "m" || u == "metre" || u == "metres" || u == "meter" ||
-        u == "meters" || u == "km" || n == "height" || n == "altitude") {
-        type = VerticalLevel::Type::HeightM;
-        scale = (u == "km") ? 1000.0 : 1.0;
-        return true;
-    }
-    if (s == "air_potential_temperature" || n == "theta" || n == "isentropic" || n == "pt") {
-        type = VerticalLevel::Type::Isentropic;
-        return true;
-    }
-    if (s == "model_level_number" || n == "model_level" || n == "model_level_number" ||
-        n == "nlev") {
-        type = VerticalLevel::Type::ModelLevel;
-        return true;
-    }
+        s == "geopotential_height")
+        return set(VerticalLevel::Type::HeightM);
+    if (s == "air_potential_temperature") return set(VerticalLevel::Type::Isentropic);
+    if (s == "model_level_number") return set(VerticalLevel::Type::ModelLevel);
+
+    // 2. Units that fix the quantity.
+    if (pressureUnit) return set(VerticalLevel::Type::PressureHPa);
+    if (lengthUnit) return set(VerticalLevel::Type::HeightM);
+
+    // 3. The name alone.
+    if (n == "hybrid" || n == "hyblevel") return set(VerticalLevel::Type::Hybrid);
+    if (n == "sigma") return set(VerticalLevel::Type::Sigma);
+    if (n == "pressure_level" || n == "plev" || n == "level" || n == "lev" ||
+        n == "isobaricinhpa" || n == "isobaric")
+        return set(VerticalLevel::Type::PressureHPa);
+    if (n == "height" || n == "altitude") return set(VerticalLevel::Type::HeightM);
+    if (n == "theta" || n == "isentropic" || n == "pt") return set(VerticalLevel::Type::Isentropic);
+    if (n == "model_level" || n == "model_level_number" || n == "nlev")
+        return set(VerticalLevel::Type::ModelLevel);
     // A CF `positive: up|down` attribute marks a generic vertical axis; accept it
     // as an unknown-typed level rather than silently dropping the dimension.
     if (hasPositive) {
