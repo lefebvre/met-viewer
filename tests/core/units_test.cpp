@@ -174,3 +174,11 @@ TEST(Units, DecimetreIsNotTakenForADecametre) {
     EXPECT_NE(canonicalUnit("dm"), "dam");
     EXPECT_FALSE(convert(5.0, "dm", "gpm").has_value());
 }
+
+// An exponent too large for an int in a file's units string made stoi throw,
+// which nothing caught on the GUI thread. Such a string is left as written.
+TEST(Units, AnAbsurdExponentLeavesTheLabelAloneRatherThanThrowing) {
+    EXPECT_EQ(unitLabel("s**-99999999999"), "s**-99999999999");
+    EXPECT_EQ(unitLabel("m s**-1000"), "m s**-1000");
+    EXPECT_EQ(unitLabel("m s**+2"), "m s\xC2\xB2");
+}
