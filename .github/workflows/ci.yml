@@ -237,15 +237,21 @@ jobs:
 
       - name: Test (tsan)
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-        env:
-          # halt_on_error keeps the first race as the visible failure instead of
-          # burying it under whatever the run does afterwards. The suppressions
-          # file exists to hold third-party noise (Qt/PROJ/HDF5 internals we
-          # neither own nor can fix) — see the file for the rule on adding to it.
-          TSAN_OPTIONS: halt_on_error=1:second_deadlock_stack=1:suppressions=${{ github.workspace }}/.tsan-suppressions
-        # Excluded for the same reason as the asan run: a wall-clock budget under
-        # instrumentation measures TSan, not the code.
-        run: ctest --preset tsan-dist -E 'Warp\.(Projected)?PerformanceTripwire'
+        # halt_on_error keeps the first race as the visible failure instead of
+        # burying it under whatever the run does afterwards. The suppressions
+        # file exists to hold third-party noise (Qt/PROJ/HDF5 internals we
+        # neither own nor can fix) — see the file for the rule on adding to it.
+        # TSAN_OPTIONS is set at runtime from $GITHUB_WORKSPACE for the same
+        # reason as VCPKG_BINARY_SOURCES above: `${{ github.workspace }}` is the
+        # host path, which does not exist inside the container, and TSan aborts
+        # every test binary when it cannot read the suppressions file.
+        #
+        # The timing tripwires are excluded for the same reason as the asan run: a
+        # wall-clock budget under instrumentation measures TSan, not the code.
+        shell: bash
+        run: |
+          export TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1:suppressions=$GITHUB_WORKSPACE/.tsan-suppressions"
+          ctest --preset tsan-dist -E 'Warp\.(Projected)?PerformanceTripwire'
 
   windows:
     name: Windows
