@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "viewer/analysis/pointprofile.h"
+#include "viewer/app/coalescingcache.h"
 #include "viewer/core/geo.h"
 #include "viewer/core/timeaxis.h"
 
@@ -45,19 +46,15 @@ struct ProfileCacheKey {
 [[nodiscard]] ProfileCacheKey makeProfileCacheKey(core::TimePoint time, int member,
                                                   const std::vector<std::string>& columnIds);
 
-// One panel's cached profiles and its in-flight bookkeeping.
-struct PointProfileCache {
-    bool inFlight = false;
-    bool pending = false;
-    std::uint64_t epoch = 0;  // the dataset generation these entries describe
+// One panel's cached profiles and its in-flight bookkeeping: the shared
+// coalescing cache (coalescingcache.h) plus the picked point, which the key
+// deliberately leaves out.
+struct PointProfileCache : CoalescingCache<ProfileCacheKey, analysis::PointProfile> {
     core::LatLon point{};
-    std::map<ProfileCacheKey, analysis::PointProfile> entries;
 
     // A new point invalidates everything: none of it was sampled here. Compared
     // exactly, since the value either came from the same pick or a different one.
     void setPoint(core::LatLon p);
-    // A replaced dataset invalidates everything for the same reason.
-    void setEpoch(std::uint64_t generation);
 };
 
 enum class ProfileAction {
@@ -83,15 +80,14 @@ struct ProfilePlan {
 [[nodiscard]] ProfilePlan planProfileRequest(PointProfileCache& cache, const ProfileCacheKey& key,
                                              int estimatedReads);
 
-struct ProfileDelivery {
-    bool display = false;  // the result answers the point the panel is on now
-    bool again = false;    // run another extraction: superseded, or one queued behind
-};
+using ProfileDelivery = CacheDelivery;
 
 // Take a finished extraction. `extractedFor` is the point the job was started
 // with; when the panel has since moved, the result is dropped rather than cached,
 // because the key cannot tell the two points apart and storing it would make the
-// new point read the old point's data for as long as the entry lives.
+// new point read the old point's data for as long as the entry lives. A result
+// from a replaced dataset is dropped the same way, and one for a time, member or
+// column set the panel has since moved off is cached but not displayed.
 [[nodiscard]] ProfileDelivery deliverProfile(PointProfileCache& cache, const ProfileCacheKey& key,
                                              core::LatLon extractedFor,
                                              const analysis::PointProfile& profile);

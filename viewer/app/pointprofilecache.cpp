@@ -21,12 +21,6 @@ void PointProfileCache::setPoint(core::LatLon p) {
     entries.clear();
 }
 
-void PointProfileCache::setEpoch(std::uint64_t generation) {
-    if (epoch == generation) return;
-    epoch = generation;
-    entries.clear();
-}
-
 ProfilePlan planProfileRequest(PointProfileCache& cache, const ProfileCacheKey& key,
                                int estimatedReads) {
     ProfilePlan plan;
@@ -34,49 +28,37 @@ ProfilePlan planProfileRequest(PointProfileCache& cache, const ProfileCacheKey& 
 
     // Nothing to read is decided before the cache is consulted: a selection that
     // reads nothing has nothing to show, whatever an earlier one happened to
-    // leave behind under the same key.
+    // leave behind under the same key. Nothing is wanted either, so an
+    // extraction still running for the previous selection does not replace the
+    // "choose a column" state when it lands.
     if (estimatedReads <= 0) {
+        cache.wanted.reset();
         plan.action = ProfileAction::NothingToRead;
         return plan;
     }
 
-    if (const auto it = cache.entries.find(key); it != cache.entries.end()) {
-        plan.action = ProfileAction::Serve;
-        plan.cached = &it->second;
-        return plan;
+    const CachePlan<analysis::PointProfile> shared = planRequest(cache, key);
+    plan.cached = shared.cached;
+    switch (shared.action) {
+        case CacheAction::Serve: plan.action = ProfileAction::Serve; break;
+        case CacheAction::Wait: plan.action = ProfileAction::Wait; break;
+        case CacheAction::Extract: plan.action = ProfileAction::Extract; break;
     }
-
-    if (cache.inFlight) {
-        // Coalesce: one extraction at a time, and the newest request is chased
-        // when it lands rather than queued behind every intermediate one.
-        cache.pending = true;
-        plan.action = ProfileAction::Wait;
-        return plan;
-    }
-
-    cache.inFlight = true;
-    plan.action = ProfileAction::Extract;
     return plan;
 }
 
 ProfileDelivery deliverProfile(PointProfileCache& cache, const ProfileCacheKey& key,
                                core::LatLon extractedFor, const analysis::PointProfile& profile) {
-    cache.inFlight = false;
-    ProfileDelivery out;
-
     if (cache.point.lat != extractedFor.lat || cache.point.lon != extractedFor.lon) {
         // Superseded. Time and member need no such check -- they are in the key,
         // so a result is still the right answer for them.
+        cache.inFlight = false;
         cache.pending = false;
+        ProfileDelivery out;
         out.again = true;
         return out;
     }
-
-    cache.entries[key] = profile;
-    out.display = true;
-    out.again = cache.pending;
-    cache.pending = false;
-    return out;
+    return deliverResult(cache, key, profile);
 }
 
 }  // namespace met::app

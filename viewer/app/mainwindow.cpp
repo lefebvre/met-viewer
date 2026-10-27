@@ -52,6 +52,7 @@
 #include "viewer/analysis/sounding.h"
 #include "viewer/analysis/timeseries.h"
 #include "viewer/app/analysisdocks.h"
+#include "viewer/app/coalescingcache.h"
 #include "viewer/app/coastlines.h"
 #include "viewer/app/colorbarwidget.h"
 #include "viewer/app/controlpanel.h"
@@ -664,6 +665,13 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
         loadedSources_.clear();
         fieldCache_.clear();  // a fresh set invalidates cached fields
         ++datasetEpoch_;      // and invalidates the per-tab analysis caches
+        // A U/V decode still running reads the old set. Supersede it, so a request
+        // for the same keys starts a new decode instead of joining that one. Its
+        // waiters are dropped rather than failed: the new field's presentation
+        // asks for the wind again, and a failure would flash "no wind pair".
+        ++windGeneration_;
+        windInFlight_ = false;
+        windWaiters_.clear();
     }
     for (auto& [path, ds] : batch.opened) {
         loadedPaths_.push_back(path);
@@ -703,12 +711,10 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
         addRecentFile(QString::fromStdString(batch.opened.front().first.string()));
 
     // Restore the prior field (add) or show the first available one (replace/no prior).
+    const auto& vars = dataset_->catalog().variables();
     if (keepSelection && dataset_->catalog().find(keep.varName)) {
         onFieldChosen(keep);
-        return;
-    }
-    const auto& vars = dataset_->catalog().variables();
-    if (!vars.empty() && !vars.front().levels.empty()) {
+    } else if (!vars.empty() && !vars.front().levels.empty()) {
         const auto& v = vars.front();
         core::FieldKey key;
         key.varName = v.varName;
@@ -716,10 +722,15 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
         key.validTime = v.times.empty() ? core::TimePoint{} : v.times.front();
         key.member = v.members.empty() ? -1 : v.members.front();
         onFieldChosen(key);
-        return;
+    } else {
+        updateTimeSeriesAvailability();  // nothing selectable in the new set
+        updatePointProfileAvailability();
     }
-    updateTimeSeriesAvailability();  // nothing selectable in the new set
-    updatePointProfileAvailability();
+
+    // Open analyses re-extract from the new set. Without this they kept the old
+    // file's numbers until the next time step, while the profile panel's export
+    // header already named the new file.
+    if (replace) refreshAnalyses();
 }
 
 void MainWindow::onFieldChosen(const core::FieldKey& key) {
@@ -883,8 +894,13 @@ void MainWindow::decodeCurrent() {
     // animation (empty text keeps probeLabel_'s "Decoding…" as the message).
     auto prog = std::make_shared<JobProgress>();
     beginJob(QString(), prog);
-    submitDecode(*pool_, dataset_, key, gen, this, [this, gen, key, prog](DecodeOutcome outcome) {
+    const quint64 epoch = datasetEpoch_;
+    submitDecode(*pool_, dataset_, key, gen, this, [this, gen, epoch, key, prog](DecodeOutcome outcome) {
         endJob(prog);
+        // A FieldKey does not name its dataset. A decode from a set that has since
+        // been replaced must not reach the cache, or the new set reads it back for
+        // any key the two share (overlapping valid times of two model runs).
+        if (epoch != datasetEpoch_) return;
         if (!outcome.field) {
             if (outcome.generation == generation_) {
                 probeLabel_->setText(tr("Decode error: %1").arg(outcome.error));
@@ -1051,9 +1067,11 @@ void MainWindow::prefetchAhead() {
         key.validTime = currentTimes_[static_cast<std::size_t>((timeIdx_ + step) % n)];
         key.member = currentMember_;
         if (fieldCache_.contains(key)) continue;
-        // Prefetch jobs never display (generation 0); they only warm the cache.
-        submitDecode(*pool_, dataset_, key, 0, this, [this, key](DecodeOutcome outcome) {
-            if (outcome.field) fieldCache_.put(key, outcome.field);
+        // Prefetch jobs never display (generation 0); they only warm the cache, and
+        // only the cache of the dataset they read (see decodeCurrent).
+        const quint64 epoch = datasetEpoch_;
+        submitDecode(*pool_, dataset_, key, 0, this, [this, epoch, key](DecodeOutcome outcome) {
+            if (outcome.field && epoch == datasetEpoch_) fieldCache_.put(key, outcome.field);
         });
     }
 }
@@ -1273,16 +1291,12 @@ ViewFrame* MainWindow::wrapTimeSeries(TimeSeriesView* view) {
     return new ViewFrame(view, panel);
 }
 
-// Per-tab state backing a time-following cross-section / skew-T: an inFlight/pending
-// pair that coalesces refreshes to one extraction at a time, plus a per-(validTime,
-// member) cache of the extracted result so a looping Play recomputes nothing after the
-// first pass. `epoch` records the datasetEpoch_ the cache was built against.
-struct MainWindow::CrossSectionTab {
-    bool inFlight = false;
-    bool pending = false;
-    quint64 epoch = 0;
-    std::map<std::pair<std::int64_t, int>, analysis::CrossSection> cache;
-};
+// Per-tab state backing a time-following cross-section / skew-T: the shared
+// coalescing cache (coalescingcache.h), keyed by (validTime, member). The
+// variable, path and point are fixed for the life of a tab, so they are not.
+using AnalysisTabKey = std::pair<std::int64_t, int>;
+struct MainWindow::CrossSectionTab : CoalescingCache<AnalysisTabKey, analysis::CrossSection> {};
+struct MainWindow::SoundingTab : CoalescingCache<AnalysisTabKey, analysis::Sounding> {};
 
 // State for the single point-profile panel: one extraction in flight at a time,
 // and a cache so scrubbing back over a visited time re-reads nothing.
@@ -1379,34 +1393,22 @@ void MainWindow::refreshPointProfileTab() {
         });
 }
 
-struct MainWindow::SoundingTab {
-    bool inFlight = false;
-    bool pending = false;
-    quint64 epoch = 0;
-    std::map<std::pair<std::int64_t, int>, analysis::Sounding> cache;
-};
-
 void MainWindow::refreshCrossSectionTab(QPointer<CrossSectionView> view, std::string var,
                                         std::vector<core::LatLon> path,
                                         std::shared_ptr<CrossSectionTab> tab) {
     if (!view || !dataset_ || currentTimes_.empty()) return;
-    if (tab->epoch != datasetEpoch_) {  // a dataset replace invalidated the cache
-        tab->cache.clear();
-        tab->epoch = datasetEpoch_;
-    }
+    tab->setEpoch(datasetEpoch_);  // a dataset replace invalidates the cache
     const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
     const int mem = currentMember_;
-    const auto key = std::make_pair(static_cast<std::int64_t>(t.epochSeconds), mem);
+    const AnalysisTabKey key{static_cast<std::int64_t>(t.epochSeconds), mem};
 
-    if (auto it = tab->cache.find(key); it != tab->cache.end()) {
-        view->setSection(it->second);  // instant cache hit — no extraction thread
+    const auto plan = planRequest(*tab, key);
+    if (plan.action == CacheAction::Serve) {
+        view->setSection(*plan.cached);  // instant cache hit — no extraction thread
         return;
     }
-    if (tab->inFlight) {  // an extraction is running; chase the latest time when it lands
-        tab->pending = true;
-        return;
-    }
-    tab->inFlight = true;
+    if (plan.action == CacheAction::Wait) return;  // chased when the running one lands
+
     auto dset = dataset_;
     auto p = std::make_shared<JobProgress>();
     p->total = extractions::estimateCrossSectionReads(*dset, var);
@@ -1418,15 +1420,20 @@ void MainWindow::refreshCrossSectionTab(QPointer<CrossSectionView> view, std::st
         },
         [this, view, var, path, tab, key, p](analysis::CrossSection ncs) {
             endJob(p);
-            tab->inFlight = false;
-            if (ncs.pressures.size() >= 2) {
-                tab->cache[key] = ncs;            // cache the result for this (time, member)
-                if (view) view->setSection(ncs);  // always apply (coalescing keeps these in order)
+            const bool usable = ncs.pressures.size() >= 2;
+            const CacheDelivery delivered = deliverResult(*tab, key, ncs, usable);
+            if (delivered.display && view) {
+                // An unusable result still replaces what was there: after a dataset
+                // replace it means this variable is not in the new set, and keeping
+                // the old section up would show the previous file's data.
+                view->setSection(usable ? ncs : analysis::CrossSection{});
+                if (!usable)
+                    statusBar()->showMessage(
+                        tr("Cross-section: '%1' has no multi-level data here")
+                            .arg(QString::fromStdString(var)),
+                        4000);
             }
-            if (tab->pending) {  // newer time requested while this ran → re-chase the current one
-                tab->pending = false;
-                refreshCrossSectionTab(view, var, path, tab);
-            }
+            if (delivered.again) refreshCrossSectionTab(view, var, path, tab);
             maybeAdvancePlayback();  // this tab's load settled → maybe advance
         });
 }
@@ -1434,23 +1441,18 @@ void MainWindow::refreshCrossSectionTab(QPointer<CrossSectionView> view, std::st
 void MainWindow::refreshSoundingTab(QPointer<SkewTView> view, core::LatLon point,
                                     std::shared_ptr<SoundingTab> tab) {
     if (!view || !dataset_ || currentTimes_.empty()) return;
-    if (tab->epoch != datasetEpoch_) {
-        tab->cache.clear();
-        tab->epoch = datasetEpoch_;
-    }
+    tab->setEpoch(datasetEpoch_);
     const core::TimePoint t = currentTimes_[static_cast<std::size_t>(timeIdx_)];
     const int mem = currentMember_;
-    const auto key = std::make_pair(static_cast<std::int64_t>(t.epochSeconds), mem);
+    const AnalysisTabKey key{static_cast<std::int64_t>(t.epochSeconds), mem};
 
-    if (auto it = tab->cache.find(key); it != tab->cache.end()) {
-        view->setSounding(it->second);
+    const auto plan = planRequest(*tab, key);
+    if (plan.action == CacheAction::Serve) {
+        view->setSounding(*plan.cached);
         return;
     }
-    if (tab->inFlight) {
-        tab->pending = true;
-        return;
-    }
-    tab->inFlight = true;
+    if (plan.action == CacheAction::Wait) return;
+
     auto dset = dataset_;
     auto p = std::make_shared<JobProgress>();
     p->total = extractions::estimateSoundingReads(*dset);
@@ -1460,15 +1462,14 @@ void MainWindow::refreshSoundingTab(QPointer<SkewTView> view, core::LatLon point
         [dset, t, mem, point, p] { return extractions::computeSounding(*dset, t, mem, point, p); },
         [this, view, point, tab, key, p](analysis::Sounding ns) {
             endJob(p);
-            tab->inFlight = false;
-            if (ns.levels.size() >= 2) {
-                tab->cache[key] = ns;
-                if (view) view->setSounding(ns);
+            const bool usable = ns.levels.size() >= 2;
+            const CacheDelivery delivered = deliverResult(*tab, key, ns, usable);
+            if (delivered.display && view) {
+                view->setSounding(usable ? ns : analysis::Sounding{});
+                if (!usable)
+                    statusBar()->showMessage(tr("Sounding: no multi-level temperature here"), 4000);
             }
-            if (tab->pending) {
-                tab->pending = false;
-                refreshSoundingTab(view, point, tab);
-            }
+            if (delivered.again) refreshSoundingTab(view, point, tab);
             maybeAdvancePlayback();  // this tab's load settled → maybe advance
         });
 }
@@ -1478,6 +1479,7 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
     const std::string var = currentVar_;
     const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
     const int member = currentMember_;
+    const quint64 epoch = datasetEpoch_;
     auto ds = dataset_;
     auto prog = std::make_shared<JobProgress>();
     prog->total = extractions::estimateCrossSectionReads(*ds, var);
@@ -1487,8 +1489,9 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
         [ds, var, time, member, path, prog] {
             return extractions::computeCrossSection(*ds, var, time, member, path, 200, prog);
         },
-        [this, var, path, time, member, prog](analysis::CrossSection cs) {
+        [this, var, path, time, member, epoch, prog](analysis::CrossSection cs) {
             endJob(prog);
+            if (epoch != datasetEpoch_) return;  // read from a dataset since replaced
             if (cs.pressures.size() < 2) {
                 statusBar()->showMessage(tr("Cross-section needs a multi-level variable"), 4000);
                 return;
@@ -1502,8 +1505,10 @@ void MainWindow::onCrossSectionRequested(const std::vector<core::LatLon>& path) 
             // Follow the time slider via a coalesced + cached re-extraction. Seed the
             // cache with this initial section so revisiting this time is instant.
             auto tab = std::make_shared<CrossSectionTab>();
-            tab->epoch = datasetEpoch_;
-            tab->cache[std::make_pair(static_cast<std::int64_t>(time.epochSeconds), member)] = cs;
+            tab->epoch = epoch;
+            const AnalysisTabKey key{static_cast<std::int64_t>(time.epochSeconds), member};
+            tab->entries[key] = cs;
+            tab->wanted = key;
             analyses_.push_back({frame,
                                  [this, v = QPointer<CrossSectionView>(view), var, path, tab]() {
                                      refreshCrossSectionTab(v, var, path, tab);
@@ -1516,6 +1521,7 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
     if (!dataset_ || currentTimes_.empty()) return;
     const core::TimePoint time = currentTimes_[static_cast<std::size_t>(timeIdx_)];
     const int member = currentMember_;
+    const quint64 epoch = datasetEpoch_;
     auto ds = dataset_;
     auto prog = std::make_shared<JobProgress>();
     prog->total = extractions::estimateSoundingReads(*ds);
@@ -1525,8 +1531,9 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
         [ds, time, member, point, prog] {
             return extractions::computeSounding(*ds, time, member, point, prog);
         },
-        [this, point, time, member, prog](analysis::Sounding s) {
+        [this, point, time, member, epoch, prog](analysis::Sounding s) {
             endJob(prog);
+            if (epoch != datasetEpoch_) return;  // read from a dataset since replaced
             if (s.levels.size() < 2) {
                 statusBar()->showMessage(tr("Sounding needs multi-level temperature (t)"), 4000);
                 return;
@@ -1540,8 +1547,10 @@ void MainWindow::onSoundingRequested(core::LatLon point) {
             // Follow the time slider via a coalesced + cached re-extraction. Seed the
             // cache with this initial sounding so revisiting this time is instant.
             auto tab = std::make_shared<SoundingTab>();
-            tab->epoch = datasetEpoch_;
-            tab->cache[std::make_pair(static_cast<std::int64_t>(time.epochSeconds), member)] = s;
+            tab->epoch = epoch;
+            const AnalysisTabKey key{static_cast<std::int64_t>(time.epochSeconds), member};
+            tab->entries[key] = s;
+            tab->wanted = key;
             analyses_.push_back({frame,
                                  [this, v = QPointer<SkewTView>(view), point, tab]() {
                                      refreshSoundingTab(v, point, tab);
@@ -1769,7 +1778,8 @@ void MainWindow::ensureWindCached(std::function<void(bool)> then) {
 
     // Decoding both components inline meant two full GRIB decodes plus the
     // rotation on the GUI thread for every level/time change — seconds of frozen
-    // UI on a mesoscale grid.
+    // UI on a mesoscale grid. A dataset replace bumps windGeneration_, so the
+    // generation check below also keeps the old set's components out of the cache.
     auto ds = dataset_;
     const core::FieldKey uKey = keys->first, vKey = keys->second;
     using Pair = std::pair<std::shared_ptr<core::Field2D>, std::shared_ptr<core::Field2D>>;
