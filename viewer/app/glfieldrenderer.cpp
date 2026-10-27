@@ -151,7 +151,14 @@ void GlFieldRenderer::render(const Grid& grid, const View& view, float opacity) 
     glDisable(GL_CULL_FACE);
     glDisable(GL_SCISSOR_TEST);
     glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // Colour blends with straight alpha; the framebuffer's own alpha must stay
+    // opaque. glBlendFunc(SRC_ALPHA, ONE_MINUS_SRC_ALPHA) applied to the alpha
+    // channel too left it at a^2 + (1-a) < 1 under the field. The window on screen
+    // ignores that alpha, but anything that reads the framebuffer back as a
+    // premultiplied image does not -- QWidget::grab(), and so --grab: every colour
+    // channel above the alpha overflowed, and mid-range turbo greens came out
+    // purple, speckled with the basemap pixels beneath.
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
     program_->bind();
     // Pass world coordinates as fractions of the world size, divided in double on
