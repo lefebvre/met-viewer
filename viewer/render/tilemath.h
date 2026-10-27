@@ -17,8 +17,11 @@ constexpr int kTileSize = 256;
 // Web Mercator is clamped to +/- this latitude (where the projection diverges).
 constexpr double kMaxLat = 85.05112877980659;
 
+// ldexp rather than 1 << zoom, which is undefined for a negative zoom or one of
+// 31 and up. The map clamps its zoom well inside that, but this is the one place
+// every caller goes through.
 [[nodiscard]] inline double worldSize(int zoom) {
-    return static_cast<double>(kTileSize) * static_cast<double>(1 << zoom);
+    return std::ldexp(static_cast<double>(kTileSize), zoom);
 }
 
 [[nodiscard]] inline double clampLat(double lat) { return std::clamp(lat, -kMaxLat, kMaxLat); }

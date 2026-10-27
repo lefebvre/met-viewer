@@ -115,3 +115,14 @@ TEST(Sample, BoundedGridStillRejectsPastTheLastColumn) {
     EXPECT_FALSE(std::isnan(sampleBilinearIndex(f, 2.0, 0.0)));
     EXPECT_TRUE(std::isnan(sampleBilinearIndex(f, 2.5, 0.0)));
 }
+
+// NaN fails every range comparison, so it once passed the bounds check and
+// reached a float-to-int cast. Non-finite indices are refused outright.
+TEST(Sample, NonFiniteIndexIsNaNNotUndefined) {
+    Field2D f = makeField();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double inf = std::numeric_limits<double>::infinity();
+    EXPECT_TRUE(std::isnan(sampleBilinearIndex(f, nan, 1.0)));
+    EXPECT_TRUE(std::isnan(sampleBilinearIndex(f, 1.0, nan)));
+    EXPECT_TRUE(std::isnan(sampleBilinearIndex(f, inf, 1.0)));
+}
