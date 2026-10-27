@@ -96,6 +96,27 @@ void sizeComboToContents(QComboBox* c) { c->setSizeAdjustPolicy(QComboBox::Adjus
 // colormap()/units() and a rangeChanged(double,double) signal). Returns the
 // colormap combo so the caller can persist / drive it programmatically. Shared by
 // the 2D-Plot, Map, and cross-section panels so their color controls behave alike.
+// Enough decimals to edit a range of this size: three significant digits of its
+// span, and never fewer than `atLeast`. A fixed three could not hold a vorticity
+// (~1e-5 1/s) or a mixing ratio in kg/kg: both boxes were seeded 0.000, and
+// editing either sent an empty range that was silently refused.
+int decimalsForSpan(double lo, double hi, int atLeast) {
+    const double span = std::abs(hi - lo);
+    if (!(span > 0.0) || !std::isfinite(span)) return atLeast;
+    const int d = 3 - static_cast<int>(std::floor(std::log10(span)));
+    return std::clamp(d, atLeast, 10);
+}
+
+// Re-fit a pair of spin boxes to a range before showing it.
+void fitSpinBoxes(QDoubleSpinBox* lo, QDoubleSpinBox* hi, double from, double to, int atLeast) {
+    const int d = decimalsForSpan(from, to, atLeast);
+    const double step = std::pow(10.0, 1 - d);
+    for (QDoubleSpinBox* sb : {lo, hi}) {
+        sb->setDecimals(d);
+        sb->setSingleStep(step);
+    }
+}
+
 template <typename View>
 QComboBox* addColormapControls(ControlPanel* panel, View* view, IconThemer* icons) {
     auto* cmap = new QComboBox(panel);
@@ -134,7 +155,11 @@ QComboBox* addColormapControls(ControlPanel* panel, View* view, IconThemer* icon
         maxS->setEnabled(!on);
     });
     auto pushManual = [view, minS, maxS, autoR] {
-        if (!autoR->isChecked()) view->setRange(minS->value(), maxS->value());
+        if (autoR->isChecked()) return;
+        // A minimum at or above the maximum is a half-finished edit, not a range:
+        // passing it on painted the whole field one flat colour.
+        if (!(minS->value() < maxS->value())) return;
+        view->setRange(minS->value(), maxS->value());
     };
     QObject::connect(minS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
     QObject::connect(maxS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
@@ -143,6 +168,7 @@ QComboBox* addColormapControls(ControlPanel* panel, View* view, IconThemer* icon
             cbar->setColormap(view->colormap());
             cbar->setUnits(QString::fromStdString(core::unitLabel(view->units().toStdString())));
             const QSignalBlocker b1(minS), b2(maxS);
+            fitSpinBoxes(minS, maxS, lo, hi, 3);
             minS->setValue(lo);
             maxS->setValue(hi);
         });
@@ -208,8 +234,9 @@ void addAxisLimitControls(ControlPanel* panel, View* view, const AxisSpec& spec,
     };
     QObject::connect(loS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
     QObject::connect(hiS, qOverload<double>(&QDoubleSpinBox::valueChanged), view, pushManual);
-    QObject::connect(view, changed, view, [loS, hiS](double lo, double hi) {
+    QObject::connect(view, changed, view, [loS, hiS, minDecimals = spec.decimals](double lo, double hi) {
         const QSignalBlocker b1(loS), b2(hiS);
+        fitSpinBoxes(loS, hiS, lo, hi, minDecimals);
         loS->setValue(lo);
         hiS->setValue(hi);
     });
