@@ -17,7 +17,15 @@ struct ContourSegment {
 // Marching-squares isolines of `field` at a single value. Cells touching a NaN
 // corner are skipped. Crossing points are linearly interpolated along cell
 // edges, so lines follow the field smoothly rather than stepping.
-[[nodiscard]] std::vector<ContourSegment> contourAt(const core::Field2D& field, double level);
+//
+// `wrapLon` closes the ring on a grid whose columns span the globe: the cell
+// between the last column and column 0 is contoured too, with its right edge at
+// x = width (one column past the last). Without it every isoline on a global
+// map breaks at the grid's first longitude -- Greenwich, for ERA5. A flat
+// index-space view, where that seam is the image's left and right edges, leaves
+// it off.
+[[nodiscard]] std::vector<ContourSegment> contourAt(const core::Field2D& field, double level,
+                                                    bool wrapLon = false);
 
 // Convenience: contours at every multiple of `interval` within the field's
 // finite value range, returned grouped per level.
@@ -25,7 +33,8 @@ struct ContourLevel {
     double value;
     std::vector<ContourSegment> segments;
 };
-[[nodiscard]] std::vector<ContourLevel> contourLevels(const core::Field2D& field, double interval);
+[[nodiscard]] std::vector<ContourLevel> contourLevels(const core::Field2D& field, double interval,
+                                                      bool wrapLon = false);
 
 // Choose a "nice" contour interval (1/2/5 x 10^n) for a value range aiming for
 // roughly `target` lines. Returns 0 if the range is degenerate.
@@ -42,12 +51,13 @@ public:
     // by the allocator after the previous field is freed, which would silently
     // serve isolines belonging to the old data.
     [[nodiscard]] const std::vector<ContourLevel>& levels(const core::Field2D& field,
-                                                          double interval);
+                                                          double interval, bool wrapLon = false);
     void clear();
 
 private:
     std::uint64_t fieldId_ = 0;  // 0 = nothing cached (nextFieldId starts at 1)
     double interval_ = 0.0;
+    bool wrapLon_ = false;
     std::vector<ContourLevel> levels_;
 };
 

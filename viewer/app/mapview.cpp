@@ -677,13 +677,22 @@ void MapView::drawContours(QPainter& p) {
     pen.setWidthF(0.9);
     p.setPen(pen);
     // Contour segments live in grid-index space; project index -> lat/lon (which
-    // is exact for the map, unlike the flat 2D plot) -> screen.
-    for (const auto& lvl : contours_.levels(*field_, interval)) {
+    // is exact for the map, unlike the flat 2D plot) -> screen. A global grid is
+    // contoured across its seam, which only the map can show joined up.
+    const auto* reg = std::get_if<core::RegularLatLonGrid>(&field_->grid);
+    const bool wrap = reg && reg->globalWrapLon;
+    for (const auto& lvl : contours_.levels(*field_, interval, wrap)) {
         for (const auto& s : lvl.segments) {
-            const core::LatLon a = core::indexToLatLon(field_->grid, s.x0, s.y0);
-            const core::LatLon b = core::indexToLatLon(field_->grid, s.x1, s.y1);
+            core::LatLon a = core::indexToLatLon(field_->grid, s.x0, s.y0);
+            core::LatLon b = core::indexToLatLon(field_->grid, s.x1, s.y1);
             if (std::isnan(a.lat) || std::isnan(a.lon) || std::isnan(b.lat) || std::isnan(b.lon))
                 continue;
+            // Draw each segment in the world copy nearest the view, and keep its
+            // two ends on the same side of any wrap. A 0..360 grid otherwise put
+            // every isoline west of the antimeridian past the right edge of the
+            // world, where the field raster (wrapped per pixel) is not.
+            a.lon = centerLon_ + core::wrapLon180(a.lon - centerLon_);
+            b.lon = a.lon + core::wrapLon180(b.lon - a.lon);
             p.drawLine(lonLatToScreen(a), lonLatToScreen(b));
         }
     }

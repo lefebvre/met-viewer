@@ -17,21 +17,24 @@ double crossFrac(double a, double b, double level) {
 
 }  // namespace
 
-std::vector<ContourSegment> contourAt(const core::Field2D& field, double level) {
+std::vector<ContourSegment> contourAt(const core::Field2D& field, double level, bool wrapLon) {
     std::vector<ContourSegment> out;
     const int w = field.width();
     const int h = field.height();
     if (w < 2 || h < 2) return out;
+    // On a wrapped grid the last column's east neighbour is column 0.
+    const int cells = wrapLon && w > 2 ? w : w - 1;
 
     for (int j = 0; j < h - 1; ++j) {
-        for (int i = 0; i < w - 1; ++i) {
+        for (int i = 0; i < cells; ++i) {
+            const int east = (i + 1) % w;
             // Corner values, clockwise from bottom-left in index space:
             //   (i, j+1) TL ---- (i+1, j+1) TR
             //      |                  |
             //   (i, j)   BL ---- (i+1, j)   BR
             const double bl = field.at(i, j);
-            const double br = field.at(i + 1, j);
-            const double tr = field.at(i + 1, j + 1);
+            const double br = field.at(east, j);
+            const double tr = field.at(east, j + 1);
             const double tl = field.at(i, j + 1);
             if (std::isnan(bl) || std::isnan(br) || std::isnan(tr) || std::isnan(tl)) continue;
 
@@ -93,7 +96,7 @@ double niceContourInterval(double lo, double hi, int target) {
     return step * mag;
 }
 
-std::vector<ContourLevel> contourLevels(const core::Field2D& field, double interval) {
+std::vector<ContourLevel> contourLevels(const core::Field2D& field, double interval, bool wrapLon) {
     std::vector<ContourLevel> out;
     if (!(interval > 0.0)) return out;
 
@@ -111,19 +114,25 @@ std::vector<ContourLevel> contourLevels(const core::Field2D& field, double inter
     double first = std::floor(lo / interval) * interval;
     if (first <= lo) first += interval;
     // Guard against pathological interval/range combos producing huge counts.
+    // Each level is computed from its index rather than by repeated addition,
+    // which accumulates rounding (0.1 + 0.1 + 0.1 is 0.30000000000000004) and
+    // would label lines with values that are not multiples of the interval.
     const int maxLines = 200;
-    int count = 0;
-    for (double level = first; level <= hi && count < maxLines; level += interval, ++count) {
-        out.push_back({level, contourAt(field, level)});
+    for (int k = 0; k < maxLines; ++k) {
+        const double level = first + k * interval;
+        if (level > hi) break;
+        out.push_back({level, contourAt(field, level, wrapLon)});
     }
     return out;
 }
 
-const std::vector<ContourLevel>& ContourCache::levels(const core::Field2D& field, double interval) {
-    if (field.id != fieldId_ || interval != interval_) {
-        levels_ = contourLevels(field, interval);
+const std::vector<ContourLevel>& ContourCache::levels(const core::Field2D& field, double interval,
+                                                      bool wrapLon) {
+    if (field.id != fieldId_ || interval != interval_ || wrapLon != wrapLon_) {
+        levels_ = contourLevels(field, interval, wrapLon);
         fieldId_ = field.id;
         interval_ = interval;
+        wrapLon_ = wrapLon;
     }
     return levels_;
 }
@@ -131,6 +140,7 @@ const std::vector<ContourLevel>& ContourCache::levels(const core::Field2D& field
 void ContourCache::clear() {
     fieldId_ = 0;
     interval_ = 0.0;
+    wrapLon_ = false;
     levels_.clear();
 }
 
