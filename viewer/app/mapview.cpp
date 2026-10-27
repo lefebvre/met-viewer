@@ -100,7 +100,23 @@ void MapView::setGpuEnabled(bool on) {
 
 void MapView::initializeGL() {
     initializeOpenGLFunctions();
+    // Floating or re-docking the map moves it to a new top-level window, which
+    // gives QOpenGLWidget a new context and calls this again. Release the old
+    // context's objects while it can still be made current, and forget what was
+    // uploaded so the next paint uploads again: the renderer otherwise still
+    // believed it held a field and sampled an empty texture, drawing the grid
+    // opaque black until the field, colormap or range changed.
+    connect(context(), &QOpenGLContext::aboutToBeDestroyed, this, &MapView::releaseGl,
+            Qt::UniqueConnection);
+    uploadedField_ = 0;
+    uploadedCmap_.clear();
     glReady_ = glField_.init();
+}
+
+void MapView::releaseGl() {
+    makeCurrent();
+    glField_.teardown();
+    doneCurrent();
 }
 
 double MapView::worldCenterX() const { return lonToWorldX(centerLon_, zoom_); }

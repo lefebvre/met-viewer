@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -276,6 +278,7 @@ private:
     bool fieldReadyForStep_ = false;  // current frame's field has settled (for playback gating)
     Preferences prefs_;
     FieldCache fieldCache_{Preferences{}.cacheBudgetBytes()};
+    std::set<std::string> prefetching_;  // FieldCache keys a prefetch is decoding
 
     // Current selection state.
     std::string currentVar_;

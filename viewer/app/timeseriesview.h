@@ -17,6 +17,11 @@ public:
     explicit TimeSeriesView(QWidget* parent = nullptr);
     void setSeries(const analysis::TimeSeries& ts, const QString& varName);
     void setCurrentIndex(int index);  // highlight the current time step (marker)
+    // Put the marker on the series' own step at `t`, or hide it when the series has
+    // no such time. The slider's index cannot be used directly: it counts the
+    // displayed variable's times, which need not be the series' (an accumulation
+    // without a step 0, or files added since the series was made).
+    void setCurrentTime(core::TimePoint t);
     [[nodiscard]] const analysis::TimeSeries& series() const { return ts_; }
     // Decimals for the point's lat/lon in the title, from the source grid spacing
     // (see app::coordPrecision). The series carries no grid, so MainWindow sets it.

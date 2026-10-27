@@ -90,6 +90,8 @@ public slots:
 
 protected:
     void initializeGL() override;
+    // Release the field renderer's GL objects under the context that owns them.
+    void releaseGl();
     void paintGL() override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;

@@ -91,6 +91,11 @@ void TimeSeriesView::setCurrentIndex(int index) {
     update();
 }
 
+void TimeSeriesView::setCurrentTime(core::TimePoint t) {
+    const auto it = std::find(ts_.times.begin(), ts_.times.end(), t);
+    setCurrentIndex(it == ts_.times.end() ? -1 : static_cast<int>(it - ts_.times.begin()));
+}
+
 void TimeSeriesView::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), palette().base());

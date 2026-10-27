@@ -664,7 +664,8 @@ void MainWindow::installBatch(OpenBatch batch, bool replace) {
         loadedPaths_.clear();
         loadedSources_.clear();
         fieldCache_.clear();  // a fresh set invalidates cached fields
-        ++datasetEpoch_;      // and invalidates the per-tab analysis caches
+        prefetching_.clear();  // and what was being fetched into it
+        ++datasetEpoch_;       // and invalidates the per-tab analysis caches
         // A U/V decode still running reads the old set. Supersede it, so a request
         // for the same keys starts a new decode instead of joining that one. Its
         // waiters are dropped rather than failed: the new field's presentation
@@ -1070,12 +1071,20 @@ void MainWindow::prefetchAhead() {
         key.level = currentLevels_[static_cast<std::size_t>(levelIdx_)];
         key.validTime = currentTimes_[static_cast<std::size_t>((timeIdx_ + step) % n)];
         key.member = currentMember_;
-        if (fieldCache_.contains(key)) continue;
+        // Skip what is cached and what a prefetch is already decoding. Checking the
+        // cache alone resubmitted, on every frame of playback, the decodes the
+        // previous frame had started, and the duplicates queued against the frame
+        // the user was actually waiting for (and, on NetCDF, its library lock).
+        const std::string id = FieldCache::keyString(key);
+        if (fieldCache_.contains(key) || prefetching_.count(id)) continue;
+        prefetching_.insert(id);
         // Prefetch jobs never display (generation 0); they only warm the cache, and
         // only the cache of the dataset they read (see decodeCurrent).
         const quint64 epoch = datasetEpoch_;
-        submitDecode(*pool_, dataset_, key, 0, this, [this, epoch, key](DecodeOutcome outcome) {
-            if (outcome.field && epoch == datasetEpoch_) fieldCache_.put(key, outcome.field);
+        submitDecode(*pool_, dataset_, key, 0, this, [this, epoch, key, id](DecodeOutcome outcome) {
+            if (epoch != datasetEpoch_) return;  // the replace cleared prefetching_
+            prefetching_.erase(id);
+            if (outcome.field) fieldCache_.put(key, outcome.field);
         });
     }
 }
@@ -1606,13 +1615,17 @@ void MainWindow::onTimeSeriesRequested(core::LatLon point) {
             // announcement the way this would if the order were the other way round.
             ViewFrame* frame = wrapTimeSeries(view);
             view->setSeries(ts, QString::fromStdString(var));
-            view->setCurrentIndex(timeIdx_);
+            if (timeIdx_ >= 0 && timeIdx_ < static_cast<int>(currentTimes_.size()))
+                view->setCurrentTime(currentTimes_[static_cast<std::size_t>(timeIdx_)]);
             addAnalysisDock(frame, tr("Series: %1").arg(QString::fromStdString(var)));
             statusBar()->clearMessage();
             // The series spans all times; just move its marker with the slider.
             analyses_.push_back({frame,
                                  [this, v = QPointer<TimeSeriesView>(view)]() {
-                                     if (v) v->setCurrentIndex(timeIdx_);
+                                     if (v && timeIdx_ >= 0 &&
+                                         timeIdx_ < static_cast<int>(currentTimes_.size()))
+                                         v->setCurrentTime(
+                                             currentTimes_[static_cast<std::size_t>(timeIdx_)]);
                                  },
                                  []() { return false; }});  // marker move only; never "loading"
         });
