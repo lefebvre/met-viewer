@@ -66,26 +66,41 @@ if [ "$WINDOWS" = 1 ]; then
   trap restore_settings EXIT
 fi
 
-# Run the app once on clean settings with the given arguments. The images are
-# 1:1: without QT_ENABLE_HIGHDPI_SCALING=0 a scaled display renders them larger
-# than requested (2100x1075 for 1680x860 at 125%).
+# Run the app once on clean settings with the given arguments, returning its exit
+# status. The images are 1:1: without QT_ENABLE_HIGHDPI_SCALING=0 a scaled display
+# renders them larger than requested (2100x1075 for 1680x860 at 125%).
 launch() {
+  local status=0
   if [ "$WINDOWS" = 1 ]; then
-    reg delete "$REGKEY" /f || true
-    QT_ENABLE_HIGHDPI_SCALING=0 "$BIN" "$GRIB" "$@" >/dev/null 2>&1 || true
+    reg delete "$REGKEY" /f || true   # no key yet is fine
+    QT_ENABLE_HIGHDPI_SCALING=0 "$BIN" "$GRIB" "$@" >/dev/null 2>&1 || status=$?
   else
     local cfg; cfg="$(mktemp -d)"
     XDG_CONFIG_HOME="$cfg" QT_QPA_PLATFORM=xcb QT_ENABLE_HIGHDPI_SCALING=0 \
-      "$BIN" "$GRIB" "$@" >/dev/null 2>&1 || true
+      "$BIN" "$GRIB" "$@" >/dev/null 2>&1 || status=$?
     rm -rf "$cfg"
   fi
+  return "$status"
 }
 
-# Capture one scene.
+# Scenes that did not render. A crash or an empty grab used to be swallowed, the
+# scene reported as written, and the previous PNG left in place looking current.
+FAILED=()
+
+# Capture one scene into a scratch file, and replace the committed image only
+# when the app exited cleanly and actually wrote one.
 shot() {
   local name="$1"; shift
-  launch "$@" --grab "$OUT/$name.png"
-  echo "  docs/images/$name.png"
+  local tmp="$OUT/.$name.tmp.png"
+  rm -f "$tmp"
+  if launch "$@" --grab "$tmp" && [ -s "$tmp" ]; then
+    mv -f "$tmp" "$OUT/$name.png"
+    echo "  docs/images/$name.png"
+  else
+    rm -f "$tmp"
+    FAILED+=("$name")
+    echo "  FAILED docs/images/$name.png (the previous image is unchanged)" >&2
+  fi
 }
 
 # The GIF step needs Pillow. Each interpreter is tried rather than trusting the
@@ -106,7 +121,12 @@ animate() {
   local frames=() idx frame
   for idx in "$@"; do
     frame="$tmp/f$(printf '%03d' "$idx").png"
-    launch --var t --level 500 --time "$idx" --grab "$frame"
+    if ! launch --var t --level 500 --time "$idx" --grab "$frame" || [ ! -s "$frame" ]; then
+      FAILED+=("$name (frame $idx)")
+      echo "  FAILED docs/images/$name.gif frame $idx (the previous GIF is unchanged)" >&2
+      rm -rf "$tmp"
+      return 0
+    fi
     frames+=("$frame")
   done
   if [ -n "$PY" ]; then
@@ -153,4 +173,8 @@ shot 17-point-profile     --var t --map --demo-at "$AT" --demo point --size 1680
 # the grab extra settle time (3.5s); the base views are removed by --tile.
 shot 16-tiled-layout      --var t --map --demo-at "$AT" --tile --size 1680x860
 
+if [ "${#FAILED[@]}" -gt 0 ]; then
+  echo "Failed to render ${#FAILED[@]} scene(s): ${FAILED[*]}" >&2
+  exit 1
+fi
 echo "Done."

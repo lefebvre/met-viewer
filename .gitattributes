@@ -1,8 +1,11 @@
 # Fuzz seeds are packed binary that happens to contain no NUL bytes, so git's
 # binary heuristic misses them and treats them as text. Under core.autocrlf a
 # seed carrying a 0x0A data byte would be rewritten on checkout and stop being
-# the input that found the bug.
+# the input that found the bug. The reader fixtures they are copied from are in
+# the same position: small_latlon.arl has no NUL either, and a regenerated one
+# with a 0x0A byte would be rewritten into a file with a different record stride.
 tests/fuzz/corpus/** -text
+tests/fixtures/** -text
 
 # Shell scripts run under bash, including Git Bash on Windows, which fails on
 # the carriage returns core.autocrlf would otherwise check them out with.
