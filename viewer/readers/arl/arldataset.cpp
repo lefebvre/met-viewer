@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -11,6 +12,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <system_error>
 
 #include <fmt/format.h>
 
@@ -46,29 +48,31 @@ using core::VerticalLevel;
     return s.find_first_not_of(" \t", pos) == std::string::npos;
 }
 
-std::optional<long> fInt(const char* p, int off, int w) {
+// Parse a fixed-width field with std::from_chars, which reads the C locale's
+// number format whatever the process locale is. stol/stod follow LC_NUMERIC, and
+// QApplication sets the user's locale on Unix: under de_DE, "1000.00" stopped at
+// the '.', the trailing-garbage check rejected it, and every ARL file was refused.
+template <typename T>
+std::optional<T> parseField(const char* p, int off, int w) {
     const std::string s(p + off, static_cast<std::size_t>(w));
-    try {
-        std::size_t pos = 0;
-        const long v = std::stol(s, &pos);
-        if (!restIsBlank(s, pos)) return std::nullopt;
-        return v;
-    } catch (...) {
-        return std::nullopt;
-    }
+    std::size_t begin = s.find_first_not_of(" \t");
+    if (begin == std::string::npos) return std::nullopt;
+    // from_chars takes no leading '+', which Fortran may write before an exponent
+    // but not, in practice, before a number; accept it anyway.
+    if (s[begin] == '+' && begin + 1 < s.size() && s[begin + 1] != '-') ++begin;
+    T v{};
+    const auto [end, ec] = std::from_chars(s.data() + begin, s.data() + s.size(), v);
+    if (ec != std::errc{}) return std::nullopt;
+    if (!restIsBlank(s, static_cast<std::size_t>(end - s.data()))) return std::nullopt;
+    return v;
 }
 
+std::optional<long> fInt(const char* p, int off, int w) { return parseField<long>(p, off, w); }
+
 std::optional<double> fDbl(const char* p, int off, int w) {
-    const std::string s(p + off, static_cast<std::size_t>(w));
-    try {
-        std::size_t pos = 0;
-        const double v = std::stod(s, &pos);
-        if (!restIsBlank(s, pos)) return std::nullopt;
-        if (!std::isfinite(v)) return std::nullopt;
-        return v;
-    } catch (...) {
-        return std::nullopt;
-    }
+    const auto v = parseField<double>(p, off, w);
+    if (v && !std::isfinite(*v)) return std::nullopt;
+    return v;
 }
 
 struct Label {
