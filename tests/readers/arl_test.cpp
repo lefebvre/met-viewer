@@ -10,6 +10,8 @@
 #include <string>
 #include <variant>
 
+#include "tests/readers/arl_builder.h"
+#include "viewer/core/geo.h"
 #include "viewer/core/grid.h"
 #include "viewer/readers/arl/arldataset.h"
 #include "viewer/readers/arl/arlreader.h"
@@ -105,4 +107,72 @@ TEST(Arl, OpensUnderACommaDecimalLocale) {
     const auto f =
         ds->readField(core::FieldKey{v.varName, v.levels.front(), v.times.front(), v.members.front()});
     EXPECT_GT(f.width(), 0);
+}
+
+namespace {
+using met::testing::ArlFile;
+using met::testing::ArlPeriod;
+using met::testing::ArlSpec;
+}  // namespace
+
+// The INDX header says what the vertical coordinate is (K_FLAG). Inferring it
+// from the level values' magnitude read hybrid levels (an offset plus a fraction,
+// tens to hundreds) as pressures in hPa.
+TEST(Arl, TakesTheVerticalCoordinateFromTheHeaderFlag) {
+    ArlSpec spec;
+    spec.kflag = 4;  // hybrid
+    spec.levels = {{0.0, {"T02M"}}, {15.5, {"TEMP"}}, {31.0, {"TEMP"}}};
+    ArlPeriod per;
+    per.records = {{0, "T02M", 280.0}, {1, "TEMP", 275.0}, {2, "TEMP", 270.0}};
+    spec.periods = {per};
+    const ArlFile file("met_arl_kflag", spec);
+
+    auto ds = readers::openDataset(file.path());
+    const auto* t = ds->catalog().find("t");
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->levels.size(), 2u);
+    for (const auto& l : t->levels) EXPECT_EQ(l.type, core::VerticalLevel::Type::Hybrid);
+}
+
+// A label carries the hour only; the minutes are in each period's INDX record.
+// Skipping them gave a 15-minute file four periods per hour under one time, and
+// only the last survived.
+TEST(Arl, KeepsSubHourlyPeriodsApart) {
+    ArlSpec spec;
+    ArlPeriod a, b;
+    a.minutes = 0;
+    a.records = {{1, "TEMP", 270.0}};
+    b.minutes = 15;
+    b.records = {{1, "TEMP", 280.0}};
+    spec.periods = {a, b};
+    const ArlFile file("met_arl_minutes", spec);
+
+    auto ds = readers::openDataset(file.path());
+    const auto* t = ds->catalog().find("t");
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->times.size(), 2u);
+    EXPECT_EQ(t->times[1].epochSeconds - t->times[0].epochSeconds, 15 * 60);
+    const auto later = ds->readField(core::FieldKey{"t", t->levels.front(), t->times[1], -1});
+    EXPECT_NEAR(later.at(0, 0), 280.0f, 1e-3f);
+}
+
+// SIZE is the grid spacing true at REF_LAT, not at the projection's tangent
+// latitude. On a polar-stereographic grid with TANG 90 and REF 60, taking SIZE
+// as projection metres made every cell about 7% too small.
+TEST(Arl, PolarStereographicCellsMeasureSizeAtTheReferenceLatitude) {
+    ArlSpec spec;
+    //          POLE_LAT POLE_LON REF_LAT REF_LON SIZE ORIENT TANG SYNC_XP SYNC_YP SYNC_LAT SYNC_LON
+    spec.grid = {90.0, 0.0, 60.0, 0.0, 100.0, 0.0, 90.0, 1.0, 1.0, 60.0, 0.0, 0.0};
+    ArlPeriod per;
+    per.records = {{1, "TEMP", 270.0}};
+    spec.periods = {per};
+    const ArlFile file("met_arl_stere", spec);
+
+    auto ds = readers::openDataset(file.path());
+    const auto& v = ds->catalog().variables().front();
+    const auto f = ds->readField(core::FieldKey{v.varName, v.levels.front(), v.times.front(), -1});
+    const core::LatLon a = core::indexToLatLon(f.grid, 0.0, 0.0);
+    const core::LatLon b = core::indexToLatLon(f.grid, 1.0, 0.0);
+    EXPECT_NEAR(a.lat, 60.0, 1e-6);
+    EXPECT_NEAR(core::greatCircleKm(a, b), 100.0, 0.5);
 }

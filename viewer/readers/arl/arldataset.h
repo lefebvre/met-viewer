@@ -26,8 +26,9 @@ namespace met::readers::arl {
 // packing exponent, and VAR1 = the exact value of grid point (1,1)) followed by
 // one byte per grid point, packed as scaled running differences.
 //
-// Thread-safety: readField() re-opens the file per call, so concurrent reads are
-// safe. Catalog is built once at open time.
+// Thread-safety: readField() takes an internal mutex, so concurrent calls are
+// safe but serialized, as GribDataset's are; it also re-opens the file per call.
+// The catalog is built once at open time.
 class ArlDataset : public IDataset {
 public:
     explicit ArlDataset(std::filesystem::path path);
