@@ -50,6 +50,14 @@ else()
     find_package(NetCDF COMPONENTS C REQUIRED)
     target_link_libraries(met_tests PRIVATE NetCDF::NetCDF_C)
 endif()
+# Likewise ecCodes, for the GRIB messages tests/readers/grib_builder.h writes.
+find_package(eccodes CONFIG)
+if(eccodes_FOUND)
+    target_link_libraries(met_tests PRIVATE eccodes)
+else()
+    find_package(ecCodes COMPONENTS C REQUIRED)
+    target_link_libraries(met_tests PRIVATE ecCodes::ecCodes_C)
+endif()
 
 # Resolve the vcpkg install dir (a preset may relocate it out of the build tree).
 if(DEFINED VCPKG_INSTALLED_DIR)
