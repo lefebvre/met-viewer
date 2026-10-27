@@ -4,8 +4,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
 
+#include "tests/readers/grib_builder.h"
 #include "viewer/core/grid.h"
 #include "viewer/readers/detect.h"
 
@@ -124,4 +126,65 @@ TEST(GribReader, LocatesEveryMessageInAFileWithBytesBetweenThem) {
             EXPECT_EQ(got.values, expected.values) << name << " " << v.varName;
         }
     }
+}
+
+// Fields that the catalog would otherwise key identically must come out as
+// separate variables. Level types the axes cannot model (tropopause, maxWind)
+// all became (Unknown, level) and overwrote each other; heights above sea and
+// above ground shared one axis; and HRRR-style 0-2 h and 1-2 h accumulations at
+// the same valid time collided, with the last message read winning.
+TEST(GribReader, KeepsFieldsApartThatWouldShareACatalogCell) {
+    using met::testing::gribMessage;
+    using met::testing::setLong;
+    using met::testing::setString;
+    auto level = [](const char* type, long value) {
+        return [type, value](codes_handle* h) {
+            setString(h, "typeOfLevel", type);
+            setLong(h, "level", value);
+            setString(h, "shortName", "t");
+        };
+    };
+    auto accum = [](long start, long end) {
+        return [start, end](codes_handle* h) {
+            setLong(h, "productDefinitionTemplateNumber", 8);
+            setString(h, "typeOfLevel", "surface");
+            setString(h, "shortName", "tp");
+            setString(h, "stepType", "accum");
+            setString(h, "stepRange", std::to_string(start) + "-" + std::to_string(end));
+        };
+    };
+    const met::testing::GribFile file(
+        "met_grib_cells_test",
+        {gribMessage(500, level("isobaricInhPa", 500)), gribMessage(1, level("tropopause", 0)),
+         gribMessage(2, level("maxWind", 0)), gribMessage(3, level("heightAboveGround", 2)),
+         gribMessage(4, level("heightAboveSea", 2)), gribMessage(40, level("isobaricInPa", 40)),
+         gribMessage(20, accum(0, 2)), gribMessage(10, accum(1, 2))});
+    auto ds = readers::openDataset(file.path());
+    const auto& cat = ds->catalog();
+
+    auto readOnly = [&](const std::string& var) -> float {
+        const auto* v = cat.find(var);
+        if (!v) {
+            ADD_FAILURE() << "no variable '" << var << "'";
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        EXPECT_EQ(v->levels.size(), 1u) << var;
+        return ds->readField(core::FieldKey{var, v->levels.front(), v->times.front(), -1}).at(0, 0);
+    };
+    EXPECT_FLOAT_EQ(readOnly("t (tropopause)"), 1.0f);
+    EXPECT_FLOAT_EQ(readOnly("t (maxWind)"), 2.0f);
+    EXPECT_FLOAT_EQ(readOnly("t (above sea level)"), 4.0f);
+    EXPECT_FLOAT_EQ(readOnly("tp"), 10.0f);  // the shorter, 1-2 h window keeps the name
+    EXPECT_FLOAT_EQ(readOnly("tp (accum since +0h)"), 20.0f);
+
+    // 2 m above ground stays on the plain height axis (ecCodes names temperature
+    // there "2t"), apart from 2 m above sea level.
+    EXPECT_FLOAT_EQ(readOnly("2t"), 3.0f);
+
+    // isobaricInPa is pressure too, in hPa beside the hPa levels.
+    const auto* t = cat.find("t");
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->levels.size(), 2u);
+    const core::VerticalLevel hPa04{core::VerticalLevel::Type::PressureHPa, 0.4};
+    EXPECT_FLOAT_EQ(ds->readField(core::FieldKey{"t", hPa04, t->times.front(), -1}).at(0, 0), 40.0f);
 }

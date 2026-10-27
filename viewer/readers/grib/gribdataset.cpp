@@ -1,11 +1,15 @@
 #include "viewer/readers/grib/gribdataset.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <limits>
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <sys/types.h>
@@ -14,6 +18,7 @@
 #include <fmt/format.h>
 
 #include "viewer/core/crs.h"
+#include "viewer/core/log.h"
 #include "viewer/core/pathutil.h"
 #include "viewer/core/timeaxis.h"
 
@@ -87,18 +92,38 @@ std::string getString(codes_handle* h, const char* key) {
 
 bool hasKey(codes_handle* h, const char* key) { return codes_is_defined(h, key) != 0; }
 
-VerticalLevel mapLevel(codes_handle* h) {
+// A message's level, plus a qualifier for the variable name when the level type
+// is not one the app's axes can tell apart from another. The catalog keys a
+// record by (name, level, time, member), so two fields that map to the same
+// level must differ in name or one silently replaces the other.
+struct LevelInfo {
+    VerticalLevel level;
+    std::string qualifier;  // empty for the level types the axes model directly
+};
+
+LevelInfo mapLevel(codes_handle* h) {
     const std::string type = getString(h, "typeOfLevel");
     const double level = hasKey(h, "level") ? getDouble(h, "level") : 0.0;
-    VerticalLevel lvl;
+    LevelInfo out;
+    VerticalLevel& lvl = out.level;
     if (type == "isobaricInhPa") {
         lvl.type = VerticalLevel::Type::PressureHPa;
         lvl.value = level;
+    } else if (type == "isobaricInPa") {
+        // GFS carries its levels above 1 hPa this way (40 Pa, 70 Pa, ...).
+        lvl.type = VerticalLevel::Type::PressureHPa;
+        lvl.value = level * 0.01;
     } else if (type == "surface" || type == "meanSea" || type == "entireAtmosphere") {
         lvl.type = VerticalLevel::Type::Surface;
-    } else if (type == "heightAboveGround" || type == "heightAboveSea") {
+    } else if (type == "heightAboveGround") {
         lvl.type = VerticalLevel::Type::HeightM;
         lvl.value = level;
+    } else if (type == "heightAboveSea") {
+        // Same unit, different datum: 1829 m above sea and 2 m above ground must
+        // not share one height axis.
+        lvl.type = VerticalLevel::Type::HeightM;
+        lvl.value = level;
+        out.qualifier = "above sea level";
     } else if (type == "hybrid") {
         lvl.type = VerticalLevel::Type::Hybrid;
         lvl.value = level;
@@ -106,10 +131,36 @@ VerticalLevel mapLevel(codes_handle* h) {
         lvl.type = VerticalLevel::Type::Isentropic;
         lvl.value = level;
     } else {
+        // tropopause, maxWind, isothermZero, soil layers, ...: every one of these
+        // used to become (Unknown, level), so GFS's t at the tropopause and at the
+        // level of maximum wind shared a cell and the later message won.
         lvl.type = VerticalLevel::Type::Unknown;
         lvl.value = level;
+        out.qualifier = type.empty() ? "unknown level type" : type;
     }
-    return lvl;
+    return out;
+}
+
+// The statistical window of a message: an accumulation, average, maximum, ...
+// over steps [start, end]. Empty for an instantaneous field.
+struct StatWindow {
+    bool statistical = false;
+    std::string type;  // ecCodes stepType: accum, avg, max, min, ...
+    long start = 0;
+    long end = 0;
+    std::string units;  // ecCodes stepUnits
+};
+
+StatWindow statWindow(codes_handle* h) {
+    StatWindow w;
+    if (!hasKey(h, "stepType")) return w;
+    w.type = getString(h, "stepType");
+    if (w.type.empty() || w.type == "instant") return w;
+    w.statistical = true;
+    w.start = getLong(h, "startStep");
+    w.end = getLong(h, "endStep");
+    w.units = getString(h, "stepUnits");
+    return w;
 }
 
 TimePoint mapTime(codes_handle* h) {
@@ -267,6 +318,18 @@ void GribDataset::scan() {
     fg.f = core::openForReading(path_);
     if (!fg.f) throw ReadError("GRIB: cannot open " + core::pathToUtf8(path_));
 
+    // Every message's metadata first, names second: whether a statistical field
+    // needs its window in its name depends on what else shares its cell.
+    struct Message {
+        std::string shortName, longName, units, cfName;
+        LevelInfo level;
+        StatWindow window;
+        TimePoint time;
+        int member = -1;
+        core::RecordHandle offset = 0;
+    };
+    std::vector<Message> messages;
+
     int err = 0;
     while (true) {
         codes_handle* raw = codes_grib_handle_new_from_file(nullptr, fg.f, &err);
@@ -287,9 +350,56 @@ void GribDataset::scan() {
         const long length = getLong(raw, "totalLength");
         if (end < 0 || length <= 0 || length > end) throw ReadError("GRIB: cannot locate message");
         const auto offset = static_cast<core::RecordHandle>(end - length);
-        catalog_.addRecord(getString(raw, "shortName"), getString(raw, "name"),
-                           getString(raw, "units"), getString(raw, "cfName"), mapLevel(raw),
-                           mapTime(raw), memberOf(raw), offset);
+        messages.push_back({getString(raw, "shortName"), getString(raw, "name"),
+                            getString(raw, "units"), getString(raw, "cfName"), mapLevel(raw),
+                            statWindow(raw), mapTime(raw), memberOf(raw), offset});
+    }
+
+    // Statistical fields that share a cell, such as HRRR's "0-2 h" and "1-2 h"
+    // precipitation at the same valid time: the shortest window keeps the plain
+    // name, and each other one is named by where its window starts. Naming by the
+    // start rather than the length keeps a run-total ("since +0 h") one variable
+    // across the files of a multi-file set, where its length grows file by file.
+    auto cellOf = [](const Message& m) {
+        return std::make_tuple(m.shortName, m.level.qualifier, core::levelSortKey(m.level.level),
+                               static_cast<int>(m.level.level.type), m.time.epochSeconds, m.member);
+    };
+    std::map<decltype(cellOf(messages.front())), long> shortest;
+    for (const Message& m : messages) {
+        if (!m.window.statistical) continue;
+        const long len = m.window.end - m.window.start;
+        auto [it, inserted] = shortest.emplace(cellOf(m), len);
+        if (!inserted) it->second = std::min(it->second, len);
+    }
+
+    std::set<std::tuple<std::string, double, int, std::int64_t, int>> seen;
+    for (const Message& m : messages) {
+        std::string name = m.shortName;
+        std::vector<std::string> qualifiers;
+        if (!m.level.qualifier.empty()) qualifiers.push_back(m.level.qualifier);
+        if (m.window.statistical) {
+            const auto it = shortest.find(cellOf(m));
+            if (it != shortest.end() && m.window.end - m.window.start != it->second)
+                qualifiers.push_back(
+                    fmt::format("{} since +{}{}", m.window.type, m.window.start, m.window.units));
+        }
+        for (std::size_t i = 0; i < qualifiers.size(); ++i)
+            name += (i == 0 ? " (" : ", ") + qualifiers[i] + (i + 1 == qualifiers.size() ? ")" : "");
+
+        // Anything that still lands on an occupied cell is a field this reader
+        // has no way to tell apart. Say so, and keep the first, rather than let
+        // the catalog quietly keep whichever came last.
+        if (!seen.emplace(name, core::levelSortKey(m.level.level), static_cast<int>(m.level.level.type),
+                          m.time.epochSeconds, m.member)
+                 .second) {
+            MET_LOG_WARN("{}: a second '{}' at {} {} is indistinguishable from the first; "
+                         "keeping the first",
+                         core::pathToUtf8(path_), name, core::formatLevel(m.level.level),
+                         core::formatTime(m.time));
+            continue;
+        }
+        catalog_.addRecord(name, m.longName, m.units, m.cfName, m.level.level, m.time, m.member,
+                           m.offset);
     }
     catalog_.finalize();
 }
@@ -324,7 +434,7 @@ Field2D GribDataset::readField(const FieldKey& key) {
     field.meta.longName = getString(raw, "name");
     field.meta.units = getString(raw, "units");
     field.meta.standardName = getString(raw, "cfName");
-    field.meta.level = mapLevel(raw);
+    field.meta.level = mapLevel(raw).level;
     field.meta.validTime = mapTime(raw);
     field.meta.member = key.member;
     // resolutionAndComponentFlags bit 3 (0x08): u/v are grid-relative.
