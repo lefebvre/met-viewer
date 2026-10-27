@@ -5,6 +5,7 @@
 
 #include "tests/readers/nc_builder.h"
 #include "viewer/core/grid.h"
+#include "viewer/core/timeaxis.h"
 #include "viewer/readers/detect.h"
 
 using namespace met;
@@ -318,6 +319,86 @@ TEST(CfReader, UnsignedShortsAreReadAsUnsigned) {
     const auto f = ds->readField(core::FieldKey{"v", kSurface, ds->catalog().find("v")->times[0], -1});
     EXPECT_NEAR(f.at(0, 0), 655.35f, 1e-3);
     EXPECT_NEAR(f.at(1, 0), 1.0f, 1e-6);
+}
+
+// h5netcdf and h5py write string attributes as NC_STRING. Reading only NC_CHAR
+// dropped the time units, and every time silently became seconds since 1970.
+TEST(CfReader, StringTypedAttributesAreRead) {
+    NcBuilder nc("nc_string");
+    const int time = nc.dim("time", 2);
+    nc.string(nc.var("time", NC_DOUBLE, {time}), "units", "hours since 2020-06-01 00:00:00");
+    nc.put(nc.varid("time"), {0.0, 6.0});
+    const int lat = nc.coord("lat", {20.0, 10.0, 0.0}, "degrees_north");
+    const int lon = nc.coord("lon", {0.0, 10.0, 20.0, 30.0}, "degrees_east");
+    const int v = nc.var("t", NC_FLOAT, {time, lat, lon});
+    nc.string(v, "units", "K");
+    nc.put(v, digits({2, kNLat, kNLon}));
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto* t = ds->catalog().find("t");
+    ASSERT_NE(t, nullptr);
+    EXPECT_EQ(t->units, "K");
+    ASSERT_EQ(t->times.size(), 2u);
+    EXPECT_EQ(t->times[1].epochSeconds, 1590969600 + 6 * 3600);  // 2020-06-01T06:00Z
+}
+
+// Model calendars count days their own way. 360_day: 30 days after 2000-01-01 is
+// 2000-02-01, a year is 360 days, and day 59 is "2000-02-30", which lands on
+// 2000-03-01. noleap: the day after 2004-02-28 is 2004-03-01.
+TEST(CfReader, ModelCalendarsAreCountedInTheirOwnDays) {
+    auto timesFor = [](const char* calendar, const char* units, std::vector<double> offsets) {
+        NcBuilder nc("calendar");
+        const int time = nc.coord("time", offsets, units);
+        nc.text(nc.varid("time"), "calendar", calendar);
+        const int lat = nc.coord("lat", {20.0, 10.0, 0.0}, "degrees_north");
+        const int lon = nc.coord("lon", {0.0, 10.0, 20.0, 30.0}, "degrees_east");
+        nc.put(nc.var("t", NC_FLOAT, {time, lat, lon}), digits({offsets.size(), kNLat, kNLon}));
+        auto ds = readers::openDataset(nc.finish());
+        std::vector<std::string> out;
+        for (const auto& tp : ds->catalog().find("t")->times) out.push_back(core::formatTime(tp));
+        return out;
+    };
+    EXPECT_EQ(timesFor("360_day", "days since 2000-01-01", {0.0, 30.0, 59.0, 360.0}),
+              (std::vector<std::string>{"2000-01-01T00:00Z", "2000-02-01T00:00Z",
+                                        "2000-03-01T00:00Z", "2001-01-01T00:00Z"}));
+    EXPECT_EQ(timesFor("noleap", "days since 2004-02-28", {0.0, 1.0}),
+              (std::vector<std::string>{"2004-02-28T00:00Z", "2004-03-01T00:00Z"}));
+    EXPECT_EQ(timesFor("standard", "days since 2004-02-28", {0.0, 1.0}),
+              (std::vector<std::string>{"2004-02-28T00:00Z", "2004-02-29T00:00Z"}));
+}
+
+// A time that is a fill value is skipped instead of overflowing into a bogus date,
+// and the times either side of it still read.
+TEST(CfReader, UnusableTimeValueIsSkipped) {
+    NcBuilder nc("bad_time");
+    const int time = nc.coord("time", {0.0, static_cast<double>(NC_FILL_DOUBLE), 12.0},
+                              "hours since 2020-01-01 00:00:00");
+    const int lat = nc.coord("lat", {20.0, 10.0, 0.0}, "degrees_north");
+    const int lon = nc.coord("lon", {0.0, 10.0, 20.0, 30.0}, "degrees_east");
+    nc.put(nc.var("t", NC_FLOAT, {time, lat, lon}), digits({3, kNLat, kNLon}));
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto* t = ds->catalog().find("t");
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->times.size(), 2u);
+    const auto f = ds->readField(core::FieldKey{"t", kSurface, t->times[1], -1});
+    EXPECT_FLOAT_EQ(f.at(0, 0), 200.0f);  // third time slab, not the second
+}
+
+// A latitude axis whose spacing creeps: every step is within 1% of the first,
+// but the step keeps growing, so the rows bow away from any uniform axis.
+TEST(CfReader, SlowlyDriftingAxisIsRejected) {
+    std::vector<double> lat;
+    double y = 80.0;
+    for (int i = 0; i < 60; ++i) {
+        lat.push_back(y);
+        y -= 1.0 + 0.0099 * i / 59.0;  // 1.0 growing to 1.0099
+    }
+    NcBuilder nc("drift");
+    const int la = nc.coord("lat", lat, "degrees_north");
+    const int lo = nc.coord("lon", {0.0, 10.0, 20.0, 30.0}, "degrees_east");
+    nc.put(nc.var("t", NC_FLOAT, {la, lo}), std::vector<double>(lat.size() * 4, 1.0));
+    EXPECT_THROW((void)readers::openDataset(nc.finish()), readers::ReadError);
 }
 
 // ERA5 ensembles carry a `number` dimension. Each member is its own record, and
