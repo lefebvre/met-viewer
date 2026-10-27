@@ -346,8 +346,8 @@ TEST(CfReader, StringTypedAttributesAreRead) {
 }
 
 // Model calendars count days their own way. 360_day: 30 days after 2000-01-01 is
-// 2000-02-01, a year is 360 days, and day 59 is "2000-02-30", which lands on
-// 2000-03-01. noleap: the day after 2004-02-28 is 2004-03-01.
+// 2000-02-01, a year is 360 days, and day 60 is 2000-03-01. noleap: the day after
+// 2004-02-28 is 2004-03-01.
 TEST(CfReader, ModelCalendarsAreCountedInTheirOwnDays) {
     auto timesFor = [](const char* calendar, const char* units, std::vector<double> offsets) {
         NcBuilder nc("calendar");
@@ -361,13 +361,71 @@ TEST(CfReader, ModelCalendarsAreCountedInTheirOwnDays) {
         for (const auto& tp : ds->catalog().find("t")->times) out.push_back(core::formatTime(tp));
         return out;
     };
-    EXPECT_EQ(timesFor("360_day", "days since 2000-01-01", {0.0, 30.0, 59.0, 360.0}),
+    EXPECT_EQ(timesFor("360_day", "days since 2000-01-01", {0.0, 30.0, 60.0, 360.0}),
               (std::vector<std::string>{"2000-01-01T00:00Z", "2000-02-01T00:00Z",
                                         "2000-03-01T00:00Z", "2001-01-01T00:00Z"}));
     EXPECT_EQ(timesFor("noleap", "days since 2004-02-28", {0.0, 1.0}),
               (std::vector<std::string>{"2004-02-28T00:00Z", "2004-03-01T00:00Z"}));
     EXPECT_EQ(timesFor("standard", "days since 2004-02-28", {0.0, 1.0}),
               (std::vector<std::string>{"2004-02-28T00:00Z", "2004-02-29T00:00Z"}));
+}
+
+// February's model-only days have no real date. Placed by date they fell on March
+// 1 and 2, so 360_day days 59 and 60 after 2000-01-01 (February 30 and March 1)
+// were one time, and the catalog kept only the later slab. They are spread across
+// the real February's last day instead: every step distinct, in order, and readable.
+TEST(CfReader, ModelOnlyFebruaryDaysKeepTheirOwnTimes) {
+    auto open = [](const char* calendar, const char* units, std::vector<double> offsets) {
+        NcBuilder nc("calendar_feb");
+        const int time = nc.coord("time", offsets, units);
+        nc.text(nc.varid("time"), "calendar", calendar);
+        const int lat = nc.coord("lat", {20.0, 10.0, 0.0}, "degrees_north");
+        const int lon = nc.coord("lon", {0.0, 10.0, 20.0, 30.0}, "degrees_east");
+        nc.put(nc.var("t", NC_FLOAT, {time, lat, lon}), digits({offsets.size(), kNLat, kNLon}));
+        return readers::openDataset(nc.finish());
+    };
+    auto labels = [](const core::VariableEntry& v) {
+        std::vector<std::string> out;
+        for (const auto& tp : v.times) out.push_back(core::formatTime(tp));
+        return out;
+    };
+
+    // 2000 is a leap year: model February 29 and 30 share the real February 29.
+    auto ds = open("360_day", "days since 2000-01-01", {58.0, 59.0, 60.0});
+    const auto* t = ds->catalog().find("t");
+    ASSERT_NE(t, nullptr);
+    EXPECT_EQ(labels(*t), (std::vector<std::string>{"2000-02-29T00:00Z", "2000-02-29T12:00Z",
+                                                    "2000-03-01T00:00Z"}));
+    // Each time reads its own slab: digits() puts 100 * slab in the first cell.
+    for (std::size_t i = 0; i < t->times.size(); ++i)
+        EXPECT_FLOAT_EQ(ds->readField(core::FieldKey{"t", kSurface, t->times[i], -1}).at(0, 0),
+                        100.0f * static_cast<float>(i));
+
+    // A common year: model February 28, 29 and 30 share the real February 28.
+    ds = open("360_day", "days since 2001-01-01", {57.0, 58.0, 59.0, 60.0});
+    EXPECT_EQ(labels(*ds->catalog().find("t")),
+              (std::vector<std::string>{"2001-02-28T00:00Z", "2001-02-28T08:00Z",
+                                        "2001-02-28T16:00Z", "2001-03-01T00:00Z"}));
+    ds = open("all_leap", "days since 2001-02-28", {0.0, 1.0, 2.0});
+    EXPECT_EQ(
+        labels(*ds->catalog().find("t")),
+        (std::vector<std::string>{"2001-02-28T00:00Z", "2001-02-28T12:00Z", "2001-03-01T00:00Z"}));
+}
+
+// A time axis that names one instant twice keeps the first slab for it, not
+// whichever the catalog happened to write last.
+TEST(CfReader, RepeatedTimeKeepsTheFirstSlab) {
+    NcBuilder nc("repeated_time");
+    const int time = nc.coord("time", {0.0, 6.0, 6.0}, "hours since 2020-01-01 00:00:00");
+    const int lat = nc.coord("lat", {20.0, 10.0, 0.0}, "degrees_north");
+    const int lon = nc.coord("lon", {0.0, 10.0, 20.0, 30.0}, "degrees_east");
+    nc.put(nc.var("t", NC_FLOAT, {time, lat, lon}), digits({3, kNLat, kNLon}));
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto* t = ds->catalog().find("t");
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->times.size(), 2u);
+    EXPECT_FLOAT_EQ(ds->readField(core::FieldKey{"t", kSurface, t->times[1], -1}).at(0, 0), 100.0f);
 }
 
 // A time that is a fill value is skipped instead of overflowing into a bogus date,

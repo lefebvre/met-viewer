@@ -10,6 +10,7 @@
 #include <initializer_list>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -320,11 +321,17 @@ constexpr int kCumAllLeap[13] = {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 30
 // is not a usable number (a fill value, NaN, or beyond any plausible date).
 //
 // Model calendars are counted in their own day arithmetic and the resulting
-// calendar date is then placed on the real time line. A 360-day "February 30"
-// therefore lands on the first days of March: TimePoint has no other way to
-// name it, and the alternative -- counting model days as real ones -- drifts by
-// five or six days a year.
-std::optional<TimePoint> validTime(const TimeUnits& tu, double offset) {
+// calendar date is then placed on the real time line, since counting model days
+// as real ones drifts by five or six days a year. Every model date has a real
+// counterpart except February's extra days: 360_day's 29th and 30th, all_leap's
+// 29th in a common year. Placed by date, those landed on March 1 and 2 and took
+// the cells of the real March days, so two time steps read as one and the
+// catalog kept only the later. Instead, the model days from the real February's
+// last day to March 1 are spread evenly across that one real day: February 28 in
+// a common year holds model February 28, 29 and 30 at 00:00, 08:00 and 16:00.
+// Every time stays distinct and in order, and every other date is exact.
+// `squeezed`, when given, is set if this time fell in such a window.
+std::optional<TimePoint> validTime(const TimeUnits& tu, double offset, bool* squeezed = nullptr) {
     const double secs = offset * tu.perUnit;
     constexpr double kLimit = 1e13;  // ~300,000 years
     if (!std::isfinite(secs) || std::abs(secs) > kLimit) return std::nullopt;
@@ -354,7 +361,19 @@ std::optional<TimePoint> validTime(const TimeUnits& tu, double offset) {
         while (m < 12 && cum[m] <= doy) ++m;
         d = doy - cum[m - 1] + 1;
     }
-    return TimePoint{core::timegmUtc(static_cast<int>(y), m, d, 0, 0, 0) +
+
+    const int year = static_cast<int>(y);
+    const bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+    const int realFeb = leap ? 29 : 28;
+    const int modelFeb = d360 ? 30 : cum[2] - cum[1];
+    if (m == 2 && d >= realFeb && modelFeb > realFeb) {
+        if (squeezed) *squeezed = true;
+        const double modelDays = modelFeb - realFeb + 1;  // squeezed into one real day
+        const double into = ((d - realFeb) * 86400.0 + secOfDay) / modelDays;
+        return TimePoint{core::timegmUtc(year, 2, realFeb, 0, 0, 0) +
+                         static_cast<std::int64_t>(std::llround(into))};
+    }
+    return TimePoint{core::timegmUtc(year, m, d, 0, 0, 0) +
                      static_cast<std::int64_t>(std::llround(secOfDay))};
 }
 
@@ -543,12 +562,27 @@ void CfDataset::scan() {
             parseTimeUnits(attText(ncid_, timeVar, "units").value_or("seconds since 1970-01-01"),
                            attText(ncid_, timeVar, "calendar").value_or(""), path_);
         times.reserve(raw.size());
+        bool squeezed = false;
+        std::set<std::int64_t> seenTimes;
         for (std::size_t i = 0; i < raw.size(); ++i) {
-            times.push_back(validTime(tu, raw[i]));
-            if (!times.back())
+            times.push_back(validTime(tu, raw[i], &squeezed));
+            if (!times.back()) {
                 MET_LOG_WARN("{}: time {} ({}) is not a usable value; skipping that time",
                              core::pathToUtf8(path_), i, raw[i]);
+            } else if (!seenTimes.insert(times.back()->epochSeconds).second) {
+                // Two entries naming one instant share every catalog cell. Keep
+                // the first rather than let the later slab silently replace it.
+                MET_LOG_WARN("{}: time {} ({}) repeats {}; keeping the first",
+                             core::pathToUtf8(path_), i, raw[i], core::formatTime(*times.back()));
+                times.back().reset();
+            }
         }
+        if (squeezed)
+            MET_LOG_WARN(
+                "{}: the '{}' calendar has February days the real calendar does not; "
+                "times from the real February's last day to March 1 are spread across "
+                "that one day, so their labels read earlier than the model's",
+                core::pathToUtf8(path_), attText(ncid_, timeVar, "calendar").value_or(""));
     }
 
     // Ensemble member numbers: the coordinate's values when it has one, else the
