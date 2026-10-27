@@ -1875,13 +1875,17 @@ void MainWindow::loadSettings() {
     prefs_.cacheBudgetMB = s.value("cacheBudgetMB", Preferences{}.cacheBudgetMB).toInt();
     prefs_.animationFps = s.value("animationFps", Preferences{}.animationFps).toInt();
 
-    // The point-profile column selection. Ids the next dataset cannot offer are
-    // dropped by setChoices, so a selection saved against one file is safe to
-    // restore over another. The panel persists its own unit choice.
-    std::vector<std::string> columns;
-    for (const QString& id : s.value("pointProfileColumns").toStringList())
-        columns.push_back(id.toStdString());
-    if (!columns.empty() && pointProfileDock_) pointProfileDock_->setSelectedColumns(columns);
+    // The point-profile column selection. The panel shows only the ids a dataset
+    // can offer and keeps the rest for the next file, so a selection saved against
+    // one file is safe to restore over another. An empty list is restored too: it
+    // is a choice ("nothing"), and skipping it turned it back into the defaults.
+    // The panel persists its own unit choice.
+    if (s.contains("pointProfileColumns") && pointProfileDock_) {
+        std::vector<std::string> columns;
+        for (const QString& id : s.value("pointProfileColumns").toStringList())
+            if (!id.isEmpty()) columns.push_back(id.toStdString());
+        pointProfileDock_->setSelectedColumns(columns);
+    }
 
     applyPreferences();
 }
@@ -1903,9 +1907,12 @@ void MainWindow::saveSettings() {
     s.setValue("coastlines", mapCoastlineCheck_->isChecked());
     s.setValue("cacheBudgetMB", prefs_.cacheBudgetMB);
     s.setValue("animationFps", prefs_.animationFps);
-    if (pointProfileDock_) {
+    // The whole preference, not just what the last dataset offered. Not written at
+    // all before a selection exists, or a session that never opened a file would
+    // store "nothing" over the defaults.
+    if (pointProfileDock_ && pointProfileDock_->hasSelection()) {
         QStringList columns;
-        for (const std::string& id : pointProfileDock_->selectedColumns())
+        for (const std::string& id : pointProfileDock_->preferredColumns())
             columns << QString::fromStdString(id);
         s.setValue("pointProfileColumns", columns);
     }

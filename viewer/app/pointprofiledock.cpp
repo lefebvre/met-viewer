@@ -16,6 +16,7 @@
 #include <QLabel>
 #include <QMap>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QSet>
@@ -173,8 +174,11 @@ PointProfileDock::PointProfileDock(QWidget* parent) : QWidget(parent) {
     // whatever the platform feels like. The action copies the selection -- no
     // header row, the spreadsheet convention -- while the Copy button keeps the
     // whole table with its header, for a paste that stands alone.
+    // Scoped to the table: the default window-wide context fired it with focus on
+    // the map or the time slider, replacing the clipboard with a profile.
     auto* copySelection = new QAction(this);
     copySelection->setShortcut(QKeySequence::Copy);
+    copySelection->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     table_->addAction(copySelection);
     connect(copySelection, &QAction::triggered, this, [this] {
         if (QClipboard* clip = QGuiApplication::clipboard()) clip->setText(selectionAsTsv());
@@ -186,31 +190,36 @@ PointProfileDock::PointProfileDock(QWidget* parent) : QWidget(parent) {
 
 void PointProfileDock::setChoices(const analysis::ProfileColumnChoices& choices) {
     choices_ = choices;
-    // Keep what is still on offer. A file swap should not silently reset a
-    // selection the user built, but it also must not carry over a column this
-    // dataset has never heard of.
+    // Only once a dataset actually offers something. setChoices also runs with an
+    // empty set before any file is open, and treating that as "the user chose
+    // nothing" would leave the first real dataset with no columns at all.
+    if (!selectionInitialized_ && !choices.available.empty()) {
+        preferred_ = defaultColumns(choices);
+        selectionInitialized_ = true;
+    }
+    selected_ = offeredFrom(preferred_);
+    rebuildColumnMenu();
+}
+
+std::vector<std::string> PointProfileDock::offeredFrom(const std::vector<std::string>& ids) const {
+    // What this dataset can show of the user's selection. A file swap must not
+    // carry over a column the dataset has never heard of -- but it must not forget
+    // it either, which is why preferred_ is kept whole and only this is filtered:
+    // opening a file without humidity used to drop the humidity column for good.
     std::vector<std::string> kept;
-    for (const std::string& id : selected_) {
+    for (const std::string& id : ids) {
         const bool derived = id == analysis::kWindSpeedId || id == analysis::kWindDirectionId;
         if (derived) {
-            if (choices.windAvailable) kept.push_back(id);
+            if (choices_.windAvailable) kept.push_back(id);
             continue;
         }
-        for (const analysis::ProfileColumn& c : choices.available)
+        for (const analysis::ProfileColumn& c : choices_.available)
             if (c.id == id) {
                 kept.push_back(id);
                 break;
             }
     }
-    selected_ = std::move(kept);
-    // Only once a dataset actually offers something. setChoices also runs with an
-    // empty set before any file is open, and treating that as "the user chose
-    // nothing" would leave the first real dataset with no columns at all.
-    if (!selectionInitialized_ && !choices.available.empty()) {
-        selected_ = defaultColumns(choices);
-        selectionInitialized_ = true;
-    }
-    rebuildColumnMenu();
+    return kept;
 }
 
 void PointProfileDock::rebuildColumnMenu() {
@@ -221,9 +230,12 @@ void PointProfileDock::rebuildColumnMenu() {
         act->setCheckable(true);
         act->setChecked(std::find(selected_.begin(), selected_.end(), id) != selected_.end());
         connect(act, &QAction::toggled, this, [this, id](bool on) {
-            const auto it = std::find(selected_.begin(), selected_.end(), id);
-            if (on && it == selected_.end()) selected_.push_back(id);
-            else if (!on && it != selected_.end()) selected_.erase(it);
+            // The menu only offers what this dataset has, so a toggle edits the
+            // preference and the visible selection follows from it.
+            const auto it = std::find(preferred_.begin(), preferred_.end(), id);
+            if (on && it == preferred_.end()) preferred_.push_back(id);
+            else if (!on && it != preferred_.end()) preferred_.erase(it);
+            selected_ = offeredFrom(preferred_);
             debounce_->start();
         });
     };
@@ -260,6 +272,11 @@ void PointProfileDock::rebuildColumnMenu() {
 }
 
 void PointProfileDock::rebuildUnitMenu() {
+    // clear() drops the actions but not the submenus addMenu() parented to the
+    // menu, and this runs on every profile -- every frame of playback -- so each
+    // rebuild used to leave its submenus and their action groups behind.
+    for (QMenu* sub : unitsMenu_->findChildren<QMenu*>(Qt::FindDirectChildrenOnly))
+        sub->deleteLater();
     unitsMenu_->clear();
     const std::vector<PointProfileModel::UnitColumn> columns = model_->unitColumns();
     for (const PointProfileModel::UnitColumn& col : columns) {
@@ -375,8 +392,11 @@ core::LatLon PointProfileDock::point() const { return {lat_->value(), lon_->valu
 std::vector<std::string> PointProfileDock::selectedColumns() const { return selected_; }
 
 void PointProfileDock::setSelectedColumns(const std::vector<std::string>& ids) {
-    selected_ = ids;
+    preferred_ = ids;
     selectionInitialized_ = true;
+    // Before any dataset (a restore at startup) there is nothing to filter by yet;
+    // setChoices filters when the first one arrives.
+    selected_ = choices_.available.empty() && !choices_.windAvailable ? ids : offeredFrom(ids);
     rebuildColumnMenu();
 }
 
@@ -542,7 +562,11 @@ void PointProfileDock::onExport() {
                                      tr("CSV files (*.csv);;All files (*)"));
     if (path.isEmpty()) return;
     QString error;
-    if (!exportCsvTo(path, &error)) setMessage(tr("Could not write %1: %2").arg(path, error));
+    // A dialog, not the panel's message area: that replaces the table, and the
+    // profile the user tried to export would vanish until the next one arrived.
+    if (!exportCsvTo(path, &error))
+        QMessageBox::warning(this, tr("Export failed"),
+                             tr("Could not write %1: %2").arg(path, error));
 }
 
 bool PointProfileDock::exportCsvTo(const QString& path, QString* error) {
