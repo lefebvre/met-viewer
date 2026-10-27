@@ -58,6 +58,16 @@ bool centralDerivatives(const core::Field2D& comp, int i, int j, double dxStep, 
     return true;
 }
 
+// The wind with its components on the grid's own axes: `w` itself when they
+// already are (always, on a lat/lon grid), else a rotated copy in `scratch`.
+const WindField& inGridFrame(const WindField& w, WindField& scratch) {
+    if (w.u.meta.gridRelativeWind || std::holds_alternative<core::RegularLatLonGrid>(w.u.grid))
+        return w;
+    scratch = w;
+    rotateToGridRelative(scratch);
+    return scratch;
+}
+
 // Latitude (radians) at grid row j for a regular lat/lon grid, or NaN for a
 // projected grid — whose planar (metre) derivatives already carry the metric,
 // so no spherical curvature correction is applied there.
@@ -132,7 +142,9 @@ std::optional<core::Field2D> asTemperatureKelvin(const core::Field2D& f) {
     return out;
 }
 
-core::Field2D relativeVorticityField(const WindField& w) {
+core::Field2D relativeVorticityField(const WindField& input) {
+    WindField scratch;
+    const WindField& w = inGridFrame(input, scratch);
     core::Field2D f = likeField(w.u, "vo", "s**-1", "Relative vorticity");
     const int width = w.width(), height = w.height();
     for (int j = 0; j < height; ++j) {
@@ -155,7 +167,9 @@ core::Field2D relativeVorticityField(const WindField& w) {
     return f;
 }
 
-core::Field2D divergenceField(const WindField& w) {
+core::Field2D divergenceField(const WindField& input) {
+    WindField scratch;
+    const WindField& w = inGridFrame(input, scratch);
     core::Field2D f = likeField(w.u, "div", "s**-1", "Divergence");
     const int width = w.width(), height = w.height();
     for (int j = 0; j < height; ++j) {

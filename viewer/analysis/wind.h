@@ -56,8 +56,14 @@ struct UV {
 // lat/lon grid this is a no-op; for a conformal projected grid it applies the
 // meridian-convergence rotation, evaluated on a coarse lattice and interpolated
 // (the angle is smooth, and a per-cell evaluation would spend two PROJ transforms
-// on every grid point).
+// on every grid point). Clears meta.gridRelativeWind, so calling it twice rotates
+// once.
 void rotateToEarthRelative(WindField& w);
+
+// The inverse: earth-relative components on a projected grid resolved back onto
+// the grid's x/y axes, and meta.gridRelativeWind set. A no-op when they already
+// are grid-relative or the grid is lat/lon.
+void rotateToGridRelative(WindField& w);
 
 // The meridian-convergence angle (radians) at grid index (i, j): the bearing of
 // the *projection's* +y axis measured east of true north. Deliberately keyed to

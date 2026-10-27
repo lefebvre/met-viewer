@@ -40,9 +40,19 @@ namespace met::analysis {
 // Relative vorticity zeta = dv/dx - du/dy (1/s), by centered finite differences.
 // Grid spacing is handled per grid type: metres directly for projected grids,
 // and R*cos(lat)*dlon / R*dlat for regular lat/lon grids.
+//
+// The derivatives are taken along grid rows and columns, so they are computed
+// from components resolved on those axes. Earth-relative components on a
+// projected grid (meta.gridRelativeWind false) are rotated back to the grid frame
+// on a copy first: differencing them directly gives cos θ·ζ + sin θ·δ for a
+// local meridian convergence θ, and on HRRR's western edge (θ ≈ 16°) that puts a
+// quarter of the divergence into the vorticity. Passing the components as
+// decoded skips the copy. The map factor of a conformal projection (a few
+// percent over a CONUS domain) is not applied.
 [[nodiscard]] core::Field2D relativeVorticityField(const WindField& w);
 
-// Horizontal divergence du/dx + dv/dy (1/s), same differencing as vorticity.
+// Horizontal divergence du/dx + dv/dy (1/s), same differencing and frame
+// handling as vorticity.
 [[nodiscard]] core::Field2D divergenceField(const WindField& w);
 
 }  // namespace met::analysis

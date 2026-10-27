@@ -951,7 +951,11 @@ void MainWindow::presentField() {
                     analysis::potentialTemperatureField(*tk, lvl.value));
         }
     } else {
-        auto wind = windFromCache();
+        // Speed is the same in either frame and direction needs earth-relative
+        // components; vorticity and divergence differentiate along grid axes, so
+        // they need the components as decoded (see derived.h).
+        const bool earthRelative = derivedMode_ == 1 || derivedMode_ == 2;
+        auto wind = windFromCache(earthRelative);
         if (!wind) {
             // The components aren't decoded yet. Show the raw field now and come
             // back through here once they land, rather than blocking on the decode.
@@ -1720,7 +1724,7 @@ std::optional<std::pair<core::FieldKey, core::FieldKey>> MainWindow::currentWind
                           core::FieldKey{pair->vName, level, time, currentMember_});
 }
 
-std::shared_ptr<analysis::WindField> MainWindow::windFromCache() {
+std::shared_ptr<analysis::WindField> MainWindow::windFromCache(bool earthRelative) {
     const auto keys = currentWindKeys();
     if (!keys) return nullptr;
     auto u = fieldCache_.get(keys->first);
@@ -1729,7 +1733,7 @@ std::shared_ptr<analysis::WindField> MainWindow::windFromCache() {
     auto wind = std::make_shared<analysis::WindField>();
     wind->u = *u;  // copy: rotation is in place and must not touch the cached field
     wind->v = *v;
-    analysis::rotateToEarthRelative(*wind);
+    if (earthRelative) analysis::rotateToEarthRelative(*wind);
     return wind;
 }
 
