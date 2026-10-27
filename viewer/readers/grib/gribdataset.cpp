@@ -360,9 +360,13 @@ void GribDataset::scan() {
     // name, and each other one is named by where its window starts. Naming by the
     // start rather than the length keeps a run-total ("since +0 h") one variable
     // across the files of a multi-file set, where its length grows file by file.
+    //
+    // A cell is keyed on the level's type and value, as the catalog keys it, and
+    // not on levelSortKey: that is a display order, and it gives every Unknown
+    // level (sigma, soil layers, ...) the same key whatever its value.
     auto cellOf = [](const Message& m) {
-        return std::make_tuple(m.shortName, m.level.qualifier, core::levelSortKey(m.level.level),
-                               static_cast<int>(m.level.level.type), m.time.epochSeconds, m.member);
+        return std::make_tuple(m.shortName, m.level.qualifier, static_cast<int>(m.level.level.type),
+                               m.level.level.value, m.time.epochSeconds, m.member);
     };
     std::map<decltype(cellOf(messages.front())), long> shortest;
     for (const Message& m : messages) {
@@ -372,7 +376,7 @@ void GribDataset::scan() {
         if (!inserted) it->second = std::min(it->second, len);
     }
 
-    std::set<std::tuple<std::string, double, int, std::int64_t, int>> seen;
+    std::set<std::tuple<std::string, int, double, std::int64_t, int>> seen;
     for (const Message& m : messages) {
         std::string name = m.shortName;
         std::vector<std::string> qualifiers;
@@ -390,8 +394,8 @@ void GribDataset::scan() {
         // Anything that still lands on an occupied cell is a field this reader
         // has no way to tell apart. Say so, and keep the first, rather than let
         // the catalog quietly keep whichever came last.
-        if (!seen.emplace(name, core::levelSortKey(m.level.level),
-                          static_cast<int>(m.level.level.type), m.time.epochSeconds, m.member)
+        if (!seen.emplace(name, static_cast<int>(m.level.level.type), m.level.level.value,
+                          m.time.epochSeconds, m.member)
                  .second) {
             MET_LOG_WARN(
                 "{}: a second '{}' at {} {} is indistinguishable from the first; "
