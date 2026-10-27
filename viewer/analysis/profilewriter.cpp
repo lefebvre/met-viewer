@@ -54,19 +54,29 @@ namespace {
     return "unknown";
 }
 
-// The unit a column is written in: the caller's choice, or the column's own.
-[[nodiscard]] const std::string& chosenUnit(const std::string& want, const std::string& native) {
-    return want.empty() ? native : want;
+// The unit a column is written in: the caller's choice when the column's own
+// unit converts to it, else the column's own. Deciding this once, for the header
+// and every value alike, is the point: falling back value by value while the
+// header named the requested unit could have put Kelvin numbers under "(degC)".
+// A choice the picker offered always converts, so the fallback is a backstop.
+[[nodiscard]] std::string chosenUnit(const std::string& want, const std::string& native) {
+    if (want.empty() || want == native) return native;
+    return core::convert(1.0, native, want) ? want : native;
 }
 
 [[nodiscard]] std::string convertOut(double value, const std::string& from, const std::string& to) {
     if (std::isnan(value)) return {};
-    if (from == to || to.empty()) return formatExportValue(value, from);
-    // A choice the picker offered always converts; if one ever does not, writing
-    // the native number is better than writing nothing, so this falls through
-    // rather than blanking a real measurement.
+    if (from == to) return formatExportValue(value, from);
     const std::optional<double> c = core::convert(value, from, to);
-    return c ? formatExportValue(*c, to) : formatExportValue(value, from);
+    return c ? formatExportValue(*c, to) : std::string();  // unreachable after chosenUnit
+}
+
+// A free-text value for a '#' comment line, on one line: a newline in a dataset
+// label would otherwise start an uncommented line in the middle of the header.
+[[nodiscard]] std::string oneLine(std::string s) {
+    std::replace(s.begin(), s.end(), '\r', ' ');
+    std::replace(s.begin(), s.end(), '\n', ' ');
+    return s;
 }
 
 [[nodiscard]] std::string headerName(const std::string& name, const std::string& units) {
@@ -135,9 +145,11 @@ std::string csvQuote(const std::string& field, char separator) {
     // plain space too would be safe for CSV and wrong for the clipboard: Excel
     // shows the quotes literally on a tab-separated paste, so every level label
     // would arrive with the quotes inside the cell.
+    // A bare carriage return ends a record too, for RFC 4180 and for Excel.
     const bool needs = field.find(separator) != std::string::npos ||
                        field.find('"') != std::string::npos ||
-                       field.find('\n') != std::string::npos;
+                       field.find('\n') != std::string::npos ||
+                       field.find('\r') != std::string::npos;
     if (!needs) return field;
     std::string out = "\"";
     for (const char ch : field) {
@@ -177,17 +189,20 @@ std::string profileToCsv(const PointProfile& p, const ProfileExportInfo& info,
     // colon, and the file's contents are under no such constraint -- letting a
     // filesystem limitation set a data format is the wrong way round.
     out += fmt::format("# valid time: {}\n", core::formatTime(p.validTime));
-    if (!info.datasetLabel.empty()) out += fmt::format("# dataset: {}\n", info.datasetLabel);
-    out +=
-        fmt::format("# level type: {}\n", info.levelTypeLabel.empty() ? levelTypeLabel(p.levelType)
-                                                                      : info.levelTypeLabel);
+    if (!info.datasetLabel.empty())
+        out += fmt::format("# dataset: {}\n", oneLine(info.datasetLabel));
+    out += fmt::format("# level type: {}\n", info.levelTypeLabel.empty()
+                                                 ? levelTypeLabel(p.levelType)
+                                                 : oneLine(info.levelTypeLabel));
     out += fmt::format("# member: {}\n",
                        p.member < 0 ? std::string("deterministic") : fmt::format("{}", p.member));
     // Say where the altitude came from. It is mean-sea-level geopotential height
     // read from the file, never a height above ground: nothing here infers a
     // terrain elevation, so calling it AGL would be a different number entirely.
     if (p.heightSourceVar.empty()) out += "# height: none (this dataset carries no height field)\n";
-    else out += fmt::format("# height: MSL geopotential height from '{}'\n", p.heightSourceVar);
+    else
+        out += fmt::format("# height: MSL geopotential height from '{}'\n",
+                           oneLine(p.heightSourceVar));
     // A reader checking our direction against the file's raw u/v on a projected
     // grid would otherwise conclude we are wrong by the meridian convergence.
     if (info.windEarthRelative)
