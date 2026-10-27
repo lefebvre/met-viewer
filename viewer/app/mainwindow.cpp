@@ -1917,14 +1917,17 @@ void MainWindow::loadSettings() {
 
     // The point-profile column selection. The panel shows only the ids a dataset
     // can offer and keeps the rest for the next file, so a selection saved against
-    // one file is safe to restore over another. An empty list is restored too: it
-    // is a choice ("nothing"), and skipping it turned it back into the defaults.
-    // The panel persists its own unit choice.
-    if (s.contains("pointProfileColumns") && pointProfileDock_) {
+    // one file is safe to restore over another. An empty list is restored too
+    // when it was a choice ("nothing"); skipping it turned it back into the
+    // defaults. Only a list written with the "Set" marker can mean that: earlier
+    // versions wrote an empty list whenever no dataset had been opened, and that
+    // one still means "no selection yet". The panel persists its own unit choice.
+    if (pointProfileDock_) {
         std::vector<std::string> columns;
         for (const QString& id : s.value("pointProfileColumns").toStringList())
             if (!id.isEmpty()) columns.push_back(id.toStdString());
-        pointProfileDock_->setSelectedColumns(columns);
+        if (!columns.empty() || s.value("pointProfileColumnsSet", false).toBool())
+            pointProfileDock_->setSelectedColumns(columns);
     }
 
     applyPreferences();
@@ -1955,6 +1958,7 @@ void MainWindow::saveSettings() {
         for (const std::string& id : pointProfileDock_->preferredColumns())
             columns << QString::fromStdString(id);
         s.setValue("pointProfileColumns", columns);
+        s.setValue("pointProfileColumnsSet", true);
     }
 }
 
