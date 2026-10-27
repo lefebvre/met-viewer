@@ -57,6 +57,20 @@ bool isLonUnits(const std::string& u) {
     return l == "degrees_east" || l == "degree_east" || l == "degrees_e" || l == "degreese";
 }
 
+// An ensemble-member axis: CF's standard_name, or one of the names producers use
+// for it (ERA5 ensembles call it `number`).
+bool isMemberAxis(const std::string& name, const std::string& standardName) {
+    const std::string n = lower(name);
+    return lower(standardName) == "realization" || n == "number" || n == "realization" ||
+           n == "member" || n == "ensemble_member" || n == "ensemble" || n == "ens";
+}
+
+// RecordHandle layout: member index in the top 16 bits, then level and time
+// index in 24 bits each.
+constexpr int kLevelShift = 24;
+constexpr int kMemberShift = 48;
+constexpr core::RecordHandle kIndexMask = 0xFFFFFF;
+
 // Classify a vertical coordinate from its metadata. Returns false if the
 // coordinate does not look vertical. On success `type` is the level type and
 // `scale` converts the stored value into that type's unit (hPa for pressure,
@@ -210,8 +224,8 @@ void CfDataset::scan() {
     }
 
     // Identify coordinate-variable roles per dimension.
-    int latDim = -1, lonDim = -1, timeDim = -1, levelDim = -1;
-    int latVar = -1, lonVar = -1, timeVar = -1, levelVar = -1;
+    int latDim = -1, lonDim = -1, timeDim = -1, levelDim = -1, memberDim = -1;
+    int latVar = -1, lonVar = -1, timeVar = -1, levelVar = -1, memberVar = -1;
 
     auto classifyCoord = [&](int varid, const std::string& name, int dimid) {
         const std::string units = attText(ncid_, varid, "units").value_or("");
@@ -235,6 +249,11 @@ void CfDataset::scan() {
             timeVar = varid;
             return;
         }
+        if (memberDim < 0 && isMemberAxis(name, std)) {
+            memberDim = dimid;
+            memberVar = varid;
+            return;
+        }
         if (levelDim < 0) {
             const bool hasPositive = attText(ncid_, varid, "positive").has_value();
             VerticalLevel::Type t = VerticalLevel::Type::Unknown;
@@ -255,6 +274,11 @@ void CfDataset::scan() {
             classifyCoord(v, nm, dimids[0]);
         }
     }
+    // An ensemble dimension need not carry a coordinate variable.
+    for (int d = 0; d < ndims && memberDim < 0; ++d)
+        if (d != latDim && d != lonDim && d != timeDim && d != levelDim &&
+            isMemberAxis(dimName[static_cast<std::size_t>(d)], ""))
+            memberDim = d;
 
     if (latDim < 0 || lonDim < 0)
         throw ReadError("NetCDF: no latitude/longitude coordinates found");
@@ -294,6 +318,15 @@ void CfDataset::scan() {
         std::tie(timePerUnit, timeBase) = parseTimeUnits(tu);
     }
 
+    // Ensemble member numbers: the coordinate's values when it has one, else the
+    // position along the dimension.
+    std::vector<int> members;
+    if (memberDim >= 0) {
+        members.resize(dimLen[static_cast<std::size_t>(memberDim)]);
+        if (memberVar < 0 || nc_get_var_int(ncid_, memberVar, members.data()) != NC_NOERR)
+            for (std::size_t m = 0; m < members.size(); ++m) members[m] = static_cast<int>(m);
+    }
+
     if (lat.empty() || lon.empty()) throw ReadError("NetCDF: empty latitude/longitude coordinate");
 
     // Build the grid geometry from the coordinate arrays. RegularLatLonGrid is a
@@ -331,16 +364,30 @@ void CfDataset::scan() {
         nc_type type;
         int vndims = 0, dimids[NC_MAX_VAR_DIMS] = {0}, vnatts = 0;
         nc_inq_var(ncid_, v, nm, &type, &vndims, dimids, &vnatts);
-        if (v == latVar || v == lonVar || v == timeVar || v == levelVar) continue;
+        if (v == latVar || v == lonVar || v == timeVar || v == levelVar || v == memberVar) continue;
 
-        int latAxis = -1, lonAxis = -1, timeAxis = -1, levelAxis = -1;
+        int latAxis = -1, lonAxis = -1, timeAxis = -1, levelAxis = -1, memberAxis = -1;
+        std::string unselectable;  // a dimension of length > 1 nothing here can index
         for (int a = 0; a < vndims; ++a) {
-            if (dimids[a] == latDim) latAxis = a;
-            else if (dimids[a] == lonDim) lonAxis = a;
-            else if (dimids[a] == timeDim) timeAxis = a;
-            else if (dimids[a] == levelDim) levelAxis = a;
+            const int d = dimids[a];
+            if (d == latDim) latAxis = a;
+            else if (d == lonDim) lonAxis = a;
+            else if (d == timeDim) timeAxis = a;
+            else if (d == levelDim) levelAxis = a;
+            else if (d == memberDim) memberAxis = a;
+            else if (dimLen[static_cast<std::size_t>(d)] > 1 && unselectable.empty())
+                unselectable = dimName[static_cast<std::size_t>(d)];
         }
         if (latAxis < 0 || lonAxis < 0) continue;  // not a griddable field
+        // A second vertical axis (`isobaric1`), a spectral band, anything else with
+        // more than one entry: reading index 0 of it and presenting the slab as the
+        // whole variable is a silently wrong field, so the variable is left out.
+        if (!unselectable.empty()) {
+            MET_LOG_WARN("{}: skipping '{}': its dimension '{}' is not a time, vertical or "
+                         "ensemble axis, so no single slab of it can be shown",
+                         path_.string(), nm, unselectable);
+            continue;
+        }
 
         VarInfo info;
         info.varid = v;
@@ -349,6 +396,7 @@ void CfDataset::scan() {
         info.lonAxis = lonAxis;
         info.timeAxis = timeAxis;
         info.levelAxis = levelAxis;
+        info.memberAxis = memberAxis;
         info.units = attText(ncid_, v, "units").value_or("");
         info.longName = attText(ncid_, v, "long_name").value_or("");
         info.standardName = attText(ncid_, v, "standard_name").value_or("");
@@ -369,14 +417,32 @@ void CfDataset::scan() {
         }
         vars_[nm] = info;
 
-        const std::size_t nLev = levels.empty() ? 1 : levels.size();
+        // A variable is listed only along the axes it actually has. Without a
+        // level dimension it is a single-level field (PS beside T(lev) in a
+        // MERRA-2 file): listing it at every file level, as this once did, put
+        // one identical slab at each "hPa" and drew a fake constant profile.
+        //
+        // Time is the exception. A variable without a time dimension is
+        // time-invariant (orography, a land mask), so it is equally true at every
+        // time the file covers, and listing it there keeps it on the same time
+        // axis as everything else instead of at 1970-01-01.
+        const bool hasLevel = levelAxis >= 0 && !levels.empty();
+        const std::size_t nLev = hasLevel ? levels.size() : 1;
         const std::size_t nTime = times.empty() ? 1 : times.size();
-        for (std::size_t li = 0; li < nLev; ++li) {
-            for (std::size_t ti = 0; ti < nTime; ++ti) {
-                const core::RecordHandle handle = (static_cast<core::RecordHandle>(li) << 24) |
-                                                  static_cast<core::RecordHandle>(ti);
-                catalog_.addRecord(nm, info.longName, info.units, info.standardName, levelAt(li),
-                                   timeAt(ti), -1, handle);
+        const std::size_t nMember = memberAxis >= 0 ? members.size() : 1;
+        for (std::size_t mi = 0; mi < nMember; ++mi) {
+            const int member = memberAxis >= 0 ? members[mi] : -1;
+            for (std::size_t li = 0; li < nLev; ++li) {
+                const VerticalLevel level =
+                    hasLevel ? levelAt(li) : VerticalLevel{VerticalLevel::Type::Surface, 0.0};
+                for (std::size_t ti = 0; ti < nTime; ++ti) {
+                    const core::RecordHandle handle =
+                        (static_cast<core::RecordHandle>(mi) << kMemberShift) |
+                        (static_cast<core::RecordHandle>(li) << kLevelShift) |
+                        static_cast<core::RecordHandle>(ti);
+                    catalog_.addRecord(nm, info.longName, info.units, info.standardName, level,
+                                       timeAt(ti), member, handle);
+                }
             }
         }
     }
@@ -394,8 +460,9 @@ core::Field2D CfDataset::readField(const core::FieldKey& key) {
     if (it == vars_.end()) throw ReadError("NetCDF: unknown variable " + key.varName);
     const VarInfo& info = it->second;
 
-    const std::size_t li = static_cast<std::size_t>(*handle >> 24);
-    const std::size_t ti = static_cast<std::size_t>(*handle & 0xFFFFFF);
+    const std::size_t mi = static_cast<std::size_t>(*handle >> kMemberShift);
+    const std::size_t li = static_cast<std::size_t>((*handle >> kLevelShift) & kIndexMask);
+    const std::size_t ti = static_cast<std::size_t>(*handle & kIndexMask);
 
     // Open-time validation rejects anything but a regular lat/lon grid, so this
     // alternative always holds today. Checked rather than asserted via std::get
@@ -413,12 +480,21 @@ core::Field2D CfDataset::readField(const core::FieldKey& key) {
     count[static_cast<std::size_t>(info.lonAxis)] = nlon;
     if (info.timeAxis >= 0) start[static_cast<std::size_t>(info.timeAxis)] = ti;
     if (info.levelAxis >= 0) start[static_cast<std::size_t>(info.levelAxis)] = li;
+    if (info.memberAxis >= 0) start[static_cast<std::size_t>(info.memberAxis)] = mi;
 
     // Read raw (unscaled) values; netcdf-c converts the storage type to double
     // but does NOT apply CF scale_factor/add_offset — we do that ourselves.
     std::vector<double> raw(nlat * nlon);
     if (nc_get_vara_double(ncid_, info.varid, start.data(), count.data(), raw.data()) != NC_NOERR)
         throw ReadError("NetCDF: slab read failed for " + key.varName);
+    // The slab comes back in the variable's own axis order. A (…, lon, lat)
+    // variable is therefore lon-major, and Field2D is row-major by latitude.
+    if (info.lonAxis < info.latAxis) {
+        std::vector<double> t(raw.size());
+        for (std::size_t i = 0; i < nlon; ++i)
+            for (std::size_t j = 0; j < nlat; ++j) t[j * nlon + i] = raw[i * nlat + j];
+        raw.swap(t);
+    }
 
     const float nan = std::numeric_limits<float>::quiet_NaN();
     core::Field2D field;

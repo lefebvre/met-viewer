@@ -3,10 +3,12 @@
 #include <cmath>
 #include <filesystem>
 
+#include "tests/readers/nc_builder.h"
 #include "viewer/core/grid.h"
 #include "viewer/readers/detect.h"
 
 using namespace met;
+using met::testing::NcBuilder;
 
 namespace {
 std::filesystem::path fixture(const char* name) {
@@ -14,6 +16,43 @@ std::filesystem::path fixture(const char* name) {
 }
 core::VerticalLevel hPa(double v) { return {core::VerticalLevel::Type::PressureHPa, v}; }
 core::VerticalLevel heightM(double v) { return {core::VerticalLevel::Type::HeightM, v}; }
+const core::VerticalLevel kSurface{core::VerticalLevel::Type::Surface, 0.0};
+
+// The small grid every built file shares: 3 latitudes north to south, 4 longitudes.
+constexpr std::size_t kNLat = 3, kNLon = 4;
+
+struct Axes {
+    int time = -1, lev = -1, lat = -1, lon = -1;
+};
+
+// Adds time(2), lev(3 pressure levels), lat and lon coordinates.
+Axes standardAxes(NcBuilder& nc) {
+    Axes a;
+    a.time = nc.coord("time", {0.0, 6.0}, "hours since 2020-01-01 00:00:00");
+    a.lev = nc.coord("lev", {1000.0, 850.0, 500.0}, "hPa");
+    a.lat = nc.coord("lat", {20.0, 10.0, 0.0}, "degrees_north");
+    a.lon = nc.coord("lon", {0.0, 10.0, 20.0, 30.0}, "degrees_east");
+    return a;
+}
+
+// Values for an array of the given shape, where each element encodes its index
+// along each axis as decimal digits: f(i0, i1, …) = i0*10^(n-1) + … + i(n-1).
+std::vector<double> digits(const std::vector<std::size_t>& shape) {
+    std::size_t total = 1;
+    for (std::size_t n : shape) total *= n;
+    std::vector<double> out(total);
+    for (std::size_t flat = 0; flat < total; ++flat) {
+        std::size_t rest = flat;
+        double value = 0, place = 1;
+        for (std::size_t a = shape.size(); a-- > 0;) {
+            value += static_cast<double>(rest % shape[a]) * place;
+            rest /= shape[a];
+            place *= 10;
+        }
+        out[flat] = value;
+    }
+    return out;
+}
 }  // namespace
 
 TEST(CfReader, OpensAndCatalogs) {
@@ -135,4 +174,94 @@ TEST(CfReader, RejectsNonUniformLatitudeAxis) {
 TEST(CfReader, StillAcceptsTheUniformFixtures) {
     EXPECT_NO_THROW((void)readers::openDataset(fixture("era5_t_pl.nc")));
     EXPECT_NO_THROW((void)readers::openDataset(fixture("height_levels.nc")));
+}
+
+// MERRA-2 style: PS(time, lat, lon) beside T(time, lev, lat, lon). PS has no level
+// dimension, so it is one single-level field — not one identical slab listed at
+// each of the file's pressure levels, which drew a fake constant profile.
+TEST(CfReader, SingleLevelVariableIsNotListedAtEveryLevel) {
+    NcBuilder nc("single_level");
+    const Axes a = standardAxes(nc);
+    nc.put(nc.var("T", NC_FLOAT, {a.time, a.lev, a.lat, a.lon}), digits({2, 3, kNLat, kNLon}));
+    nc.put(nc.var("PS", NC_FLOAT, {a.time, a.lat, a.lon}), digits({2, kNLat, kNLon}));
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto* t = ds->catalog().find("T");
+    ASSERT_NE(t, nullptr);
+    EXPECT_EQ(t->levels.size(), 3u);
+
+    const auto* ps = ds->catalog().find("PS");
+    ASSERT_NE(ps, nullptr);
+    ASSERT_EQ(ps->levels.size(), 1u);
+    EXPECT_EQ(ps->levels.front().type, core::VerticalLevel::Type::Surface);
+    EXPECT_FALSE(ds->catalog().resolve(core::FieldKey{"PS", hPa(500), ps->times.back(), -1}));
+
+    // Second time, row 2, column 3 -> digits 1,2,3.
+    const auto f = ds->readField(core::FieldKey{"PS", kSurface, ps->times.back(), -1});
+    EXPECT_FLOAT_EQ(f.at(3, 2), 123.0f);
+}
+
+// A variable with no time dimension does not change with time, so it is listed at
+// every time the file covers and stays on the same time axis as the rest.
+TEST(CfReader, TimeInvariantVariableFollowsTheFileTimes) {
+    NcBuilder nc("time_invariant");
+    const Axes a = standardAxes(nc);
+    nc.put(nc.var("T", NC_FLOAT, {a.time, a.lev, a.lat, a.lon}), digits({2, 3, kNLat, kNLon}));
+    nc.put(nc.var("orog", NC_FLOAT, {a.lat, a.lon}), digits({kNLat, kNLon}));
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto* orog = ds->catalog().find("orog");
+    ASSERT_NE(orog, nullptr);
+    EXPECT_EQ(orog->times, ds->catalog().find("T")->times);
+    const auto f = ds->readField(core::FieldKey{"orog", kSurface, orog->times.back(), -1});
+    EXPECT_FLOAT_EQ(f.at(1, 2), 21.0f);
+}
+
+// A variable stored (lon, lat) is lon-major on disk. It must come out in the grid's
+// row-major-by-latitude order, not scrambled.
+TEST(CfReader, LonLatOrderedVariableIsTransposed) {
+    NcBuilder nc("lon_lat");
+    const Axes a = standardAxes(nc);
+    nc.put(nc.var("swapped", NC_FLOAT, {a.lon, a.lat}), digits({kNLon, kNLat}));  // 10*lon + lat
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto* v = ds->catalog().find("swapped");
+    ASSERT_NE(v, nullptr);
+    const auto f = ds->readField(core::FieldKey{"swapped", kSurface, v->times.front(), -1});
+    ASSERT_EQ(f.width(), 4);
+    ASSERT_EQ(f.height(), 3);
+    for (int j = 0; j < 3; ++j)
+        for (int i = 0; i < 4; ++i) EXPECT_FLOAT_EQ(f.at(i, j), 10.0f * i + j) << i << "," << j;
+}
+
+// A dimension that is not time, vertical or ensemble cannot be selected, so a
+// variable that has one (here a second pressure axis) is left out rather than shown
+// as its first slab under the wrong level.
+TEST(CfReader, VariableWithAnUnselectableDimensionIsSkipped) {
+    NcBuilder nc("extra_dim");
+    const Axes a = standardAxes(nc);
+    const int lev2 = nc.coord("isobaric1", {300.0, 200.0}, "hPa");
+    nc.put(nc.var("T", NC_FLOAT, {a.time, a.lev, a.lat, a.lon}), digits({2, 3, kNLat, kNLon}));
+    nc.put(nc.var("w", NC_FLOAT, {a.time, lev2, a.lat, a.lon}), digits({2, 2, kNLat, kNLon}));
+    auto ds = readers::openDataset(nc.finish());
+
+    EXPECT_NE(ds->catalog().find("T"), nullptr);
+    EXPECT_EQ(ds->catalog().find("w"), nullptr);
+}
+
+// ERA5 ensembles carry a `number` dimension. Each member is its own record, and
+// reading one returns that member's slab rather than member 0 labelled
+// deterministic.
+TEST(CfReader, EnsembleDimensionBecomesMembers) {
+    NcBuilder nc("ensemble");
+    const Axes a = standardAxes(nc);
+    const int number = nc.coord("number", {0.0, 1.0, 2.0}, "");
+    nc.put(nc.var("t", NC_FLOAT, {number, a.time, a.lat, a.lon}), digits({3, 2, kNLat, kNLon}));
+    auto ds = readers::openDataset(nc.finish());
+
+    const auto* v = ds->catalog().find("t");
+    ASSERT_NE(v, nullptr);
+    EXPECT_EQ(v->members, (std::vector<int>{0, 1, 2}));
+    const auto f = ds->readField(core::FieldKey{"t", kSurface, v->times.back(), 2});
+    EXPECT_FLOAT_EQ(f.at(3, 2), 2123.0f);  // member 2, time 1, row 2, column 3
 }

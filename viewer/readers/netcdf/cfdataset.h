@@ -38,6 +38,7 @@ private:
         // Position of each axis within the variable's dimension list, or -1.
         int timeAxis = -1;
         int levelAxis = -1;
+        int memberAxis = -1;
         int latAxis = -1;
         int lonAxis = -1;
         double scale = 1.0;
