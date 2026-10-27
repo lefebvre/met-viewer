@@ -2,14 +2,16 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
-#include <ctime>
 #include <filesystem>
+#include <initializer_list>
 #include <limits>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include <netcdf.h>
@@ -32,7 +34,20 @@ std::string lower(std::string s) {
 
 std::optional<std::string> attText(int ncid, int varid, const char* name) {
     std::size_t len = 0;
-    if (nc_inq_attlen(ncid, varid, name, &len) != NC_NOERR) return std::nullopt;
+    nc_type type = NC_NAT;
+    if (nc_inq_att(ncid, varid, name, &type, &len) != NC_NOERR) return std::nullopt;
+    // NetCDF-4 string attributes (what h5netcdf and h5py write) are NC_STRING,
+    // which nc_get_att_text refuses; reading only NC_CHAR dropped `units` and
+    // `calendar` from such files without a word.
+    if (type == NC_STRING) {
+        if (len == 0) return std::string();
+        std::vector<char*> parts(len, nullptr);
+        if (nc_get_att_string(ncid, varid, name, parts.data()) != NC_NOERR) return std::nullopt;
+        std::string s = parts[0] ? parts[0] : "";
+        nc_free_string(len, parts.data());
+        return s;
+    }
+    if (type != NC_CHAR) return std::nullopt;
     std::string s(len, '\0');
     if (nc_get_att_text(ncid, varid, name, s.data()) != NC_NOERR) return std::nullopt;
     // Trim a trailing NUL if present.
@@ -174,52 +189,181 @@ bool classifyVertical(const std::string& units, const std::string& standardName,
     return false;
 }
 
-// Parse a CF time-unit string "<unit> since <YYYY-MM-DD[ hh:mm:ss]>". Returns
-// (secondsPerUnit, baseEpochSeconds). Falls back to (1, 0) if unparseable.
-std::pair<double, std::int64_t> parseTimeUnits(const std::string& units) {
+// A CF time axis: "<unit> since <reference>" plus the calendar it counts in.
+struct TimeUnits {
+    enum class Calendar { Gregorian, NoLeap, AllLeap, Day360 };
+    double perUnit = 1.0;  // seconds per unit
+    int y = 1970, mo = 1, d = 1, hh = 0, mm = 0, ss = 0;
+    Calendar calendar = Calendar::Gregorian;
+};
+
+// Up to six non-negative integers from "YYYY-MM-DD hh:mm:ss", separated by any
+// of "-: T". A leading '-' on the year is honoured. Fractional seconds and a
+// trailing zone ("Z", "+00:00") end the scan; CF reference times are UTC.
+int parseReference(const std::string& ref, int (&out)[6]) {
+    std::size_t i = 0;
+    while (i < ref.size() && ref[i] == ' ') ++i;
+    int n = 0;
+    while (n < 6 && i < ref.size()) {
+        const bool negative = n == 0 && ref[i] == '-';
+        if (negative) ++i;
+        int value = 0;
+        const auto [end, ec] = std::from_chars(ref.data() + i, ref.data() + ref.size(), value);
+        if (ec != std::errc{}) break;
+        out[n++] = negative ? -value : value;
+        i = static_cast<std::size_t>(end - ref.data());
+        // Separators between fields; a date field must be followed by '-' and a
+        // time field by ':', except at the date/time boundary.
+        if (i >= ref.size()) break;
+        const char sep = ref[i];
+        const bool ok = (n < 3 && sep == '-') || (n == 3 && (sep == ' ' || sep == 'T' || sep == 't')) ||
+                        (n > 3 && n < 6 && sep == ':');
+        if (!ok) break;
+        ++i;
+        while (n == 3 && i < ref.size() && ref[i] == ' ') ++i;
+    }
+    return n;
+}
+
+// Parse a CF time-unit string "<unit> since <YYYY-MM-DD[ hh:mm:ss]>" and the
+// calendar attribute. An unrecognized unit or reference is reported rather than
+// silently read as seconds since 1970.
+TimeUnits parseTimeUnits(const std::string& units, const std::string& calendar,
+                         const std::filesystem::path& path) {
+    TimeUnits tu;
     const std::string l = lower(units);
     const auto pos = l.find(" since ");
-    double perUnit = 1.0;
-    std::int64_t base = 0;
-    if (pos == std::string::npos) return {perUnit, base};
-
-    const std::string unitWord = l.substr(0, pos);
-    if (unitWord.rfind("sec", 0) == 0) perUnit = 1.0;
-    else if (unitWord.rfind("min", 0) == 0) perUnit = 60.0;
-    else if (unitWord.rfind("hour", 0) == 0 || unitWord.rfind("hr", 0) == 0) perUnit = 3600.0;
-    else if (unitWord.rfind("day", 0) == 0) perUnit = 86400.0;
-
-    std::string ref = units.substr(pos + 7);
-    // Accept both "YYYY-MM-DD HH:MM:SS" and ISO-8601 "YYYY-MM-DDThh:mm:ss":
-    // normalize the date/time separator to a space so one scan handles both.
-    // (A trailing "Z", "+00:00", or fractional seconds is simply ignored — CF
-    // reference times are UTC.)
-    for (char& ch : ref) {
-        if (ch == 'T' || ch == 't') ch = ' ';
+    if (pos == std::string::npos) {
+        MET_LOG_WARN("{}: time units '{}' are not '<unit> since <date>'; reading them as "
+                     "seconds since 1970-01-01",
+                     path.string(), units);
+        return tu;
     }
-    int y = 1970, mo = 1, d = 1, hh = 0, mm = 0, ss = 0;
+
+    std::string unitWord = l.substr(0, pos);
+    while (!unitWord.empty() && unitWord.front() == ' ') unitWord.erase(0, 1);
+    auto is = [&](std::initializer_list<const char*> words) {
+        for (const char* w : words)
+            if (unitWord == w) return true;
+        return false;
+    };
+    // CF's month and year are UDUNITS' fixed intervals (a year of 365.242198781
+    // days and a twelfth of it), not calendar months; CF itself discourages them.
+    constexpr double kUdunitsYear = 365.242198781 * 86400.0;
+    if (is({"s", "sec", "secs", "second", "seconds"})) tu.perUnit = 1.0;
+    else if (is({"min", "mins", "minute", "minutes"})) tu.perUnit = 60.0;
+    else if (is({"h", "hr", "hrs", "hour", "hours"})) tu.perUnit = 3600.0;
+    else if (is({"d", "day", "days"})) tu.perUnit = 86400.0;
+    else if (is({"week", "weeks"})) tu.perUnit = 7 * 86400.0;
+    else if (is({"month", "months"}) || is({"year", "years", "yr", "yrs"})) {
+        tu.perUnit = unitWord[0] == 'm' ? kUdunitsYear / 12.0 : kUdunitsYear;
+        MET_LOG_WARN("{}: time is counted in '{}', which CF defines as a fixed UDUNITS "
+                     "interval, not a calendar {}; times may not fall on the dates the "
+                     "producer intended",
+                     path.string(), unitWord, unitWord[0] == 'm' ? "month" : "year");
+    } else {
+        MET_LOG_WARN("{}: unrecognized time unit '{}'; reading it as seconds", path.string(),
+                     unitWord);
+    }
+
+    int f[6] = {1970, 1, 1, 0, 0, 0};
     // A bare date (no time-of-day) is valid; require at least Y-M-D to trust it.
-    if (std::sscanf(ref.c_str(), "%d-%d-%d %d:%d:%d", &y, &mo, &d, &hh, &mm, &ss) < 3)
-        return {perUnit, base};
-    base = core::timegmUtc(y, mo, d, hh, mm, ss);
-    return {perUnit, base};
+    if (parseReference(units.substr(pos + 7), f) < 3) {
+        MET_LOG_WARN("{}: cannot read the reference date in time units '{}'; using "
+                     "1970-01-01",
+                     path.string(), units);
+        f[0] = 1970, f[1] = 1, f[2] = 1, f[3] = f[4] = f[5] = 0;
+    }
+    tu.y = f[0], tu.mo = f[1], tu.d = f[2], tu.hh = f[3], tu.mm = f[4], tu.ss = f[5];
+
+    const std::string cal = lower(calendar);
+    if (cal.empty() || cal == "standard" || cal == "gregorian" || cal == "proleptic_gregorian") {
+        tu.calendar = TimeUnits::Calendar::Gregorian;
+    } else if (cal == "noleap" || cal == "365_day") {
+        tu.calendar = TimeUnits::Calendar::NoLeap;
+    } else if (cal == "all_leap" || cal == "366_day") {
+        tu.calendar = TimeUnits::Calendar::AllLeap;
+    } else if (cal == "360_day") {
+        tu.calendar = TimeUnits::Calendar::Day360;
+    } else {
+        MET_LOG_WARN("{}: calendar '{}' is not supported; times are converted as if it "
+                     "were Gregorian and may be off by days",
+                     path.string(), calendar);
+    }
+    return tu;
+}
+
+// Cumulative days before each month in a 365- or 366-day year.
+constexpr int kCumNoLeap[13] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365};
+constexpr int kCumAllLeap[13] = {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366};
+
+// The valid time `offset` units after the reference, or nullopt when the offset
+// is not a usable number (a fill value, NaN, or beyond any plausible date).
+//
+// Model calendars are counted in their own day arithmetic and the resulting
+// calendar date is then placed on the real time line. A 360-day "February 30"
+// therefore lands on the first days of March: TimePoint has no other way to
+// name it, and the alternative -- counting model days as real ones -- drifts by
+// five or six days a year.
+std::optional<TimePoint> validTime(const TimeUnits& tu, double offset) {
+    const double secs = offset * tu.perUnit;
+    constexpr double kLimit = 1e13;  // ~300,000 years
+    if (!std::isfinite(secs) || std::abs(secs) > kLimit) return std::nullopt;
+
+    if (tu.calendar == TimeUnits::Calendar::Gregorian)
+        return TimePoint{core::timegmUtc(tu.y, tu.mo, tu.d, tu.hh, tu.mm, tu.ss) +
+                         static_cast<std::int64_t>(std::llround(secs))};
+
+    const double total = tu.hh * 3600.0 + tu.mm * 60.0 + tu.ss + secs;
+    const auto days = static_cast<std::int64_t>(std::floor(total / 86400.0));
+    const double secOfDay = total - static_cast<double>(days) * 86400.0;
+
+    const bool d360 = tu.calendar == TimeUnits::Calendar::Day360;
+    const int* cum = tu.calendar == TimeUnits::Calendar::AllLeap ? kCumAllLeap : kCumNoLeap;
+    const int yearLen = d360 ? 360 : cum[12];
+    const int mo = std::clamp(tu.mo, 1, 12);
+    const std::int64_t start = static_cast<std::int64_t>(tu.y) * yearLen +
+                               (d360 ? (mo - 1) * 30 : cum[mo - 1]) + (tu.d - 1);
+    const std::int64_t n = start + days;
+    const std::int64_t y = (n >= 0 ? n : n - (yearLen - 1)) / yearLen;  // floor division
+    const int doy = static_cast<int>(n - y * yearLen);
+    int m = 1, d = 1;
+    if (d360) {
+        m = doy / 30 + 1;
+        d = doy % 30 + 1;
+    } else {
+        while (m < 12 && cum[m] <= doy) ++m;
+        d = doy - cum[m - 1] + 1;
+    }
+    return TimePoint{core::timegmUtc(static_cast<int>(y), m, d, 0, 0, 0) +
+                     static_cast<std::int64_t>(std::llround(secOfDay))};
 }
 
 // Reject a coordinate axis that is not evenly spaced, since RegularLatLonGrid can
 // only describe a uniform one. A small tolerance (1% of the step) absorbs the
 // rounding in a float32-stored axis without admitting a genuinely Gaussian or
 // stretched one, whose steps vary by whole percent toward the poles.
+//
+// Each step is compared with the first, and each value with where the mean step
+// puts it. The second check catches a slow drift that stays under the tolerance
+// one step at a time but adds up across the axis.
 void checkUniform(const std::vector<double>& axis, const char* what,
                   const std::filesystem::path& path) {
+    for (double v : axis)
+        if (!std::isfinite(v))
+            throw ReadError(std::string("NetCDF: ") + what + " coordinate holds a value that is "
+                            "not a number: " + path.string());
     if (axis.size() < 3) return;  // two points just define the spacing
     const double step = axis[1] - axis[0];
     if (step == 0.0)
         throw ReadError(std::string("NetCDF: ") + what + " axis has a zero step in " +
                         path.string());
     const double tol = std::abs(step) * 0.01;
-    for (std::size_t i = 2; i < axis.size(); ++i) {
+    const double mean = (axis.back() - axis.front()) / static_cast<double>(axis.size() - 1);
+    for (std::size_t i = 1; i < axis.size(); ++i) {
         const double d = axis[i] - axis[i - 1];
-        if (std::abs(d - step) > tol) {
+        const double drift = axis[i] - (axis.front() + mean * static_cast<double>(i));
+        if (std::abs(d - step) > tol || std::abs(drift) > tol) {
             MET_LOG_ERROR("{}: {} axis is not evenly spaced (step {} at index {}, expected {})",
                           path.string(), what, d, i, step);
             throw ReadError(std::string("NetCDF: ") + what +
@@ -355,15 +499,34 @@ void CfDataset::scan() {
         }
     }
 
-    std::vector<double> times;
-    double timePerUnit = 1.0;
-    std::int64_t timeBase = 0;
+    // A level whose coordinate is NaN cannot be ordered or matched (NaN breaks
+    // the strict weak ordering the catalog sorts by, and never compares equal),
+    // so its slabs are left out.
+    std::vector<bool> levelUsable(levels.size(), true);
+    for (std::size_t i = 0; i < levels.size(); ++i)
+        if (!std::isfinite(levels[i])) {
+            levelUsable[i] = false;
+            MET_LOG_WARN("{}: vertical coordinate {} is not a number; skipping that level",
+                         path_.string(), i);
+        }
+
+    // Valid times. One whose value is a fill or otherwise unusable is skipped
+    // rather than converted: llround of 9.97e36 is undefined, and the sum with the
+    // reference overflowed.
+    std::vector<std::optional<TimePoint>> times;
     if (timeDim >= 0) {
-        times.resize(dimLen[static_cast<std::size_t>(timeDim)]);
-        nc_get_var_double(ncid_, timeVar, times.data());
-        const std::string tu =
-            attText(ncid_, timeVar, "units").value_or("seconds since 1970-01-01");
-        std::tie(timePerUnit, timeBase) = parseTimeUnits(tu);
+        std::vector<double> raw(dimLen[static_cast<std::size_t>(timeDim)]);
+        nc_get_var_double(ncid_, timeVar, raw.data());
+        const TimeUnits tu = parseTimeUnits(
+            attText(ncid_, timeVar, "units").value_or("seconds since 1970-01-01"),
+            attText(ncid_, timeVar, "calendar").value_or(""), path_);
+        times.reserve(raw.size());
+        for (std::size_t i = 0; i < raw.size(); ++i) {
+            times.push_back(validTime(tu, raw[i]));
+            if (!times.back())
+                MET_LOG_WARN("{}: time {} ({}) is not a usable value; skipping that time",
+                             path_.string(), i, raw[i]);
+        }
     }
 
     // Ensemble member numbers: the coordinate's values when it has one, else the
@@ -386,24 +549,25 @@ void CfDataset::scan() {
     checkUniform(lat, "latitude", path_);
     checkUniform(lon, "longitude", path_);
 
+    // The spacing is the mean step over the whole axis rather than the first
+    // one, which a float32-stored axis can carry rounding in.
+    auto meanStep = [](const std::vector<double>& axis, double fallback) {
+        return axis.size() > 1 ? (axis.back() - axis.front()) / static_cast<double>(axis.size() - 1)
+                               : fallback;
+    };
     RegularLatLonGrid g;
     g.nlat = static_cast<int>(lat.size());
     g.nlon = static_cast<int>(lon.size());
     g.lat0 = lat.front();
     g.lon0 = lon.front();
-    g.dlat = lat.size() > 1 ? lat[1] - lat[0] : -1.0;
-    g.dlon = lon.size() > 1 ? lon[1] - lon[0] : 1.0;
+    g.dlat = meanStep(lat, -1.0);
+    g.dlon = meanStep(lon, 1.0);
     g.globalWrapLon = std::abs(g.dlon) * g.nlon >= 359.0;
     grid_ = g;
 
     auto levelAt = [&](std::size_t i) -> VerticalLevel {
         if (levels.empty()) return VerticalLevel{VerticalLevel::Type::Surface, 0.0};
         return VerticalLevel{levelType, levels[i] * levelScale};
-    };
-    auto timeAt = [&](std::size_t i) -> TimePoint {
-        if (times.empty()) return TimePoint{0};
-        return TimePoint{timeBase +
-                         static_cast<std::int64_t>(std::llround(times[i] * timePerUnit))};
     };
 
     // Data variables: any non-coordinate var whose dims include lat and lon.
@@ -502,15 +666,17 @@ void CfDataset::scan() {
         for (std::size_t mi = 0; mi < nMember; ++mi) {
             const int member = memberAxis >= 0 ? members[mi] : -1;
             for (std::size_t li = 0; li < nLev; ++li) {
+                if (hasLevel && !levelUsable[li]) continue;
                 const VerticalLevel level =
                     hasLevel ? levelAt(li) : VerticalLevel{VerticalLevel::Type::Surface, 0.0};
                 for (std::size_t ti = 0; ti < nTime; ++ti) {
+                    if (!times.empty() && !times[ti]) continue;
                     const core::RecordHandle handle =
                         (static_cast<core::RecordHandle>(mi) << kMemberShift) |
                         (static_cast<core::RecordHandle>(li) << kLevelShift) |
                         static_cast<core::RecordHandle>(ti);
                     catalog_.addRecord(nm, info.longName, info.units, info.standardName, level,
-                                       timeAt(ti), member, handle);
+                                       times.empty() ? TimePoint{0} : *times[ti], member, handle);
                 }
             }
         }
