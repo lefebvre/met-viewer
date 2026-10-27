@@ -39,6 +39,18 @@ target_link_libraries(met_tests PRIVATE
     GTest::gtest
 )
 
+# The NetCDF reader tests write their own small files through netcdf-c
+# (tests/readers/nc_builder.h), so the test target links it directly. Imported
+# targets are scoped to the directory that found them, hence the second lookup;
+# the fallback mirrors viewer/readers/CMakeLists.txt.
+find_package(netCDF CONFIG)
+if(netCDF_FOUND)
+    target_link_libraries(met_tests PRIVATE netCDF::netcdf)
+else()
+    find_package(NetCDF COMPONENTS C REQUIRED)
+    target_link_libraries(met_tests PRIVATE NetCDF::NetCDF_C)
+endif()
+
 # Resolve the vcpkg install dir (a preset may relocate it out of the build tree).
 if(DEFINED VCPKG_INSTALLED_DIR)
     set(_met_vcpkg_installed "${VCPKG_INSTALLED_DIR}")
