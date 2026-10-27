@@ -89,9 +89,12 @@ void DatasetCatalog::finalize() {
                 entry.members.push_back(r.member);
         }
 
+        // levelSortKey ties for every Unknown level (a GRIB sigma or soil axis),
+        // so break ties on the value to keep those in a fixed order too.
         std::sort(entry.levels.begin(), entry.levels.end(),
                   [](const VerticalLevel& a, const VerticalLevel& b) {
-                      return levelSortKey(a) < levelSortKey(b);
+                      const double ka = levelSortKey(a), kb = levelSortKey(b);
+                      return ka != kb ? ka < kb : a.value < b.value;
                   });
         std::sort(entry.times.begin(), entry.times.end());
         std::sort(entry.members.begin(), entry.members.end());

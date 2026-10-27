@@ -190,3 +190,31 @@ TEST(GribReader, KeepsFieldsApartThatWouldShareACatalogCell) {
     EXPECT_FLOAT_EQ(ds->readField(core::FieldKey{"t", hPa04, t->times.front(), -1}).at(0, 0),
                     40.0f);
 }
+
+// Levels of a type the axes have no name for (sigma here) are told apart by their
+// value. The duplicate check keyed them on levelSortKey, which is the same for
+// every such level, so the second sigma level was dropped as a repeat of the first.
+TEST(GribReader, KeepsEveryLevelOfAnUnmodelledLevelType) {
+    using met::testing::gribMessage;
+    using met::testing::setLong;
+    using met::testing::setString;
+    auto sigma = [](long value) {
+        return [value](codes_handle* h) {
+            setString(h, "typeOfLevel", "sigma");
+            setLong(h, "level", value);
+            setString(h, "shortName", "t");
+        };
+    };
+    const met::testing::GribFile file("met_grib_sigma_test",
+                                      {gribMessage(2, sigma(2)), gribMessage(1, sigma(1))});
+    auto ds = readers::openDataset(file.path());
+
+    const auto* t = ds->catalog().find("t (sigma)");
+    ASSERT_NE(t, nullptr);
+    ASSERT_EQ(t->levels.size(), 2u);
+    EXPECT_LT(t->levels[0].value, t->levels[1].value);  // in a fixed order, not file order
+    for (const auto& lvl : t->levels)
+        EXPECT_FLOAT_EQ(
+            ds->readField(core::FieldKey{"t (sigma)", lvl, t->times.front(), -1}).at(0, 0),
+            static_cast<float>(lvl.value));
+}
