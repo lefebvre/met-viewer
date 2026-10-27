@@ -41,7 +41,15 @@ std::vector<std::byte> readHead(const std::filesystem::path& path, std::size_t n
 }  // namespace
 
 std::unique_ptr<IDataset> openDataset(const std::filesystem::path& path) {
-    if (!std::filesystem::exists(path)) throw ReadError("no such file: " + core::pathToUtf8(path));
+    // The error_code overloads: the throwing ones raise filesystem_error (a path
+    // the OS refuses to stat, a permission problem), which is not the ReadError
+    // this function promises and slips past a caller catching that.
+    std::error_code ec;
+    const auto status = std::filesystem::status(path, ec);
+    if (ec || !std::filesystem::exists(status))
+        throw ReadError("no such file: " + core::pathToUtf8(path));
+    if (std::filesystem::is_directory(status))
+        throw ReadError("is a directory, not a file: " + core::pathToUtf8(path));
 
     const std::vector<std::byte> head = readHead(path, 4096);
 

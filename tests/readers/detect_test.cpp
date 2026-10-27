@@ -135,3 +135,12 @@ TEST(Detect, ArlLikeHeaderWithBadDimensionsIsRejected) {
     TempFile f(s);  // INDX label, but the grid dimensions parse as zero
     EXPECT_THROW((void)readers::openDataset(f.path()), readers::ReadError);
 }
+
+// openDataset promises ReadError. A directory, or a path the OS cannot stat,
+// used to surface as a different exception type from std::filesystem.
+TEST(Detect, ADirectoryIsAReadErrorNotAFilesystemError) {
+    EXPECT_THROW((void)readers::openDataset(std::filesystem::path(MET_FIXTURE_DIR)),
+                 readers::ReadError);
+    EXPECT_THROW((void)readers::openDataset(std::filesystem::path(std::string(300, 'x') + "/y")),
+                 readers::ReadError);
+}
