@@ -10,10 +10,13 @@
 #include <ctime>
 #include <fstream>
 #include <limits>
+#include <locale>
 #include <numbers>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <system_error>
+#include <type_traits>
 
 #include <fmt/format.h>
 
@@ -49,10 +52,22 @@ using core::VerticalLevel;
     return s.find_first_not_of(" \t", pos) == std::string::npos;
 }
 
+// Whether std::from_chars reads floating point. libc++, Apple's standard library,
+// either lacks those overloads or makes them available only from a macOS newer
+// than the bundle's deployment target, and defines the feature macro only when
+// they can be used.
+#if defined(__cpp_lib_to_chars)
+constexpr bool kFromCharsReadsFloat = true;
+#else
+constexpr bool kFromCharsReadsFloat = false;
+#endif
+
 // Parse a fixed-width field with std::from_chars, which reads the C locale's
 // number format whatever the process locale is. stol/stod follow LC_NUMERIC, and
 // QApplication sets the user's locale on Unix: under de_DE, "1000.00" stopped at
 // the '.', the trailing-garbage check rejected it, and every ARL file was refused.
+// Where from_chars cannot read a double, a stream fixed to the classic locale
+// reads it instead, which is locale-independent in the same way.
 template <typename T>
 std::optional<T> parseField(const char* p, int off, int w) {
     const std::string s(p + off, static_cast<std::size_t>(w));
@@ -62,9 +77,19 @@ std::optional<T> parseField(const char* p, int off, int w) {
     // but not, in practice, before a number; accept it anyway.
     if (s[begin] == '+' && begin + 1 < s.size() && s[begin + 1] != '-') ++begin;
     T v{};
-    const auto [end, ec] = std::from_chars(s.data() + begin, s.data() + s.size(), v);
-    if (ec != std::errc{}) return std::nullopt;
-    if (!restIsBlank(s, static_cast<std::size_t>(end - s.data()))) return std::nullopt;
+    std::size_t used = 0;
+    if constexpr (std::is_floating_point_v<T> && !kFromCharsReadsFloat) {
+        std::istringstream in(s.substr(begin));
+        in.imbue(std::locale::classic());
+        in >> v;
+        if (in.fail()) return std::nullopt;
+        used = in.eof() ? s.size() - begin : static_cast<std::size_t>(in.tellg());
+    } else {
+        const auto [end, ec] = std::from_chars(s.data() + begin, s.data() + s.size(), v);
+        if (ec != std::errc{}) return std::nullopt;
+        used = static_cast<std::size_t>(end - (s.data() + begin));
+    }
+    if (!restIsBlank(s, begin + used)) return std::nullopt;
     return v;
 }
 
