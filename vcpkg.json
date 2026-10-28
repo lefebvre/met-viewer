@@ -21,6 +21,15 @@
     "where cmake/Packaging.cmake looks. Requested only on windows: the",
     "feature declares \"supports\": \"windows\" and would not resolve elsewhere."
   ],
+  "$comment-dnslookup": [
+    "qtbase's `dnslookup` feature is requested on macOS because without it",
+    "QtNetwork fails to link there. Qt still detects libresolv when the",
+    "feature is off (the port's switch for that names WrapResolve, not",
+    "WrapResolv) and calls res_ninit from QHostInfo::localDomainName(), but",
+    "links libresolv only when dnslookup is on. glibc carries res_ninit in",
+    "libc, so Linux links without it; macOS keeps it in libresolv. Linux and",
+    "Windows are left as they were so their cached Qt builds stay valid."
+  ],
   "builtin-baseline": "42e4e33e1505c9f47b58c21e0f557c1571b751ee",
   "dependencies": [
     {
@@ -55,6 +64,14 @@
       "platform": "windows",
       "features": [
         "windeployqt"
+      ]
+    },
+    {
+      "name": "qtbase",
+      "default-features": false,
+      "platform": "osx",
+      "features": [
+        "dnslookup"
       ]
     },
     "eccodes",
