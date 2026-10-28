@@ -232,7 +232,8 @@ TEST(CfReader, LonLatOrderedVariableIsTransposed) {
     ASSERT_EQ(f.width(), 4);
     ASSERT_EQ(f.height(), 3);
     for (int j = 0; j < 3; ++j)
-        for (int i = 0; i < 4; ++i) EXPECT_FLOAT_EQ(f.at(i, j), 10.0f * i + j) << i << "," << j;
+        for (int i = 0; i < 4; ++i)
+            EXPECT_FLOAT_EQ(f.at(i, j), static_cast<float>(10 * i + j)) << i << "," << j;
 }
 
 // A dimension that is not time, vertical or ensemble cannot be selected, so a
