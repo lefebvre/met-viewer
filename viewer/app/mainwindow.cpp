@@ -924,30 +924,28 @@ void MainWindow::decodeCurrent() {
     auto prog = std::make_shared<JobProgress>();
     beginJob(QString(), prog);
     const quint64 epoch = datasetEpoch_;
-    submitDecode(*pool_, dataset_, key, gen, this,
-                 [this, gen, epoch, key, prog](DecodeOutcome outcome) {
-                     endJob(prog);
-                     // A FieldKey does not name its dataset. A decode from a set that has since
-                     // been replaced must not reach the cache, or the new set reads it back for
-                     // any key the two share (overlapping valid times of two model runs).
-                     if (epoch != datasetEpoch_) return;
-                     if (!outcome.field) {
-                         if (outcome.generation == generation_) {
-                             probeLabel_->setText(tr("Decode error: %1").arg(outcome.error));
-                             fieldReadyForStep_ =
-                                 true;  // treat a bad frame as "settled" so playback continues
-                             maybeAdvancePlayback();
-                         }
-                         return;
-                     }
-                     fieldCache_.put(key, outcome.field);
-                     if (outcome.generation != generation_) return;  // superseded; kept in cache
-                     currentRaw_ = outcome.field;
-                     presentField();
-                     prefetchAhead();
-                     fieldReadyForStep_ = true;
-                     maybeAdvancePlayback();  // field ready → advance if analyses are ready too
-                 });
+    submitDecode(*pool_, dataset_, key, gen, this, [this, epoch, key, prog](DecodeOutcome outcome) {
+        endJob(prog);
+        // A FieldKey does not name its dataset. A decode from a set that has since
+        // been replaced must not reach the cache, or the new set reads it back for
+        // any key the two share (overlapping valid times of two model runs).
+        if (epoch != datasetEpoch_) return;
+        if (!outcome.field) {
+            if (outcome.generation == generation_) {
+                probeLabel_->setText(tr("Decode error: %1").arg(outcome.error));
+                fieldReadyForStep_ = true;  // treat a bad frame as "settled" so playback continues
+                maybeAdvancePlayback();
+            }
+            return;
+        }
+        fieldCache_.put(key, outcome.field);
+        if (outcome.generation != generation_) return;  // superseded; kept in cache
+        currentRaw_ = outcome.field;
+        presentField();
+        prefetchAhead();
+        fieldReadyForStep_ = true;
+        maybeAdvancePlayback();  // field ready → advance if analyses are ready too
+    });
 }
 
 void MainWindow::maybeAdvancePlayback() {
