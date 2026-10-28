@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  The app bundle's Info.plist. CMake fills the ${MACOSX_BUNDLE_*} values from the
-  met_viewer target's properties (viewer/app/CMakeLists.txt). This replaces CMake's
+  The app bundle's Info.plist. CMake fills the MACOSX_BUNDLE_ variables below from
+  the met_viewer target's properties (viewer/app/CMakeLists.txt), and expands every
+  dollar-brace reference in this file, comments included. This replaces CMake's
   built-in template for the keys that one lacks: without NSHighResolutionCapable
   macOS draws the app at 1x and scales it up, blurring every line on a Retina
   display, and LSMinimumSystemVersion lets Finder refuse a too-old macOS with a
