@@ -431,3 +431,136 @@ jobs:
           path: dist/met-viewer
           retention-days: 14
           if-no-files-found: error
+
+  macos:
+    name: macOS (Apple Silicon)
+    # An arm64 runner. Clang with libc++ is a third compiler and standard library
+    # beside GCC and MSVC, and int64_t is `long long` here rather than Linux's
+    # `long`, so this catches what neither of the others would.
+    runs-on: macos-15
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # vcpkg's autotools ports need these, and Ninja is what the presets use.
+      # brew leaves anything the runner image already has in place.
+      - name: Install build tools
+        run: brew install ninja pkgconf autoconf automake libtool autoconf-archive
+
+      # Same runtime-set binary cache path as the Linux job; see there for why it
+      # is not set from `${{ github.workspace }}` in the workflow env: block.
+      - name: Point vcpkg at the workspace binary cache
+        shell: bash
+        run: |
+          echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/vcpkg_bincache,readwrite" >> "$GITHUB_ENV"
+
+      # Keys and the save conditions work as in the Linux job; see there.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        id: bincache
+        with:
+          path: vcpkg_bincache
+          key: vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}
+          restore-keys: |
+            vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}-
+            vcpkg-bin-${{ runner.os }}-
+
+      - name: Restore vcpkg downloads
+        uses: actions/cache/restore@v4
+        id: dlcache
+        with:
+          path: vcpkg/downloads
+          key: vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-dl-${{ runner.os }}-
+
+      - name: Count restored dependency files
+        id: before
+        shell: bash
+        run: |
+          echo "bin=$(find vcpkg_bincache -type f 2>/dev/null | wc -l)" >> "$GITHUB_OUTPUT"
+          echo "dl=$(find vcpkg/downloads -maxdepth 1 -type f 2>/dev/null | wc -l)" >> "$GITHUB_OUTPUT"
+
+      - name: Configure
+        # -Werror as on the other platforms, so Clang's warnings gate the build.
+        run: cmake --preset dist-macos -DMET_WERROR=ON
+
+      - name: Check for new dependency files
+        id: after
+        if: always()
+        shell: bash
+        run: |
+          bin=$(find vcpkg_bincache -type f 2>/dev/null | wc -l)
+          dl=$(find vcpkg/downloads -maxdepth 1 -type f 2>/dev/null | wc -l)
+          echo "bin=$([ "$bin" != "${{ steps.before.outputs.bin }}" ] && echo changed || echo same)" >> "$GITHUB_OUTPUT"
+          echo "dl=$([ "$dl" != "${{ steps.before.outputs.dl }}" ] && echo changed || echo same)" >> "$GITHUB_OUTPUT"
+
+      - name: Save vcpkg binary cache
+        uses: actions/cache/save@v4
+        # A cache write must never fail the job: on an early failure the
+        # directory may not exist yet, and that is not an error worth reporting.
+        continue-on-error: true
+        if: always() && steps.after.outputs.bin == 'changed'
+        with:
+          path: vcpkg_bincache
+          key: ${{ steps.bincache.outputs.cache-primary-key }}-${{ github.run_id }}
+
+      - name: Save vcpkg downloads
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        if: always() && steps.after.outputs.dl == 'changed'
+        with:
+          path: vcpkg/downloads
+          key: ${{ steps.dlcache.outputs.cache-primary-key }}-${{ github.run_id }}
+
+      - name: Dump vcpkg logs on failure
+        if: failure()
+        run: |
+          echo "===== vcpkg-manifest-install.log (names the failed port) ====="
+          cat build/dist-macos/vcpkg-manifest-install.log 2>/dev/null || echo "(not found)"
+          echo "===== port build stdout/stderr (the real error) ====="
+          for f in $(find vcpkg/buildtrees -maxdepth 2 \
+                       \( -name 'install-*-out.log' -o -name 'install-*-err.log' \
+                          -o -name 'build-*-out.log' -o -name 'build-*-err.log' \) 2>/dev/null); do
+            echo "----- $f -----"; tail -n 60 "$f"; done
+
+      - name: Build
+        run: cmake --build --preset dist-macos
+
+      # The timing tripwires are left to the Linux runner, as on Windows.
+      - name: Test
+        run: ctest --preset dist-macos -E 'Warp\.(Projected)?PerformanceTripwire'
+
+      # The install deploys Qt and every other library into the bundle with
+      # macdeployqt, fails if anything still points outside it, and signs it ad
+      # hoc (cmake/DeployMacBundle.cmake).
+      - name: Install the app bundle
+        run: cmake --install build/dist-macos --prefix "$GITHUB_WORKSPACE/dist"
+
+      # As the Windows job starts its installed exe with only the OS on PATH:
+      # with vcpkg_installed out of the way, a library the bundle still loads
+      # from the build machine fails the launch.
+      - name: Smoke-test the installed bundle
+        run: |
+          set -euxo pipefail
+          mv vcpkg_installed vcpkg_installed.hidden
+          status=0
+          "dist/Met Viewer.app/Contents/MacOS/Met Viewer" --version || status=$?
+          mv vcpkg_installed.hidden vcpkg_installed
+          exit "$status"
+
+      # Zipped with ditto, which keeps the bundle's symlinks, permissions and
+      # signature; upload-artifact's own zip drops the executable bit.
+      - name: Zip the app bundle
+        run: ditto -c -k --keepParent "dist/Met Viewer.app" met-viewer-macos-arm64.zip
+
+      - name: Upload the app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: met-viewer-macos-${{ github.sha }}
+          path: met-viewer-macos-arm64.zip
+          retention-days: 14
+          if-no-files-found: error

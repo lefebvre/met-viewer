@@ -1,4 +1,5 @@
-# Qt runtime deployment for the *build* tree (Windows).
+# Qt runtime deployment for the *build* tree (Windows), and the deploy tools the
+# install rules use (windeployqt, macdeployqt).
 #
 # vcpkg's applocal step (VCPKG_APPLOCAL_DEPS, on by default) copies every DLL an
 # executable imports next to it after linking, which is why Qt6Core.dll and the
@@ -34,6 +35,23 @@ if(WIN32)
             "to start for want of a platform plugin, and installers would ship "
             "without the Qt DLLs. It comes from qtbase's `windeployqt` feature, "
             "requested for windows in vcpkg.json.")
+    endif()
+endif()
+
+# macdeployqt, which assembles the app bundle at install time
+# (cmake/Packaging.cmake). The build tree needs no deployment on macOS: the
+# executable carries CMake's build RPATH into vcpkg_installed, and the vcpkg Qt
+# finds its plugins relative to its own libraries there.
+if(APPLE)
+    find_program(MET_MACDEPLOYQT
+        NAMES macdeployqt macdeployqt6
+        HINTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/tools/Qt6/bin"
+        DOC "macdeployqt, used to bundle the Qt runtime into the installed app")
+    if(NOT MET_MACDEPLOYQT)
+        message(FATAL_ERROR
+            "macdeployqt not found. The installed app bundle would ship without Qt "
+            "or the libraries it links. The vcpkg qtbase port builds it on macOS "
+            "and installs it under tools/Qt6/bin.")
     endif()
 endif()
 

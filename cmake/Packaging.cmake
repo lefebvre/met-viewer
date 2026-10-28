@@ -1,11 +1,12 @@
 # Packaging: install rules + CPack configuration for distributable installers
-# (AppImage / TGZ on Linux, NSIS on Windows). Included from the top-level
-# CMakeLists.txt after every target is defined so install(TARGETS ...) resolves.
+# (AppImage / TGZ on Linux, NSIS on Windows, a DMG on macOS). Included from the
+# top-level CMakeLists.txt after every target is defined so install(TARGETS ...)
+# resolves.
 #
-# Deployment of the Qt runtime is per-platform: Windows runs windeployqt as part
-# of the install (below), so `cmake --install` and cpack both yield a
-# self-contained tree; Linux leaves it to linuxdeploy, which bundles Qt when it
-# assembles the AppImage in CI.
+# Deployment of the Qt runtime is per-platform: Windows runs windeployqt and
+# macOS runs macdeployqt as part of the install (below), so `cmake --install` and
+# cpack both yield a self-contained tree; Linux leaves it to linuxdeploy, which
+# bundles Qt when it assembles the AppImage in CI.
 
 include(GNUInstallDirs)
 
@@ -15,6 +16,13 @@ if(WIN32)
         RUNTIME_DEPENDENCY_SET met_runtime_deps
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
+elseif(APPLE)
+    # The whole app is the bundle, installed at the root of the prefix (and so at
+    # the root of the DMG, beside its Applications link).
+    install(TARGETS met_viewer
+        BUNDLE DESTINATION .
+    )
+    set(_met_bundle "Met Viewer.app")
 else()
     install(TARGETS met_viewer
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -102,18 +110,53 @@ endif()
 
 # --- PROJ runtime data (proj.db etc.) ----------------------------------------
 # Installed under <prefix>/share/proj so the executable-relative probe in
-# locateBundledProjData() (main.cpp) finds it as <bindir>/../share/proj. Sourced
-# from the vcpkg tree that built the app.
+# locateBundledProjData() (main.cpp) finds it as <bindir>/../share/proj, or in
+# the bundle's Contents/Resources/proj on macOS, which the same probe finds from
+# Contents/MacOS. Sourced from the vcpkg tree that built the app.
+if(APPLE)
+    set(_met_proj_dest "${_met_bundle}/Contents/Resources/proj")
+else()
+    set(_met_proj_dest "${CMAKE_INSTALL_DATADIR}/proj")
+endif()
 if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
     set(_met_proj_src "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/proj")
     if(EXISTS "${_met_proj_src}/proj.db")
         install(DIRECTORY "${_met_proj_src}/"
-                DESTINATION "${CMAKE_INSTALL_DATADIR}/proj")
+                DESTINATION "${_met_proj_dest}")
     else()
         message(WARNING
             "PROJ data not found at ${_met_proj_src}; installers will lack proj.db "
             "and CRS transforms may fail at runtime.")
     endif()
+endif()
+
+# --- macOS bundle deployment and signing --------------------------------------
+# macdeployqt copies Qt, its plugins and every other library the executable links
+# (PROJ, ecCodes, netCDF, HDF5, fmt, ...) into the bundle and points the bundle
+# at its own copies; the bundle is then signed. This has to come after the PROJ
+# data above: signing seals every file in the bundle, so anything installed
+# afterwards would break the signature.
+#
+# MET_CODESIGN_IDENTITY "-" signs ad hoc. That is not Gatekeeper approval, but
+# Apple Silicon refuses to load unsigned code at all, and macdeployqt's rewriting
+# invalidates the signatures the linker gave each file. Set it to a Developer ID
+# Application identity to sign for notarization instead.
+if(APPLE)
+    set(MET_CODESIGN_IDENTITY "-" CACHE STRING
+        "codesign identity for the installed app bundle; \"-\" signs ad hoc")
+    if(NOT DEFINED VCPKG_INSTALLED_DIR OR NOT DEFINED VCPKG_TARGET_TRIPLET)
+        message(FATAL_ERROR
+            "Packaging on macOS needs the vcpkg toolchain: macdeployqt resolves the "
+            "app's libraries from VCPKG_INSTALLED_DIR/<triplet>/lib.")
+    endif()
+    # The installed executable has no RPATH into vcpkg_installed, so macdeployqt
+    # is told where its @rpath libraries are.
+    install(CODE "
+        set(MET_APP_BUNDLE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${_met_bundle}\")
+        set(MET_MACDEPLOYQT [[${MET_MACDEPLOYQT}]])
+        set(MET_DEPLOY_LIBPATH [[${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib]])
+        set(MET_CODESIGN_IDENTITY [[${MET_CODESIGN_IDENTITY}]])")
+    install(SCRIPT "${CMAKE_SOURCE_DIR}/cmake/DeployMacBundle.cmake")
 endif()
 
 # --- Linux desktop integration (menu entry + themed icons) -------------------
@@ -157,6 +200,13 @@ if(WIN32)
     # Start-menu (and optional desktop) shortcut to the installed executable.
     set(CPACK_PACKAGE_EXECUTABLES "met_viewer" "Met Viewer")
     set(CPACK_CREATE_DESKTOP_LINKS "met_viewer")
+elseif(APPLE)
+    # A disk image holding the bundle beside a link to /Applications, to drag it
+    # onto. Named like the other release assets rather than CPack's default
+    # met-viewer-<version>-Darwin.
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_DMG_VOLUME_NAME "Met Viewer ${PROJECT_VERSION}")
+    set(CPACK_PACKAGE_FILE_NAME "met-viewer-${PROJECT_VERSION}-macos-arm64")
 else()
     # AppImage is the primary Linux artifact and is produced from the install
     # tree by linuxdeploy in CI; TGZ is a convenient CPack fallback. RPM/DEB can

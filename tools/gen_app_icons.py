@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Derive the app-icon PNG sets and the Windows .ico from their masters.
+"""Derive the app-icon PNG sets, the Windows .ico and the macOS .icns from their masters.
 
 The app icon lives under resources/icons/png/app/:
   - dark  variant: met-viewer_<size>.png        (used as the .exe/.desktop icon)
@@ -8,8 +8,9 @@ The app icon lives under resources/icons/png/app/:
 
 This regenerates the light PNG set (16..512) by downscaling its largest master
 and prunes any oversized master (>512) so the 1024 source doesn't live in the
-repo. It also (re)builds met-viewer.ico from the largest dark PNG. Pass --fill
-to additionally refill the dark PNG set from its own master.
+repo. It also (re)builds met-viewer.ico and macos/met-viewer.icns from the
+largest dark PNG. Pass --fill to additionally refill the dark PNG set from its
+own master.
 
 Usage:
   python3 tools/gen_app_icons.py            # light set + .ico
@@ -20,11 +21,13 @@ import argparse
 import glob
 import os
 import re
+import struct
 
 from PIL import Image
 
 APP_DIR = os.path.join(os.path.dirname(__file__), "..", "resources", "icons", "png", "app")
 ICONS_DIR = os.path.join(os.path.dirname(__file__), "..", "resources", "icons")
+MACOS_DIR = os.path.join(os.path.dirname(__file__), "..", "resources", "macos")
 
 STANDARD_SIZES = [16, 24, 32, 48, 64, 128, 256, 512]
 MAX_COMMITTED = 512  # no master larger than this stays in the repo
@@ -97,6 +100,36 @@ def fill_set(suffix: str, process=None):
     return written
 
 
+# PNG-carrying .icns element types by pixel size. A pixel size can serve two
+# entries: its own (icp6 is 64 px) and the @2x of half its size (ic12 is 32 pt at
+# 2x, also 64 px).
+ICNS_TYPES = {
+    16: [b"icp4"],
+    32: [b"icp5", b"ic11"],
+    64: [b"icp6", b"ic12"],
+    128: [b"ic07"],
+    256: [b"ic08", b"ic13"],
+    512: [b"ic09", b"ic14"],
+}
+
+
+def write_icns(path: str, sizes) -> None:
+    """Write a macOS .icns holding the committed PNGs unchanged, one element per
+    type each size can fill. Pillow's ICNS writer is not used because it always
+    emits 512 and 1024 px elements, upscaling a 256 px master into a megabyte of
+    detail it does not have; Finder and the Dock scale down from the largest
+    element present instead."""
+    elements = b""
+    for size in sorted(sizes):
+        with open(sizes[size], "rb") as f:
+            png = f.read()
+        for kind in ICNS_TYPES.get(size, []):
+            elements += kind + struct.pack(">I", 8 + len(png)) + png
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(b"icns" + struct.pack(">I", 8 + len(elements)) + elements)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fill", action="store_true",
@@ -117,6 +150,10 @@ def main() -> None:
         master.save(os.path.join(ICONS_DIR, "met-viewer.ico"), format="ICO",
                     sizes=[(s, s) for s in ICO_SIZES if s <= max(dark)])
         print(f"wrote {os.path.normpath(os.path.join(ICONS_DIR, 'met-viewer.ico'))}")
+
+        icns = os.path.join(MACOS_DIR, "met-viewer.icns")
+        write_icns(icns, dark)
+        print(f"wrote {os.path.normpath(icns)}")
 
 
 if __name__ == "__main__":

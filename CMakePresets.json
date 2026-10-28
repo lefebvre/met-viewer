@@ -97,6 +97,21 @@
         "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
         "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlay-ports"
       }
+    },
+    {
+      "name": "dist-macos",
+      "displayName": "Distribution (macOS Apple Silicon, dynamic Qt)",
+      "description": "Release build with dynamically-linked Qt for the arm64 app bundle and DMG. The deployment target matches the one cmake/vcpkg-triplets/arm64-osx-dynamic.cmake gives the dependencies, so the app and its libraries agree on the oldest macOS they load on. VCPKG_HOST_TRIPLET is pinned to the target triplet for the reason given on dist-linux: left at its default (arm64-osx, static) vcpkg would build a second, separate dependency set for host tools.",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "13.0",
+        "VCPKG_TARGET_TRIPLET": "arm64-osx-dynamic",
+        "VCPKG_OVERLAY_TRIPLETS": "${sourceDir}/cmake/vcpkg-triplets",
+        "VCPKG_OVERLAY_PORTS": "${sourceDir}/cmake/vcpkg-overlay-ports",
+        "VCPKG_HOST_TRIPLET": "arm64-osx-dynamic"
+      }
     }
   ],
   "buildPresets": [
@@ -131,6 +146,10 @@
     {
       "name": "dist-windows",
       "configurePreset": "dist-windows"
+    },
+    {
+      "name": "dist-macos",
+      "configurePreset": "dist-macos"
     }
   ],
   "testPresets": [
@@ -179,6 +198,13 @@
     {
       "name": "dist-windows",
       "configurePreset": "dist-windows",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "dist-macos",
+      "configurePreset": "dist-macos",
       "output": {
         "outputOnFailure": true
       }

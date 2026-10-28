@@ -4,7 +4,10 @@ name: Release
 # and attach them to a DRAFT GitHub Release for review before publishing:
 #   - Linux:   AppImage (dynamic Qt bundled by linuxdeploy)
 #   - Windows: NSIS installer (dynamic Qt bundled by windeployqt via CPack)
-# Artifacts are UNSIGNED; see the release notes for SmartScreen/Gatekeeper hints.
+#   - macOS:   DMG holding an Apple Silicon app bundle (macdeployqt via CPack)
+# Artifacts are UNSIGNED (the macOS bundle is signed ad hoc, which Apple Silicon
+# requires but Gatekeeper does not accept); see README.md for the
+# SmartScreen/Gatekeeper steps.
 #
 # The platform jobs only *build* and upload their output as workflow artifacts; a
 # single final job creates the release. Having each platform attach its own asset
@@ -35,8 +38,8 @@ permissions:
 jobs:
   # Runs first, in seconds, so a version mismatch fails here rather than after an
   # hour of building. The AppImage and the portable zip are named from the tag
-  # (on a dry run, from the sources),
-  # while CPack names the Windows installer from project(VERSION) and the app
+  # (on a dry run, from the sources), while CPack names the Windows installer
+  # and the macOS disk image from project(VERSION), and the app
   # reports that same version via --version and its tile-server User-Agent. Those
   # are only consistent if the tag agrees with the sources, so that is checked
   # rather than assumed — the alternative, overriding CPack from the tag, would
@@ -308,11 +311,110 @@ jobs:
           path: met-viewer-*-windows-x64.zip
           if-no-files-found: error
 
+  macos:
+    name: macOS DMG (Apple Silicon)
+    needs: version-check
+    # An arm64 runner, building natively for the arm64 bundle.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # vcpkg's autotools ports need these, and Ninja is what the presets use.
+      # brew leaves anything the runner image already has in place.
+      - name: Install build tools
+        run: brew install ninja pkgconf autoconf automake libtool autoconf-archive
+
+      # Read-only, as in the Linux job: consume CI's caches, never evict them.
+      - name: Point vcpkg at the workspace binary cache
+        shell: bash
+        run: |
+          echo "VCPKG_BINARY_SOURCES=clear;files,$GITHUB_WORKSPACE/vcpkg_bincache,readwrite" >> "$GITHUB_ENV"
+
+      - name: Restore vcpkg binary cache
+        uses: actions/cache/restore@v4
+        with:
+          path: vcpkg_bincache
+          key: vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}
+          restore-keys: |
+            vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'cmake/vcpkg-triplets/*.cmake', 'cmake/vcpkg-overlay-ports/**') }}-
+            vcpkg-bin-${{ runner.os }}-
+
+      - name: Restore vcpkg downloads
+        uses: actions/cache/restore@v4
+        with:
+          path: vcpkg/downloads
+          key: vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-dl-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}-
+            vcpkg-dl-${{ runner.os }}-
+
+      - name: Build
+        run: |
+          cmake --preset dist-macos
+          cmake --build --preset dist-macos
+
+      # See the Linux job: the only test of the commit being released.
+      - name: Test
+        run: ctest --preset dist-macos -E 'Warp\.(Projected)?PerformanceTripwire'
+
+      - name: Dump vcpkg logs on failure
+        if: failure()
+        run: |
+          echo "===== vcpkg-manifest-install.log (names the failed port) ====="
+          cat build/dist-macos/vcpkg-manifest-install.log 2>/dev/null || echo "(not found)"
+          echo "===== port build stdout/stderr (the real error) ====="
+          for f in $(find vcpkg/buildtrees -maxdepth 2 \
+                       \( -name 'install-*-out.log' -o -name 'install-*-err.log' \
+                          -o -name 'build-*-out.log' -o -name 'build-*-err.log' \) 2>/dev/null); do
+            echo "----- $f -----"; tail -n 60 "$f"; done
+
+      - name: Package (DMG)
+        # CPack runs the install, which deploys Qt and the other libraries into
+        # the bundle with macdeployqt, checks nothing still points outside it, and
+        # signs it (cmake/DeployMacBundle.cmake), then builds the disk image.
+        # hdiutil on the hosted runners intermittently fails with "Resource
+        # busy", so the packaging is retried.
+        working-directory: build/dist-macos
+        run: |
+          for attempt in 1 2 3; do
+            cpack && exit 0
+            echo "cpack attempt $attempt failed; retrying"
+            sleep 10
+          done
+          exit 1
+
+      # Launch the app from the disk image itself, with vcpkg_installed moved out
+      # of the way, so a library still loaded from the build machine fails here
+      # rather than on a user's Mac. --version still builds the QApplication, so
+      # the bundled Cocoa platform plugin is loaded too.
+      - name: Smoke-test the disk image
+        run: |
+          set -euxo pipefail
+          dmg=$(ls build/dist-macos/met-viewer-*-macos-arm64.dmg)
+          hdiutil attach -nobrowse -readonly -mountpoint /tmp/met-viewer-dmg "$dmg"
+          app="/tmp/met-viewer-dmg/Met Viewer.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          mv vcpkg_installed vcpkg_installed.hidden
+          status=0
+          "$app/Contents/MacOS/Met Viewer" --version || status=$?
+          mv vcpkg_installed.hidden vcpkg_installed
+          hdiutil detach /tmp/met-viewer-dmg
+          exit "$status"
+
+      - name: Upload disk image for the release job
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: build/dist-macos/met-viewer-*-macos-arm64.dmg
+          if-no-files-found: error
+
   # Single place where the release is created, after every platform has produced
-  # its asset. `needs` also gates it: if either build fails there is no release.
+  # its asset. `needs` also gates it: if any build fails there is no release.
   release:
     name: Draft GitHub Release
-    needs: [linux, windows]
+    needs: [linux, windows, macos]
     # Never on a dry run: action-gh-release would create a draft named after the
     # branch, and the installers are already downloadable from the run itself.
     if: github.ref_type == 'tag'

@@ -45,15 +45,17 @@ void filterQtWarnings(QtMsgType type, const QMessageLogContext& ctx, const QStri
 // Point PROJ at bundled data in installed/portable builds. The compile-time
 // MET_PROJ_DATA fallback covers the dev build tree, but that absolute path does
 // not exist on an end user's machine, so probe a few executable-relative layouts
-// (installed prefix, AppImage AppDir, Windows install root) for proj.db and, if
-// found, register it. If nothing matches we leave the compile-time fallback in
-// place. Must run after QApplication so applicationDirPath() is valid.
+// (installed prefix, AppImage AppDir, Windows install root, macOS app bundle) for
+// proj.db and, if found, register it. If nothing matches we leave the
+// compile-time fallback in place. Must run after QApplication so
+// applicationDirPath() is valid.
 void locateBundledProjData() {
     const QString exeDir = QCoreApplication::applicationDirPath();
     const QStringList candidates = {
-        exeDir + QStringLiteral("/../share/proj"),  // GNUInstallDirs / AppImage usr/bin
-        exeDir + QStringLiteral("/share/proj"),     // flat install with a share/ subdir
-        exeDir + QStringLiteral("/proj"),           // proj data staged next to the exe
+        exeDir + QStringLiteral("/../share/proj"),      // GNUInstallDirs / AppImage usr/bin
+        exeDir + QStringLiteral("/share/proj"),         // flat install with a share/ subdir
+        exeDir + QStringLiteral("/proj"),               // proj data staged next to the exe
+        exeDir + QStringLiteral("/../Resources/proj"),  // Contents/MacOS in an app bundle
     };
     for (const QString& c : candidates) {
         if (QFileInfo::exists(c + QStringLiteral("/proj.db"))) {
