@@ -30,6 +30,15 @@ sudo dnf install -y perl-IPC-Cmd perl-FindBin perl-Text-Template perl-Time-Piece
 sudo dnf install -y autoconf automake libtool autoconf-archive
 ```
 
+## System prerequisites (macOS, Apple Silicon)
+
+The Xcode command-line tools (`xcode-select --install`) provide the compiler. The
+rest comes from Homebrew:
+
+```sh
+brew install cmake ninja pkgconf autoconf automake libtool autoconf-archive
+```
+
 ## Build
 
 Dependencies are managed via a vcpkg manifest, checked in as a submodule.
@@ -45,6 +54,16 @@ ctest --preset release
 
 On Wayland sessions, force the X11 backend (the vcpkg Qt build ships the `xcb`
 platform plugin, not `wayland`): `QT_QPA_PLATFORM=xcb ./build/release/viewer/app/met_viewer`.
+
+On macOS, build with the `dist-macos` preset, whose triplet sets the deployment
+target the app and its dependencies share. The executable is an app bundle:
+
+```sh
+cmake --preset dist-macos
+cmake --build --preset dist-macos
+ctest --preset dist-macos
+open "build/dist-macos/viewer/app/Met Viewer.app"
+```
 
 Once it's running, the [Getting Started tutorial](docs/getting-started.md) walks
 through opening data, colormaps, the GIS map, wind overlays, cross-sections,
@@ -103,20 +122,38 @@ Tagged releases (`v*`) publish downloadable installers via GitHub Actions
   `met-viewer\bin\met_viewer.exe`. Both carry the same payload — they come from
   the same `install()` rules and the same windeployqt step, and differ only in
   how they are wrapped.
+- **macOS** — `met-viewer-<version>-macos-arm64.dmg`, holding `Met Viewer.app` for
+  Apple Silicon Macs on macOS 13 or later. Drag it onto the Applications link
+  beside it. Intel Macs are not supported.
 
 Each platform job builds and uploads its artifact, and a final job collects them
 and creates a single **draft** release — so nothing is published until you review
 it, and a failed platform build yields no release rather than a half-populated one.
 
 Releases are currently **unsigned**: Windows SmartScreen may warn ("More info →
-Run anyway"), and Linux may require `chmod +x` on the AppImage.
+Run anyway"), and Linux may require `chmod +x` on the AppImage. The macOS app is
+signed ad hoc, which Apple Silicon requires to run it at all, but it is not
+notarized, so Gatekeeper blocks the first launch with "Apple could not verify
+'Met Viewer' is free of malware". Choose **Done**, then open **System Settings →
+Privacy & Security**, choose **Open Anyway** beside the message about Met Viewer,
+and confirm. That is needed once per installed version. Alternatively, clear the
+download's quarantine flag from a terminal:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/Met Viewer.app"
+```
 
 **Cutting a release:** bump `project(... VERSION x.y.z)` in
 [`CMakeLists.txt`](CMakeLists.txt) and `"version"` in [`vcpkg.json`](vcpkg.json),
 then tag `vx.y.z`. Everything else derives from those — the app's `--version`,
-the tile-server User-Agent, and all three asset filenames. The release workflow
+the tile-server User-Agent, and every asset filename. The release workflow
 checks the tag against both files first and stops in seconds if they disagree,
 rather than after an hour of building.
+
+To try the packaging without a tag, run the **Release** workflow by hand from any
+branch (*Run workflow*). It builds, tests, packages and smoke-tests every
+platform and leaves the installers on the run's summary page, but creates no
+release.
 
 The distributable builds link Qt **dynamically** (LGPL-friendly) via dedicated
 presets that CI uses:
@@ -127,21 +164,26 @@ cmake --build --preset dist-linux
 ```
 
 To produce the local packages CPack knows about (a `.tar.gz` on Linux, the NSIS
-installer on Windows):
+installer on Windows, the DMG on macOS):
 
 ```sh
 cd build/dist-linux && cpack        # or: cpack -G TGZ
 ```
 
 The AppImage itself is assembled by `linuxdeploy` in CI; `dist-windows` bundles
-the Qt runtime via `windeployqt`. The app icon set lives in
+the Qt runtime via `windeployqt`, and `dist-macos` via `macdeployqt`, which also
+copies in every other library the app links. The macOS install then checks that
+nothing in the bundle still points outside it and signs it
+([`cmake/DeployMacBundle.cmake`](cmake/DeployMacBundle.cmake)); configure with
+`-DMET_CODESIGN_IDENTITY="Developer ID Application: …"` to sign with a real
+identity instead of ad hoc. The app icon set lives in
 [`resources/icons/`](resources/icons/); `tools/gen_app_icons.py` regenerates the
-Windows `.ico` from the largest app PNG.
+Windows `.ico` and the macOS `.icns` from the largest app PNG.
 
 ## CI
 
 Every push to `master` and every pull request is built and tested on Linux
-(AlmaLinux 9 container) and Windows via
+(AlmaLinux 9 container), Windows and macOS (Apple Silicon) via
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml), including a headless
 render smoke test and a sanitizer run on Linux. vcpkg dependencies are cached in
 the GitHub Actions cache so Qt is compiled from source only once.
@@ -153,10 +195,11 @@ pooled decode jobs, and the process-wide netcdf-c mutex, where a race yields wro
 values instead of a crash. Third-party noise goes in
 [`.tsan-suppressions`](.tsan-suppressions); a race in `met_*` code is a bug to fix.
 
-The suite runs on **both** platforms. That is not redundant: `long` is 32-bit on
+The suite runs on **every** platform. That is not redundant: `long` is 32-bit on
 MSVC and 64-bit on Linux, which is exactly why the ARL reader uses int64 record
 offsets and the GRIB reader a `seek64` helper — neither is exercised by a
-Linux-only run. The two `Warp.*PerformanceTripwire` tests are Linux-only, since
+Linux-only run. macOS adds Clang and libc++, a third compiler and standard
+library. The two `Warp.*PerformanceTripwire` tests are Linux-only, since
 they assert wall-clock budgets that are only meaningful on a consistent machine.
 
 ### Downloading a build
@@ -164,8 +207,11 @@ they assert wall-clock budgets that are only meaningful on a consistent machine.
 Every Windows run uploads a **portable build** as a workflow artifact
 (`met-viewer-windows-<sha>`, kept 14 days). Download it from the run's summary
 page, unzip, and run `bin\met_viewer.exe` — Qt and PROJ's data are bundled, so
-nothing needs installing. Tagged releases additionally publish the signed-off
-AppImage and NSIS installer; see [Installers](#installers).
+nothing needs installing. Every macOS run likewise uploads the app bundle
+(`met-viewer-macos-<sha>`); unzip it and open `Met Viewer.app`, which Gatekeeper
+treats as described under [Installers](#installers). Tagged releases additionally
+publish the signed-off AppImage, NSIS installer and DMG; see
+[Installers](#installers).
 
 ## Fuzzing
 

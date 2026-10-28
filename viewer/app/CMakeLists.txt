@@ -84,6 +84,32 @@ add_executable(met_viewer
 )
 target_link_libraries(met_viewer PRIVATE met_app)
 
+# On macOS the executable is an app bundle, "Met Viewer.app", named as the
+# Windows installer names the app. The icon is copied into Contents/Resources and
+# named by CFBundleIconFile in resources/macos/Info.plist.in, which also carries
+# the keys CMake's default template lacks. The bundle identifier is what macOS
+# files the app's privacy permissions under, so it must not change between
+# releases.
+if(APPLE)
+    set(_met_icns "${CMAKE_SOURCE_DIR}/resources/macos/met-viewer.icns")
+    target_sources(met_viewer PRIVATE "${_met_icns}")
+    set_source_files_properties("${_met_icns}" PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    set_target_properties(met_viewer PROPERTIES
+        MACOSX_BUNDLE ON
+        OUTPUT_NAME "Met Viewer"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/resources/macos/Info.plist.in"
+        MACOSX_BUNDLE_BUNDLE_NAME "Met Viewer"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.lefebvre.met-viewer"
+        MACOSX_BUNDLE_ICON_FILE "met-viewer.icns"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_COPYRIGHT "met-viewer maintainers"
+        # Where macdeployqt puts every dependency when the bundle is installed
+        # (cmake/Packaging.cmake). The build tree keeps CMake's build RPATH into
+        # vcpkg_installed, so the bundle there runs without deployment.
+        INSTALL_RPATH "@executable_path/../Frameworks")
+endif()
+
 # Single source of truth for the version: project(VERSION) in the top-level
 # CMakeLists. main.cpp used to carry its own hardcoded copy, which meant the
 # version the app reports (--version, and the User-Agent the tile servers see)

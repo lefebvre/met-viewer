@@ -31,6 +31,10 @@ esac
 if [ "$WINDOWS" = 1 ]; then
   BIN="${BIN:-$REPO/build/vs2022/viewer/app/met_viewer.exe}"
   GRIB="${GRIB:-$HOME/projects/nufall/data/validation/met/trinity_era5.grib}"
+elif [ "$(uname -s)" = Darwin ]; then
+  # On macOS the executable sits inside the app bundle.
+  BIN="${BIN:-$REPO/build/dist-macos/viewer/app/Met Viewer.app/Contents/MacOS/Met Viewer}"
+  GRIB="${GRIB:-$HOME/projects/nufall/data/validation/met/trinity_era5.grib}"
 else
   BIN="${BIN:-$REPO/build/release/viewer/app/met_viewer}"
   GRIB="${GRIB:-/home/lefebvre/projects/nufall/data/validation/met/trinity_era5.grib}"
